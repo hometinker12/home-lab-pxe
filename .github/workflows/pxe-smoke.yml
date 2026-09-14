@@ -141,4 +141,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Confirm pytest + PXE container smoke (no image push)
-        run: echo "develop smoke gate passed: pytest and local docker PXE smoke are green; no registry publish."
+        run: |
+          echo "develop smoke gate passed"
+          echo "pytest and local docker PXE smoke are green"
+          echo "no registry publish"
