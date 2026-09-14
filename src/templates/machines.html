@@ -2,6 +2,16 @@
 {% block title %}Machines — home-lab-pxe{% endblock %}
 {% block body %}
 <h1>Machines</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<section class="card">
+  <h2>Add machine</h2>
+  <p class="meta">Register a MAC before it PXE-boots. Unknown MACs still appear here after their first iPXE check-in.</p>
+  <form method="post" action="/machines" class="row-form">
+    <label>MAC address <input name="mac" required placeholder="de:ad:be:ef:00:01" autocomplete="off"></label>
+    <label>Hostname (optional) <input name="hostname" placeholder="lab-node-01"></label>
+    <button type="submit">Add machine</button>
+  </form>
+</section>
 {% if pending %}
 <section class="banner">
   <h2>{{ pending|length }} waiting for operator</h2>
@@ -29,7 +39,7 @@
       <td>{{ m.last_ip or "—" }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="5">No machines yet. PXE-boot a host to register it.</td></tr>
+    <tr><td colspan="5">No machines yet. Add a MAC above or PXE-boot a host to register it.</td></tr>
     {% endfor %}
   </tbody>
 </table>

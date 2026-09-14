@@ -34,7 +34,7 @@ Generate unique `SECRET_KEY` and `ENCRYPTION_KEY` values. Never commit `.env`, c
 - Do not include unrelated formatting or refactoring.
 - Do not update `VERSION` unless preparing a release.
 
-Maintainers promote tested changes from `develop` to `release` after CI and security checks pass. Promotion from `release` to `main` and image publishing are separate manual release steps.
+Maintainers promote tested changes from `develop` to `release` after CI and security checks pass. Promotion from `release` to `main` is a separate manual pull request. Pushing to `main` runs [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml), which publishes `hometinker12/home-lab-pxe` to Docker Hub and creates a GitHub Release when the `VERSION` tag is new.
 
 ## Project structure
 

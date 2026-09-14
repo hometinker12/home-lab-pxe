@@ -15,6 +15,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PXE_DATABASE_URL", f"sqlite:///{db_path}")
     monkeypatch.setenv("PXE_IMAGE_ROOT", str(tmp_path / "images"))
     monkeypatch.setenv("PXE_TFTP_ROOT", str(tmp_path / "tftp"))
+    monkeypatch.setenv("PXE_SSL_DIR", str(tmp_path / "ssl"))
+    monkeypatch.setenv("PXE_HTTPS_PORT", "8443")
     monkeypatch.setenv("PXE_PUBLIC_URL", "http://pxe.test:8080")
     monkeypatch.setenv("PXE_ENABLE_DHCP", "0")
     monkeypatch.setenv("SECRET_KEY", "pytest-secret-key-not-for-production")

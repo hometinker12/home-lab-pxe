@@ -1,4 +1,5 @@
 .env
+.host-lan-ip.env
 .plans/
 data/
 data/ssl/

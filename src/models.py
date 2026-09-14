@@ -49,6 +49,7 @@ class Image(SQLModel, table=True):
     initrd_path: str = ""
     boot_wim_path: str = ""
     install_wim_path: str = ""
+    iso_path: str = ""
     cmdline: str = ""
 
 
@@ -98,3 +99,16 @@ class ActivityLog(SQLModel, table=True):
     actor: str = ""
     action: str
     detail: str = ""
+
+
+class DhcpRuntime(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    enabled: bool = True
+    tftp_enabled: bool = True
+    mode: str = "proxy"
+    bind_interface: str = "eth0"
+    dhcp_range: str = "192.168.1.200,192.168.1.250,12h"
+    dhcp_router: str = ""
+    dhcp_dns: str = ""
+    extra_options: str = ""
+    updated_at: datetime = Field(default_factory=utcnow)

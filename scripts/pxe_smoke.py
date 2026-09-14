@@ -88,6 +88,62 @@ def main() -> None:
     status, _, _ = c.request("POST", "/login", form={"username": args.user, "password": args.password})
     expect(status in {200, 303, 302}, f"login {status}")
 
+    status, _, body = c.request("GET", "/settings")
+    expect(status == 200 and b"DHCP" in body, "settings DHCP form")
+    expect(b"dhcp-form" in body, "settings DHCP mode-aware form")
+    expect(b'data-dhcp-mode="authoritative"' in body, "authoritative DHCP fields grouped")
+    expect(b"<details" in body, "settings sections should be collapsible")
+    expect(b"TFTP" in body, "settings TFTP form")
+    expect(b"HTTPS" in body, "settings HTTPS form")
+    expect(b"self-signed" in body, "first-boot TLS certificate")
+    expect(b"BEGIN PRIVATE" not in body, "TLS private key leaked into settings")
+    expect(b"Next-server" in body, "external DHCP hints")
+    expect(b"Host LAN IPv4" in body, "settings host LAN address")
+    expect(b"/boot.ipxe" in body, "settings advertised PXE URL")
+    expect(b"This page" not in body, "settings should not show request host")
+    expect(b"Docker Desktop gateway" not in body, "settings should not show Docker gateway")
+    status, _, _ = c.request(
+        "POST",
+        "/settings/pxe",
+        form={
+            "bind_interface": "eth0",
+            "extra_options": "dhcp-option=15,smoke.home",
+        },
+    )
+    expect(status in {200, 303, 302}, f"pxe save {status}")
+    status, _, _ = c.request(
+        "POST",
+        "/settings/dhcp",
+        form={
+            "mode": "proxy",
+            "dhcp_range": "192.168.1.200,192.168.1.250,12h",
+        },
+    )
+    expect(status in {200, 303, 302}, f"dhcp disable {status}")
+    status, _, body = c.request("GET", "/settings")
+    expect(b"smoke.home" in body, "pxe extra option not saved")
+    status, _, _ = c.request(
+        "POST",
+        "/settings/dhcp",
+        form={
+            "enabled": "1",
+            "mode": "proxy",
+            "dhcp_range": "192.168.1.200,192.168.1.250,12h",
+        },
+    )
+    expect(status in {200, 303, 302}, f"dhcp enable {status}")
+    status, _, _ = c.request("POST", "/settings/tftp", form={"tftp_enabled": "1"})
+    expect(status in {200, 303, 302}, f"tftp enable {status}")
+
+    status, _, _ = c.request(
+        "POST",
+        "/machines",
+        form={"mac": "aa-bb-cc-dd-ee-0f", "hostname": "smoke-added"},
+    )
+    expect(status in {200, 303, 302}, f"add machine {status}")
+    status, _, body = c.request("GET", "/api/machines")
+    expect(any(m.get("mac") == "aa:bb:cc:dd:ee:0f" for m in json.loads(body)), "manually added MAC missing")
+
     status, _, body = c.request(
         "POST",
         "/images",
@@ -101,24 +157,77 @@ def main() -> None:
     )
     expect(status in {200, 303, 302}, f"create image {status}")
 
+    status, _, body = c.request("GET", "/api/images")
+    expect(status == 200, f"/api/images after create {status}")
+    linux_images = [img for img in json.loads(body) if img["os_family"] == "linux"]
+    expect(linux_images, "linux image missing after create")
+    linux_image_id = linux_images[-1]["id"]
+    status, _, body = c.request("GET", f"/images/{linux_image_id}")
+    expect(status == 200 and b"Save image" in body, "image edit page")
+    status, _, _ = c.request(
+        "POST",
+        f"/images/{linux_image_id}",
+        form={
+            "name": linux_images[-1]["name"],
+            "os_family": "linux",
+            "arch": "x86_64",
+            "kernel_path": "ubuntu/vmlinuz",
+            "initrd_path": "ubuntu/initrd",
+            "cmdline": "smoke-edit",
+        },
+    )
+    expect(status in {200, 303, 302}, f"edit image {status}")
+    status, _, body = c.request("GET", f"/images/{linux_image_id}")
+    expect(b"smoke-edit" in body, "edited cmdline missing")
+    expect(b'data-os="linux"' in body, "linux image fields")
+    expect(b'data-os="windows"' in body, "windows image fields")
+
+    iso_name = f"smoke-iso-{int(time.time())}"
+    status, _, _ = c.request(
+        "POST",
+        "/images",
+        form={
+            "name": iso_name,
+            "os_family": "linux",
+            "arch": "x86_64",
+            "iso_path": "ubuntu/live.iso",
+        },
+    )
+    expect(status in {200, 303, 302}, f"create iso image {status}")
+    status, _, body = c.request("GET", "/api/images")
+    iso_images = [img for img in json.loads(body) if img["name"] == iso_name]
+    expect(iso_images and iso_images[0].get("iso_path") == "ubuntu/live.iso", "iso path missing")
+
+    iso_mac = "de-ad-be-ef-00-aa"
+    status, _, body = c.request("GET", f"/ipxe/{iso_mac}")
+    expect("Waiting for operator" in body.decode(), "iso MAC should wait first")
+    status, _, body = c.request("GET", "/api/machines")
+    iso_machine = next(m for m in json.loads(body) if m["mac"] == "de:ad:be:ef:00:aa")
+    status, _, _ = c.request(
+        "POST",
+        f"/machines/{iso_machine['id']}/deploy",
+        form={"image_id": str(iso_images[0]["id"]), "username": "root", "password": "iso-smoke-secret"},
+    )
+    expect(status in {200, 303, 302}, f"iso deploy {status}")
+    status, _, body = c.request("GET", f"/ipxe/{iso_mac}")
+    iso_text = body.decode()
+    expect("sanboot" in iso_text and "/boot-files/" in iso_text, "expected iso sanboot iPXE")
+    expect("kernel" not in iso_text, "iso-only install should not chain kernel")
+    expect("iso-smoke-secret" not in iso_text, "password leaked into iso iPXE")
+
     status, _, body = c.request("GET", "/api/machines")
     expect(status == 200, f"/api/machines {status} {body[:200]!r}")
     machines = json.loads(body)
-    expect(machines, "no machines registered")
-    machine = machines[0]
+    linux_mac_colon = "de:ad:be:ef:00:01"
+    machine = next((m for m in machines if m.get("mac") == linux_mac_colon), None)
+    expect(machine is not None, "linux MAC missing before deploy")
     mid = machine["id"]
     expect(machine["state"] == "pending", f"state {machine['state']}")
-
-    status, _, body = c.request("GET", "/api/images")
-    expect(status == 200, f"/api/images {status}")
-    images = json.loads(body)
-    expect(images, "no images")
-    image_id = str(images[-1]["id"])
 
     status, _, _ = c.request(
         "POST",
         f"/machines/{mid}/deploy",
-        form={"image_id": image_id, "username": "root", "password": "root-smoke-secret"},
+        form={"image_id": str(linux_image_id), "username": "root", "password": "root-smoke-secret"},
     )
     expect(status in {200, 303, 302}, f"deploy {status}")
 

@@ -7,7 +7,7 @@
 
 FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
-ARG VERSION=0.1.0
+ARG VERSION=0.1.1
 
 LABEL org.opencontainers.image.title="home-lab-pxe" \
       org.opencontainers.image.description="Docker PXE/iPXE server with web console, cloud-init, and Cloudbase-Init" \
@@ -19,8 +19,11 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
     PXE_HTTP_PORT=8080 \
+    PXE_HTTPS_PORT=8443 \
     PXE_TFTP_ROOT=/var/lib/pxe/tftp \
     PXE_IMAGE_ROOT=/var/lib/pxe/images \
+    PXE_DATA_DIR=/var/lib/pxe/data \
+    PXE_SSL_DIR=/var/lib/pxe/ssl \
     PXE_DATABASE_URL=sqlite:////var/lib/pxe/data/pxe.db
 
 RUN apt-get update \
@@ -48,7 +51,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 app \
     && useradd --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin app \
-    && mkdir -p /var/lib/pxe/tftp /var/lib/pxe/images /var/lib/pxe/data
+    && mkdir -p /var/lib/pxe/tftp /var/lib/pxe/images /var/lib/pxe/data /var/lib/pxe/ssl
 
 # Best-effort official iPXE binaries; stubs are created at runtime if these fail.
 RUN curl -fsSL -o /var/lib/pxe/tftp/undionly.kpxe https://boot.ipxe.org/undionly.kpxe \
@@ -63,11 +66,11 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY VERSION ./VERSION
 COPY src ./src
 COPY scripts ./scripts
-RUN sed -i 's/\r$//' ./scripts/entrypoint.sh ./scripts/pxe_smoke.py \
-    && chmod +x ./scripts/entrypoint.sh \
+RUN sed -i 's/\r$//' ./scripts/entrypoint.sh ./scripts/run-web.sh ./scripts/pxe_smoke.py \
+    && chmod +x ./scripts/entrypoint.sh ./scripts/run-web.sh \
     && chown -R app:app /app /var/lib/pxe
 
-EXPOSE 8080 67/udp 69/udp
+EXPOSE 8080 8443 67/udp 69/udp
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]

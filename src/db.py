@@ -6,6 +6,7 @@ import logging
 import os
 from collections.abc import Iterator
 
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -64,7 +65,31 @@ def init_db() -> None:
     from . import models  # noqa: F401
 
     SQLModel.metadata.create_all(get_engine())
+    _migrate_schema()
     _seed_admin()
+    from .dhcp_runtime import seed_dhcp_runtime
+
+    seed_dhcp_runtime()
+
+
+def _table_columns(conn, table: str) -> set[str]:
+    rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+    return {row[1] for row in rows}
+
+
+def _add_column_if_missing(conn, table: str, column: str, ddl: str) -> None:
+    if column not in _table_columns(conn, table):
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
+
+
+def _migrate_schema() -> None:
+    engine = get_engine()
+    with engine.begin() as conn:
+        tables = {row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
+        if "image" in tables:
+            _add_column_if_missing(conn, "image", "iso_path", "iso_path VARCHAR DEFAULT ''")
+        if "dhcpruntime" in tables:
+            _add_column_if_missing(conn, "dhcpruntime", "tftp_enabled", "tftp_enabled BOOLEAN DEFAULT 1")
 
 
 def _seed_admin() -> None:

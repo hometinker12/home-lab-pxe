@@ -5,6 +5,7 @@ from starlette.status import HTTP_303_SEE_OTHER
 
 from ..auth import require_user
 from ..db import get_db
+from ..inventory.mac import InvalidMacError
 from ..inventory.service import (
     deploy_machine,
     disable_machine,
@@ -19,6 +20,7 @@ from ..inventory.service import (
     mark_deployed,
     mark_ready,
     os_family_for,
+    register_machine,
     stage_machine,
     upsert_local_account,
 )
@@ -77,7 +79,32 @@ def machines_page(request: Request, db: Session = Depends(get_db), user: str = D
     machines = list_machines(db)
     pending = [m for m in machines if m.state in {MachineState.pending.value, MachineState.ready.value}]
     images = {img.id: img for img in list_images(db)}
-    return render(request, "machines.html", machines=machines, pending=pending, images=images)
+    return render(request, "machines.html", machines=machines, pending=pending, images=images, error=None)
+
+
+def _machines_error(request: Request, db: Session, error: str):
+    machines = list_machines(db)
+    pending = [m for m in machines if m.state in {MachineState.pending.value, MachineState.ready.value}]
+    images = {img.id: img for img in list_images(db)}
+    return render(request, "machines.html", machines=machines, pending=pending, images=images, error=error)
+
+
+@router.post("/machines")
+def machines_create(
+    request: Request,
+    mac: str = Form(...),
+    hostname: str = Form(""),
+    db: Session = Depends(get_db),
+    user: str = Depends(require_user),
+):
+    try:
+        machine = register_machine(db, mac=mac, hostname=hostname, actor=user)
+        db.commit()
+    except InvalidMacError as exc:
+        return _machines_error(request, db, str(exc))
+    except ValueError as exc:
+        return _machines_error(request, db, str(exc))
+    return RedirectResponse(url=f"/machines/{machine.id}", status_code=HTTP_303_SEE_OTHER)
 
 
 @router.get("/machines/{machine_id}", response_class=HTMLResponse)

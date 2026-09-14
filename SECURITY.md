@@ -38,7 +38,7 @@ High-priority areas for this project include:
 
 - Authentication and session handling
 - CSRF protection for browser form posts
-- Secret handling (`SECRET_KEY`, `ENCRYPTION_KEY`, cloud-init / unattend / Cloudbase-Init payloads, SSH keys, local root/Administrator accounts)
+- Secret handling (`SECRET_KEY`, `ENCRYPTION_KEY`, TLS private keys, cloud-init / unattend / Cloudbase-Init payloads, SSH keys, local root/Administrator accounts)
 - Logging that might leak credentials or user-data
 - Boot-policy abuse (forcing a reimage, skipping the unknown-host wait menu)
 - Path traversal in image / TFTP / HTTP boot file serving

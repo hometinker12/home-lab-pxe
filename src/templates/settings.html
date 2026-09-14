@@ -2,25 +2,146 @@
 {% block title %}Settings — home-lab-pxe{% endblock %}
 {% block body %}
 <h1>Settings</h1>
-<section class="card">
-  <h2>PXE</h2>
-  <p>Public URL: <code>{{ settings.public_url }}</code></p>
-  <p>DHCP mode: <code>{{ settings.dhcp_mode }}</code> on <code>{{ settings.bind_interface }}</code></p>
-  <p>TFTP: <code>{{ settings.tftp_root }}</code> · Images: <code>{{ settings.image_root }}</code></p>
-</section>
-<section class="card">
-  <h2>Lab default local accounts</h2>
-  <p>Stored encrypted. Passwords are write-only.</p>
-  <form method="post" action="/settings/accounts">
-    <h3>Linux root</h3>
-    <p>{% if linux.set %}set{% else %}not set{% endif %}</p>
-    <label>Username <input name="linux_username" value="{{ linux.username or 'root' }}"></label>
-    <label>Password <input type="password" name="linux_password" autocomplete="new-password"></label>
-    <h3>Windows Administrator</h3>
-    <p>{% if windows.set %}set{% else %}not set{% endif %}</p>
-    <label>Username <input name="windows_username" value="{{ windows.username or 'Administrator' }}"></label>
-    <label>Password <input type="password" name="windows_password" autocomplete="new-password"></label>
-    <button type="submit">Save defaults</button>
-  </form>
-</section>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if notice %}<p class="ok">{{ notice }}</p>{% endif %}
+<details class="card" {% if open_section == "pxe" %}open{% endif %}>
+  <summary>PXE</summary>
+  <div class="card-body">
+    <dl class="hints">
+      <dt>Host LAN IPv4</dt>
+      <dd>
+        {% if net.host_lan_ipv4 %}
+        <code>{{ net.host_lan_ipv4 }}</code>
+        <span class="meta">({{ net.host_lan_source }})</span>
+        {% else %}
+        <span class="meta">not detected — run <code>python scripts/host_lan_ipv4.py --write</code> on the Docker host, then recreate the container</span>
+        {% endif %}
+      </dd>
+      {% if net.in_container %}
+      <dt>Container IPv4</dt>
+      <dd><code>{{ net.container_ipv4s|join(", ") or "—" }}</code> <span class="meta">(Docker only — PXE clients cannot use this)</span></dd>
+      {% endif %}
+      <dt>Advertised PXE URL</dt>
+      <dd><code>{{ net.advertised_pxe_url }}</code></dd>
+    </dl>
+    <p>Images: <code>{{ settings.image_root }}</code></p>
+    <h3>External DHCP options</h3>
+    <p class="meta">If another DHCP server already hands out leases, point that server at this box (or enable proxyDHCP under DHCP). These values are safe to copy onto the existing LAN DHCP server.</p>
+    <dl class="hints">
+      <dt>Next-server / option 66</dt>
+      <dd><code>{{ pxe_hints.next_server }}</code></dd>
+      <dt>BIOS filename</dt>
+      <dd><code>{{ pxe_hints.bios_filename }}</code></dd>
+      <dt>UEFI x86_64 filename</dt>
+      <dd><code>{{ pxe_hints.efi_filename }}</code></dd>
+      <dt>UEFI ARM64 filename</dt>
+      <dd><code>{{ pxe_hints.arm_filename }}</code></dd>
+      <dt>iPXE script (option 67 after iPXE)</dt>
+      <dd><code>{{ pxe_hints.ipxe_script }}</code></dd>
+    </dl>
+    <form method="post" action="/settings/pxe">
+      <label>Bind interface <input name="bind_interface" value="{{ dhcp.bind_interface }}" required></label>
+      <label>Extra dnsmasq lines for this PXE service (one <code>key=value</code> per line)
+        <textarea name="extra_options" rows="6" placeholder="dhcp-option=66,192.168.1.10">{{ dhcp.extra_options }}</textarea>
+      </label>
+      <p class="meta">Allowed keys: dhcp-option, dhcp-range, dhcp-host, dhcp-boot, dhcp-ignore, dhcp-match, dhcp-vendorclass, dhcp-userclass, pxe-service, pxe-prompt. Scripts and conf-file includes are rejected.</p>
+      <button type="submit">Save PXE</button>
+    </form>
+  </div>
+</details>
+<details class="card" {% if open_section == "dhcp" %}open{% endif %}>
+  <summary>DHCP</summary>
+  <div class="card-body">
+    <p class="meta">Helper status: <code>{{ dhcp_status }}</code>. Saving writes dnsmasq.conf and asks the container helper to start, stop, or reload. Env values in <code>.env</code> are only the first-boot defaults. TFTP is configured separately below.</p>
+    <form method="post" action="/settings/dhcp" class="dhcp-form">
+      <label class="check">
+        <input type="checkbox" name="enabled" value="1" {% if dhcp.enabled %}checked{% endif %}>
+        DHCP server enabled
+      </label>
+      <label>Mode
+        <select name="mode">
+          <option value="proxy" {% if dhcp.mode == "proxy" %}selected{% endif %}>proxyDHCP (keep existing LAN DHCP)</option>
+          <option value="authoritative" {% if dhcp.mode == "authoritative" %}selected{% endif %}>authoritative (this server owns the range)</option>
+        </select>
+      </label>
+      <p class="meta" data-dhcp-mode="proxy">proxyDHCP only answers PXE boot requests. Leases, router, and DNS stay on your existing LAN DHCP server.</p>
+      <div data-dhcp-mode="authoritative">
+        <label>DHCP range <input name="dhcp_range" value="{{ dhcp.dhcp_range }}" placeholder="192.168.1.200,192.168.1.250,12h"></label>
+        <label>Router (option 3) <input name="dhcp_router" value="{{ dhcp.dhcp_router }}" placeholder="192.168.1.1"></label>
+        <label>DNS (option 6) <input name="dhcp_dns" value="{{ dhcp.dhcp_dns }}" placeholder="192.168.1.1"></label>
+      </div>
+      <button type="submit">Save DHCP</button>
+    </form>
+  </div>
+</details>
+<details class="card" {% if open_section == "tftp" %}open{% endif %}>
+  <summary>TFTP</summary>
+  <div class="card-body">
+    <p class="meta">First-stage iPXE binaries are served from this directory over TFTP (and also over HTTP at <code>/tftp/</code>). Disable TFTP if another server on the LAN already hosts those files.</p>
+    <p>TFTP root: <code>{{ settings.tftp_root }}</code></p>
+    <form method="post" action="/settings/tftp">
+      <label class="check">
+        <input type="checkbox" name="tftp_enabled" value="1" {% if dhcp.tftp_enabled %}checked{% endif %}>
+        TFTP server enabled
+      </label>
+      <button type="submit">Save TFTP</button>
+    </form>
+  </div>
+</details>
+<details class="card" {% if open_section == "ssl" %}open{% endif %}>
+  <summary>HTTPS</summary>
+  <div class="card-body">
+    <p class="meta">The console is also served over HTTPS. iPXE, cloud-init, and Windows seeds stay on HTTP so a self-signed certificate does not break network boot. Keep <code>PXE_PUBLIC_URL</code> as <code>http://</code>.</p>
+    <p>HTTPS URL: <code>{{ https_url }}</code></p>
+    <p>Certificate volume: <code>{{ settings.ssl_dir }}</code></p>
+    {% if tls_error %}<p class="error">{{ tls_error }}</p>{% endif %}
+    {% if tls %}
+    <dl class="hints">
+      <dt>Source</dt>
+      <dd>{% if tls.source == "self-signed" %}self-signed (generated on first start){% else %}operator-provided PEM{% endif %}</dd>
+      <dt>Subject</dt>
+      <dd><code>{{ tls.subject }}</code></dd>
+      <dt>Issuer</dt>
+      <dd><code>{{ tls.issuer }}</code></dd>
+      <dt>Valid</dt>
+      <dd>{{ tls.not_before }} → {{ tls.not_after }}</dd>
+      <dt>SHA-256 fingerprint</dt>
+      <dd><code>{{ tls.fingerprint_sha256 }}</code></dd>
+      {% if tls.san %}
+      <dt>Subject Alternative Names</dt>
+      <dd><code>{{ tls.san|join(", ") }}</code></dd>
+      {% endif %}
+    </dl>
+    {% endif %}
+    <h3>Replace with PEM files</h3>
+    <p class="meta">Upload an unencrypted PEM certificate (the server cert first, then any chain) and matching PEM private key. HTTPS reloads after a successful save. The private key is never shown.</p>
+    <form method="post" action="/settings/ssl" enctype="multipart/form-data">
+      <label>Certificate (PEM) <input type="file" name="cert_pem" accept=".pem,.crt,.cer" required></label>
+      <label>Private key (PEM) <input type="file" name="key_pem" accept=".pem,.key" required></label>
+      <button type="submit">Install certificate</button>
+    </form>
+    <h3>Regenerate self-signed certificate</h3>
+    <p class="meta">Creates a new self-signed certificate on the SSL volume and reloads HTTPS. Browsers will show a new trust warning.</p>
+    <form method="post" action="/settings/ssl/regenerate">
+      <button type="submit">Regenerate self-signed certificate</button>
+    </form>
+  </div>
+</details>
+<details class="card" {% if open_section == "accounts" %}open{% endif %}>
+  <summary>Lab default local accounts</summary>
+  <div class="card-body">
+    <p>Stored encrypted. Passwords are write-only.</p>
+    <form method="post" action="/settings/accounts">
+      <h3>Linux root</h3>
+      <p>{% if linux.set %}set{% else %}not set{% endif %}</p>
+      <label>Username <input name="linux_username" value="{{ linux.username or 'root' }}"></label>
+      <label>Password <input type="password" name="linux_password" autocomplete="new-password"></label>
+      <h3>Windows Administrator</h3>
+      <p>{% if windows.set %}set{% else %}not set{% endif %}</p>
+      <label>Username <input name="windows_username" value="{{ windows.username or 'Administrator' }}"></label>
+      <label>Password <input type="password" name="windows_password" autocomplete="new-password"></label>
+      <button type="submit">Save defaults</button>
+    </form>
+  </div>
+</details>
 {% endblock %}

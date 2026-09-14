@@ -9,7 +9,7 @@ One Compose service on a **Linux host** with `network_mode: host`. `scripts/entr
 ```mermaid
 flowchart TB
   subgraph host["Linux host NIC — PXE_BIND_INTERFACE"]
-    LAN["LAN: DHCP / TFTP / HTTP :8080"]
+    LAN["LAN: DHCP / TFTP / HTTP :8080 / HTTPS :8443"]
   end
 
   subgraph ctr["home-lab-pxe container"]
@@ -32,6 +32,7 @@ flowchart TB
       DATA["data/pxe.db<br/>ciphertext local accounts"]
       IMG["images/"]
       TFTPD["tftp/"]
+      SSL["ssl/tls.crt + tls.key"]
     end
   end
 
@@ -50,18 +51,24 @@ flowchart TB
   UI --> DATA
   TFTP --> TFTPD
   FILES --> IMG
+  UI --> SSL
 ```
 
 ### 1.1 Processes and privileges
 
 ```mermaid
 flowchart LR
-  subgraph pid1["PID 1"]
-    E["entrypoint.sh"]
+  subgraph pid1["PID 1 — run-web.sh as uid 10001"]
+    H["uvicorn HTTP :8080"]
+    S["uvicorn HTTPS :8443"]
+  end
+  subgraph root["entrypoint.sh then exec gosu"]
+    E["starts dnsmasq + TLS files"]
   end
   E --> D["dnsmasq<br/>caps: NET_ADMIN, NET_RAW<br/>ports 67 / 69"]
-  E --> U["uvicorn<br/>uid: non-root<br/>port 8080"]
-  U --> F["FastAPI app<br/>src/routes, src/boot,<br/>src/cloudinit, src/windows"]
+  E --> pid1
+  H --> F["FastAPI app"]
+  S --> F
 ```
 
 ### 1.2 Volumes and env
@@ -79,11 +86,13 @@ flowchart TB
     V1["/var/lib/pxe/data"]
     V2["/var/lib/pxe/images"]
     V3["/var/lib/pxe/tftp"]
+    V4["/var/lib/pxe/ssl"]
   end
 
   V1 --> DB["SQLite inventory + vault"]
   V2 --> PAY["Ubuntu kernel/initrd, Windows WIMs"]
   V3 --> BIN["ipxe.efi, snponly.efi, undionly.kpxe"]
+  V4 --> TLS["self-signed or operator PEM"]
 ```
 
 ### 1.3 DHCP coexistence
@@ -304,13 +313,16 @@ Password fields never round-trip. After save the UI shows **set** vs **not set**
 ```mermaid
 flowchart LR
   subgraph images["Images"]
-    Limg["ubuntu-24.04   linux    x86_64   kernel+initrd"]
+    Limg["ubuntu-24.04   linux    x86_64   kernel+initrd or ISO"]
     Wimg["ws2022         windows  x86_64   boot.wim + install.wim"]
   end
   subgraph settings["Settings"]
+    Pxe["PXE  public URL  bind  extra options  next-server hints"]
+    Dhcp["DHCP  enable  proxy or authoritative"]
+    Tftp["TFTP  enable  tftp-root"]
+    Tls["HTTPS  self-signed or uploaded PEM"]
     DefL["Default linux_root   user set   password set"]
     DefW["Default windows_administrator   user set   password set"]
-    Bind["PXE_BIND_INTERFACE  eth0  proxyDHCP"]
   end
 ```
 
@@ -365,7 +377,7 @@ The data plane is **LAN-trust**. Do not publish DHCP, TFTP, or HTTP-boot to the 
 ```mermaid
 flowchart TB
   subgraph wan["Untrusted — WAN / internet"]
-    X["No DHCP, TFTP, or :8080 exposure"]
+    X["No DHCP, TFTP, HTTP-boot, or :8443 exposure"]
   end
 
   subgraph lan["LAN trust"]
@@ -382,7 +394,7 @@ flowchart TB
   end
 
   wan -.->|blocked by host firewall / bind iface| box
-  OP -->|HTTPS later; HTTP v1| AUTH
+  OP -->|HTTPS :8443 or HTTP :8080| AUTH
   CLI --> BOOT
   CLI --> SEED
   SPOOF -.->|can fetch that MAC's seed| SEED
@@ -443,6 +455,7 @@ flowchart TB
     N4["Git / .env except ENCRYPTION_KEY"]
     N5["Plaintext SQLite column"]
     N6["StagedJob overlay copy of the password"]
+    N7["TLS private key in logs or HTML"]
   end
 ```
 
@@ -488,7 +501,7 @@ flowchart TB
   end
   subgraph no["Do not"]
     N1["privileged: true by default"]
-    N2["Publish 67/69/8080 to the internet"]
+    N2["Publish 67/69/8080/8443 to the internet"]
     N3["Log user-data or unattend"]
     N4["OpenAPI / debug in production"]
   end

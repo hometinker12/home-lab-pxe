@@ -60,6 +60,10 @@ def get_image(db: Session, image_id: int | None) -> Image | None:
     return db.get(Image, image_id)
 
 
+def find_image_by_name(db: Session, name: str) -> Image | None:
+    return db.exec(select(Image).where(Image.name == name.strip())).first()
+
+
 def list_images(db: Session) -> list[Image]:
     return list(db.exec(select(Image).order_by(col(Image.name))).all())
 
@@ -115,6 +119,25 @@ def touch_machine(
         if uuid_n and not machine.uuid:
             machine.uuid = uuid_n
     db.add(machine)
+    return machine
+
+
+def register_machine(db: Session, *, mac: str, hostname: str = "", actor: str) -> Machine:
+    mac_n = normalize_mac(mac)
+    if find_by_mac(db, mac_n) is not None:
+        raise ValueError("A machine with that MAC already exists")
+    host = hostname.strip()
+    if len(host) > 253:
+        raise ValueError("Hostname is too long")
+    machine = Machine(
+        mac=mac_n,
+        hostname=host,
+        state=MachineState.pending.value,
+        last_seen_at=now(),
+    )
+    db.add(machine)
+    db.flush()
+    record_activity(db, actor=actor, action="machine.register", detail=mac_n)
     return machine
 
 
@@ -249,22 +272,70 @@ def create_image(
     initrd_path: str = "",
     boot_wim_path: str = "",
     install_wim_path: str = "",
+    iso_path: str = "",
     cmdline: str = "",
     actor: str,
 ) -> Image:
+    trimmed = name.strip()
+    if not trimmed:
+        raise ValueError("Image name is required")
+    if find_image_by_name(db, trimmed) is not None:
+        raise ValueError("An image with that name already exists")
     image = Image(
-        name=name.strip(),
+        name=trimmed,
         os_family=os_family.value,
         arch=arch.strip() or "x86_64",
         kernel_path=kernel_path.strip(),
         initrd_path=initrd_path.strip(),
         boot_wim_path=boot_wim_path.strip(),
         install_wim_path=install_wim_path.strip(),
+        iso_path=iso_path.strip(),
         cmdline=cmdline.strip(),
     )
     db.add(image)
     db.flush()
     record_activity(db, actor=actor, action="image.create", detail=image.name)
+    return image
+
+
+def update_image(
+    db: Session,
+    image: Image,
+    *,
+    name: str,
+    os_family: OsFamily,
+    arch: str = "x86_64",
+    kernel_path: str | None = None,
+    initrd_path: str | None = None,
+    boot_wim_path: str | None = None,
+    install_wim_path: str | None = None,
+    iso_path: str | None = None,
+    cmdline: str | None = None,
+    actor: str,
+) -> Image:
+    new_name = name.strip()
+    if not new_name:
+        raise ValueError("Image name is required")
+    clash = find_image_by_name(db, new_name)
+    if clash is not None and clash.id != image.id:
+        raise ValueError("An image with that name already exists")
+    image.name = new_name
+    image.os_family = os_family.value
+    image.arch = arch.strip() or "x86_64"
+    if kernel_path is not None:
+        image.kernel_path = kernel_path.strip()
+    if initrd_path is not None:
+        image.initrd_path = initrd_path.strip()
+    if boot_wim_path is not None:
+        image.boot_wim_path = boot_wim_path.strip()
+    if install_wim_path is not None:
+        image.install_wim_path = install_wim_path.strip()
+    if iso_path is not None:
+        image.iso_path = iso_path.strip()
+    if cmdline is not None:
+        image.cmdline = cmdline.strip()
+    db.add(image)
+    record_activity(db, actor=actor, action="image.update", detail=image.name)
     return image
 
 

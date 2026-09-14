@@ -100,3 +100,27 @@ def test_windows_install_script_has_unattend_url_not_password(client):
     api = client.get(f"/api/machines/{mid}").json()
     assert "SuperSecret" not in str(api)
     assert api["account_password_set"] is True
+
+
+def test_linux_iso_image_uses_sanboot(client):
+    login(client)
+    from src.db import session_scope
+    from src.inventory.service import create_image, deploy_machine, register_machine
+    from src.models import OsFamily
+
+    with session_scope() as db:
+        image = create_image(
+            db,
+            name="ubuntu-live",
+            os_family=OsFamily.linux,
+            iso_path="ubuntu/live.iso",
+            actor="admin",
+        )
+        machine = register_machine(db, mac="02:00:00:00:00:05", actor="admin")
+        deploy_machine(db, machine, image=image, actor="admin")
+        db.commit()
+    response = client.get("/ipxe/02-00-00-00-00-05")
+    assert "sanboot" in response.text
+    assert "/boot-files/" in response.text
+    assert "iso" in response.text
+    assert "kernel" not in response.text

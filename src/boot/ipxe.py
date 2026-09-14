@@ -36,6 +36,9 @@ def local_disk_script() -> str:
 def linux_install_script(machine: Machine, image: Image) -> str:
     settings = get_settings()
     base = settings.public_url
+    if not (image.kernel_path or "").strip() and (image.iso_path or "").strip():
+        iso = f"{base}/boot-files/{image.id}/iso"
+        return _header() + f"sanboot --no-describe {iso} || sanboot {iso}\n"
     seed = f"{base}/cloud-init/{machine.id}/"
     kernel = f"{base}/boot-files/{image.id}/kernel"
     initrd = f"{base}/boot-files/{image.id}/initrd"
@@ -49,6 +52,9 @@ def linux_install_script(machine: Machine, image: Image) -> str:
 def windows_install_script(machine: Machine, image: Image) -> str:
     settings = get_settings()
     base = settings.public_url
+    if not (image.boot_wim_path or "").strip() and (image.iso_path or "").strip():
+        iso = f"{base}/boot-files/{image.id}/iso"
+        return _header() + f"sanboot --no-describe {iso} || sanboot {iso}\n"
     wimboot = f"{base}/tftp/wimboot"
     boot_wim = f"{base}/boot-files/{image.id}/boot.wim"
     unattend = f"{base}/windows/{machine.id}/unattend.xml"

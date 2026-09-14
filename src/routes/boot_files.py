@@ -13,6 +13,7 @@ _SLOT = {
     "initrd": "initrd_path",
     "boot.wim": "boot_wim_path",
     "install.wim": "install_wim_path",
+    "iso": "iso_path",
 }
 
 

@@ -2,25 +2,27 @@
 {% block title %}Images — home-lab-pxe{% endblock %}
 {% block body %}
 <h1>Images</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
 <table>
-  <thead><tr><th>Name</th><th>OS</th><th>Arch</th><th>Paths</th></tr></thead>
+  <thead><tr><th>Name</th><th>OS</th><th>Arch</th><th>Paths</th><th></th></tr></thead>
   <tbody>
     {% for img in images %}
     <tr>
       <td>{{ img.name }}</td>
       <td>{{ img.os_family }}</td>
       <td>{{ img.arch }}</td>
-      <td><code>{{ img.kernel_path or img.boot_wim_path or "—" }}</code></td>
+      <td><code>{{ img.kernel_path or img.boot_wim_path or img.iso_path or "—" }}</code></td>
+      <td><a href="/images/{{ img.id }}">Edit</a></td>
     </tr>
     {% else %}
-    <tr><td colspan="4">No images registered.</td></tr>
+    <tr><td colspan="5">No images registered.</td></tr>
     {% endfor %}
   </tbody>
 </table>
 <section class="card">
-  <h2>Register image</h2>
-  <p>Paths are relative to the image volume (no upload in v1).</p>
-  <form method="post" action="/images">
+  <h2>Add image</h2>
+  <p class="meta">Upload an ISO, Linux kernel/initrd, or Windows WIM files, or point at paths already on the image volume (relative, no <code>../</code>).</p>
+  <form method="post" action="/images" enctype="multipart/form-data" class="image-form">
     <label>Name <input name="name" required></label>
     <label>OS
       <select name="os_family">
@@ -29,10 +31,20 @@
       </select>
     </label>
     <label>Arch <input name="arch" value="x86_64"></label>
-    <label>Kernel path <input name="kernel_path" placeholder="ubuntu/vmlinuz"></label>
-    <label>Initrd path <input name="initrd_path" placeholder="ubuntu/initrd"></label>
-    <label>boot.wim path <input name="boot_wim_path"></label>
-    <label>install.wim path <input name="install_wim_path"></label>
+    <div data-os="linux">
+      <label>Kernel path <input name="kernel_path" placeholder="ubuntu/vmlinuz"></label>
+      <label>Kernel file <input type="file" name="kernel_file"></label>
+      <label>Initrd path <input name="initrd_path" placeholder="ubuntu/initrd"></label>
+      <label>Initrd file <input type="file" name="initrd_file"></label>
+    </div>
+    <div data-os="windows">
+      <label>boot.wim path <input name="boot_wim_path"></label>
+      <label>boot.wim file <input type="file" name="boot_wim_file"></label>
+      <label>install.wim path <input name="install_wim_path"></label>
+      <label>install.wim file <input type="file" name="install_wim_file"></label>
+    </div>
+    <label>ISO path <input name="iso_path" placeholder="ubuntu/ubuntu-24.04.iso"></label>
+    <label>ISO file <input type="file" name="iso_file" accept=".iso,.img"></label>
     <label>Extra cmdline <input name="cmdline"></label>
     <button type="submit">Add</button>
   </form>
