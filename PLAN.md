@@ -67,7 +67,7 @@ One image, one Compose service for v1 (dnsmasq + uvicorn via `scripts/entrypoint
 
 - **`network_mode: host`** on Linux (DHCP broadcasts do not traverse a user-defined bridge).
 - Capabilities: `NET_ADMIN`, `NET_RAW`, and bind to 67/69 — **not** `privileged: true` unless a later milestone proves it is required.
-- Volumes: `/var/lib/pxe/data` (SQLite), `/var/lib/pxe/images` (operator-imported payloads), `/var/lib/pxe/tftp` (iPXE binaries).
+- Volumes: `/var/lib/pxe/data` (SQLite), `/var/lib/pxe/images` (operator-imported payloads), `/var/lib/pxe/tftp` (iPXE binaries), `/var/lib/pxe/ssl` (TLS cert + key).
 - Web process runs as non-root after dnsmasq is started; document the split if a single PID 1 supervisor is cleaner.
 
 `PXE_BIND_INTERFACE` selects the LAN NIC so we do not answer DHCP on a WAN or management interface.
@@ -79,13 +79,15 @@ One image, one Compose service for v1 (dnsmasq + uvicorn via `scripts/entrypoint
 | `proxy` (default) | proxyDHCP / `dhcp-range=...,proxy` — existing router/Windows DHCP stays authoritative |
 | `authoritative` | dnsmasq owns the range (`PXE_DHCP_RANGE`, router, DNS) |
 
+First-boot defaults come from env. After that, **Settings** in the console is the source of truth (SQLite). **PXE**, **DHCP**, and **TFTP** are separate collapsed sections. PXE shows the Docker **host** LAN IPv4 (`PXE_HOST_LAN_IPV4`, from `python scripts/host_lan_ipv4.py --write`) plus bind interface, extra allowlisted dnsmasq lines, and copy-paste values for an existing LAN DHCP server. DHCP and TFTP each have their own enable toggle. Saving writes `dnsmasq-pxe.conf` plus `dhcp.enabled` / `tftp.enabled`; `scripts/entrypoint.sh` starts, stops, or reloads dnsmasq when either service is on. Extra option lines are allowlisted (`dhcp-option`, `dhcp-host`, …); `dhcp-script` and `conf-file` are rejected.
+
 ## 5. Machine identity and lifecycle
 
 **Identity:** MAC address is primary. SMBIOS UUID (`${uuid}` in iPXE) is secondary. If a known UUID appears with a new MAC (NIC swap), attach the MAC and keep the record.
 
 | State | PXE behavior | How it gets here |
 |-------|----------------|------------------|
-| `pending` | Wait/poll menu | First DHCP/iPXE seen for an unknown MAC |
+| `pending` | Wait/poll menu | First DHCP/iPXE seen for an unknown MAC, or operator added the MAC in the console |
 | `ready` | Wait menu | Operator named it / tagged it; no deploy yet |
 | `deploying` | Installer + guest init | Operator clicked Deploy |
 | `deployed` | Immediate local disk | Installer reported success, or operator marked deployed |
@@ -115,7 +117,7 @@ Installer success: Linux cloud-init `phone_home` or a Windows Setup/Cloudbase-In
 
 ### 7.1 Image library
 
-Operator-imported artifacts under `PXE_IMAGE_ROOT` (not git):
+Operator-imported artifacts under `PXE_IMAGE_ROOT` (not git). The console can **upload** kernel/initrd/`boot.wim`/`install.wim`/ISO files or register relative paths already on the volume, and **edit** existing image records (metadata and replacement uploads). Linux image forms hide WIM fields; Windows forms hide kernel/initrd. An ISO-only image is served with iPXE `sanboot`; kernel+initrd still wins for Linux cloud-init installs.
 
 - Ubuntu live-server kernel/initrd + autoinstall (first Linux distro)
 - Windows Server install WIM + WinPE `boot.wim` (first Windows target: Server 2022 or 2025)
@@ -130,6 +132,8 @@ Per machine, HTTP nocloud-net:
 - `GET /cloud-init/{machine_id}/user-data`
 - `GET /cloud-init/{machine_id}/meta-data`
 - `GET /cloud-init/{machine_id}/vendor-data`
+
+These URLs are unauthenticated (installers have no console session) and return **404** unless the machine is `deploying` or `staged`.
 
 `meta-data.instance-id` **must change** when a staged job should re-run cloud-init / reimage.
 
@@ -191,7 +195,7 @@ Both **username and password** are Fernet-encrypted at rest. Optional lab-wide d
 - **New / pending** highlight so unknown hardware is obvious
 - **Images:** import metadata + paths (file upload can be later); Linux vs Windows
 - **Machine detail:** guest-init editor (cloud-init or Cloudbase-Init), local account username + password rotate, staged vs applied, recent boot events
-- **Settings:** optional default Linux root and Windows Administrator credentials (encrypted)
+- **Settings:** HTTPS certificate (self-signed on first start, or upload PEM cert + key), optional default Linux root and Windows Administrator credentials (encrypted)
 - **Activity log:** who deployed what, redacted
 
 ## 9. Data model (sketch)
@@ -220,13 +224,13 @@ SQLite only. Idempotent `_migrate_*` helpers in `src/db.py`, no Alembic.
 
 | Stage | Branch | Job |
 |-------|--------|-----|
-| Unit | `develop` | `pytest (ubuntu)` in `.github/workflows/pxe-smoke.yml` |
-| Integration | `release` | `PXE and Docker image smoke` — build, Trivy High/Critical, `/health`, `/ipxe/{mac}` pending vs deployed |
-| Publish | `main` (manual) | `.github/workflows/docker-publish.yml` (add when a Dockerfile exists) |
+| Unit | `develop` | `pytest (ubuntu)` in `.github/workflows/pxe-smoke.yml` (ruff + pytest) |
+| Container PXE | `develop` and `release` | `PXE and Docker image smoke` — local `docker build` (never push), Trivy High/Critical, `scripts/pxe_smoke.py` |
+| Publish | `main` | `.github/workflows/docker-publish.yml` — pytest, Trivy, PXE HTTP smoke, Docker Hub push, Cosign, GitHub Release. **Not** part of PXE smoke on `develop`/`release`. |
 
 Unit tests mock dnsmasq and image I/O. They must cover: unknown → wait, deployed → local, staged → install, instance-id bump, cloud-init/unattend redaction, Fernet round-trip for `linux_root` and `windows_administrator`, password never present in API/log fixtures.
 
-Promotion: `develop` → `release` after green pytest and a `security-reviewer` PASS. Do not promote to `main` as part of the default commit workflow.
+Promotion: `develop` → `release` after green pytest **and** green container PXE smoke on `develop`, then a `security-reviewer` PASS. Do not promote to `main` as part of the default commit workflow. Container smoke on `develop`/`release` **builds the image on the runner and never `docker push`**. Merging `release` → `main` runs Docker Hub publish.
 
 ## 12. Milestones
 
@@ -266,7 +270,7 @@ Console fields + raw overlay for cloud-init and Cloudbase-Init, `staged` state, 
 
 ### M6 — Polish
 
-More distros, image upload UI, better hardware inventory, optional BMC reboot, harden Compose, Docker publish workflow.
+More distros, image upload UI, better hardware inventory, optional BMC reboot, harden Compose. Docker publish workflow is in `.github/workflows/docker-publish.yml`.
 
 ## 13. Open decisions
 
@@ -283,7 +287,7 @@ Resolve during the matching milestone; do not block M0–M2.
 | Local-disk iPXE command | `exit` then `sanboot --no-describe --drive 0x80` fallback | M2 |
 | aarch64 / Raspberry Pi | x86_64 only until M6 | M6 |
 | Image import | Paths on the volume first; HTTP upload later | M3–M6 |
-| HTTPS for the console | HTTP on LAN in v1; optional TLS later | M6 |
+| HTTPS for the console | HTTPS on `:8443`; HTTP `:8080` remains for iPXE/guest-init | M6 |
 
 ## 14. Success criteria (v1 done)
 
@@ -294,4 +298,4 @@ Resolve during the matching milestone; do not block M0–M2.
 - Windows Server install completes with `unattend.xml` + Cloudbase-Init; **local Administrator** username/password stored encrypted.
 - Staging a new image or guest-init on a deployed host applies on the next PXE boot (Linux and Windows).
 - Vault secrets never land in git, logs, iPXE scripts, or API responses; `ENCRYPTION_KEY` is required outside tests.
-- `develop` pytest and `release` container smoke are green.
+- `develop` pytest **and** container PXE smoke (local `docker build`, no registry push) are green; `release` container smoke is green; merge to `main` publishes `hometinker12/home-lab-pxe` and a GitHub Release.

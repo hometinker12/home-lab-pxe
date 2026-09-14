@@ -1,0 +1,340 @@
+# Publish Docker image on push to main (or workflow_dispatch).
+# After a successful publish, creates a GitHub Release + v* tag when VERSION
+# does not already have a matching tag (typical after a version-bumped
+# release → main merge).
+name: Publish Docker image
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: hometinker12/home-lab-pxe
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Ruff
+        run: |
+          python -m ruff check src tests
+          python -m ruff format --check src tests
+      - name: Run tests
+        run: python -m pytest
+
+  container-smoke:
+    name: Build and smoke-test container
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Read version
+        id: version
+        run: echo "value=$(tr -d '\r\n' < VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Build smoke-test image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: home-lab-pxe:smoke-${{ github.sha }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.value }}
+          cache-from: type=gha,scope=container-smoke
+          cache-to: type=gha,mode=max,scope=container-smoke
+
+      - name: Scan smoke image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: home-lab-pxe:smoke-${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+
+      - name: Run hardened container smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          CONTAINER_NAME="home-lab-pxe-smoke"
+          IMAGE_TAG="home-lab-pxe:smoke-${GITHUB_SHA}"
+          ENC_KEY="$(python3 -c 'import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+          SESSION_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+
+          cleanup() {
+            docker logs "$CONTAINER_NAME" 2>/dev/null || true
+            docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # Entrypoint starts as root, launches optional dnsmasq, then gosu to uid 10001.
+          # Do not pass --user 10001: that skips the drop and breaks gosu.
+          docker run -d \
+            --name "$CONTAINER_NAME" \
+            --read-only \
+            --cap-drop ALL \
+            --cap-add NET_ADMIN \
+            --cap-add NET_RAW \
+            --cap-add NET_BIND_SERVICE \
+            --cap-add SETUID \
+            --cap-add SETGID \
+            --cap-add CHOWN \
+            --cap-add FOWNER \
+            --cap-add DAC_OVERRIDE \
+            --security-opt no-new-privileges:true \
+            --tmpfs /tmp:size=64M,mode=1777 \
+            --tmpfs /var/lib/pxe/data:size=64M,uid=10001,gid=10001,mode=1777 \
+            --tmpfs /var/lib/pxe/images:size=16M,uid=10001,gid=10001,mode=1755 \
+            --tmpfs /var/lib/pxe/ssl:size=1M,uid=10001,gid=10001,mode=1777 \
+            -p 127.0.0.1:8080:8080 \
+            -p 127.0.0.1:8443:8443 \
+            -e "ENCRYPTION_KEY=$ENC_KEY" \
+            -e "SECRET_KEY=$SESSION_KEY" \
+            -e "ADMIN_USER=admin" \
+            -e "ADMIN_PASSWORD=container-smoke-password" \
+            -e "PXE_PUBLIC_URL=http://127.0.0.1:8080" \
+            -e "PXE_HTTP_PORT=8080" \
+            -e "PXE_HTTPS_PORT=8443" \
+            -e "PXE_ENABLE_DHCP=1" \
+            -e "PXE_DHCP_OPTIONAL=1" \
+            -e "PXE_BIND_INTERFACE=eth0" \
+            -e "PXE_DHCP_MODE=proxy" \
+            "$IMAGE_TAG"
+
+          UID_IN_CONTAINER="$(docker exec "$CONTAINER_NAME" python -c 'print(open("/proc/1/status").read().split("Uid:")[1].split()[0])')"
+          if [ "$UID_IN_CONTAINER" = "0" ]; then
+            echo "Container PID 1 is running as root"
+            exit 1
+          fi
+
+          if docker exec "$CONTAINER_NAME" python -c "import pytest" 2>/dev/null; then
+            echo "pytest must not be importable in the production image"
+            exit 1
+          fi
+
+          ready=0
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/health; then
+              ready=1
+              break
+            fi
+            if [ "$(docker inspect --format='{{.State.Running}}' "$CONTAINER_NAME")" != "true" ]; then
+              echo "Container exited before becoming healthy"
+              exit 1
+            fi
+            sleep 2
+          done
+          if [ "$ready" != "1" ]; then
+            echo "Container health endpoint did not become ready"
+            exit 1
+          fi
+
+          https_ready=0
+          for attempt in $(seq 1 30); do
+            if curl -k --fail --silent --show-error https://127.0.0.1:8443/health >/dev/null; then
+              https_ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$https_ready" != "1" ]; then
+            echo "HTTPS health endpoint did not become ready"
+            exit 1
+          fi
+
+          python3 scripts/pxe_smoke.py \
+            --base-url http://127.0.0.1:8080 \
+            --user admin \
+            --password container-smoke-password
+          curl -k --fail --silent --show-error https://127.0.0.1:8443/health
+          docker exec "$CONTAINER_NAME" test -f /var/lib/pxe/ssl/tls.crt
+          docker exec "$CONTAINER_NAME" test -f /var/lib/pxe/ssl/tls.key
+          echo "PXE HTTP smoke passed (image was not pushed in this job)."
+
+  publish:
+    name: Build and publish
+    needs: container-smoke
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      actions: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Read and validate version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid VERSION value: $VERSION"
+            exit 1
+          fi
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: metadata
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.version.outputs.value }}
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+            org.opencontainers.image.title=home-lab-pxe
+            org.opencontainers.image.description=Docker PXE/iPXE server with web console, cloud-init, and Cloudbase-Init
+            org.opencontainers.image.source=https://github.com/hometinker12/home-lab-pxe
+            org.opencontainers.image.licenses=MIT
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      - name: Build and push multi-arch image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          sbom: true
+          provenance: mode=max
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.value }}
+          cache-from: type=gha,scope=container-smoke
+          cache-to: type=gha,mode=max,scope=container-smoke
+
+      - name: Keyless sign published digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE_NAME}@${DIGEST}"
+
+      - name: Write publication summary
+        run: |
+          echo "Published \`${{ env.IMAGE_NAME }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Digest: \`${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Cosign: keyless signature attached to digest" >> "$GITHUB_STEP_SUMMARY"
+          echo "SBOM/provenance: BuildKit attestations enabled (sbom=true, provenance=mode=max)" >> "$GITHUB_STEP_SUMMARY"
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Read and validate version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid VERSION value: $VERSION"
+            exit 1
+          fi
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create release if tag is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping."
+            echo "Skipped: release \`$TAG\` already exists." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          NOTES_FILE="$(mktemp)"
+          NOTES_VERSION="$VERSION" NOTES_PATH="$NOTES_FILE" \
+          NOTES_IMAGE="$IMAGE_NAME" NOTES_SHA="${GITHUB_SHA}" \
+          python3 <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["NOTES_VERSION"]
+          notes_path = Path(os.environ["NOTES_PATH"])
+          image_name = os.environ["NOTES_IMAGE"]
+          sha = os.environ["NOTES_SHA"]
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          pattern = re.compile(
+              rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)",
+              re.MULTILINE | re.DOTALL,
+          )
+          match = pattern.search(changelog)
+          if match and match.group(1).strip():
+              body = match.group(1).strip() + "\n"
+          else:
+              body = (
+                  f"Release {version}.\n\n"
+                  f"- Docker image: `{image_name}:{version}`\n"
+                  f"- Commit: `{sha}`\n"
+              )
+          notes_path.write_text(body, encoding="utf-8")
+          PY
+
+          URL="$(gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file "$NOTES_FILE" \
+            --target "${GITHUB_SHA}")"
+
+          echo "Created release: $URL"
+          echo "Created GitHub Release: $URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Docker image: \`${IMAGE_NAME}:${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"

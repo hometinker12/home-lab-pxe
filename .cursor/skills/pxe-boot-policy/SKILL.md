@@ -30,8 +30,8 @@ Identity: MAC is primary; SMBIOS UUID is secondary. If UUID matches a known mach
 
 ## Guest-init contract
 
-- Linux: serve `user-data`, `meta-data`, and `vendor-data` under `/cloud-init/{machine_id}/`.
-- Windows: serve `unattend.xml` and Cloudbase-Init metadata under `/windows/{machine_id}/` and `/cloudbase-init/{machine_id}/`.
+- Linux: serve `user-data`, `meta-data`, and `vendor-data` under `/cloud-init/{machine_id}/` **only** while the machine is `deploying` or `staged` (404 for pending/deployed).
+- Windows: serve `unattend.xml` and Cloudbase-Init metadata under `/windows/{machine_id}/` and `/cloudbase-init/{machine_id}/` under the same install-state gate.
 - Bump `instance-id` when a staged job should re-run guest-init / reimage.
 - Staged console changes apply as a **new image on next PXE boot**, not as SSH/WinRM/config-management push.
 - Inject Linux root and Windows local Administrator from the Fernet vault at render time. Do not persist plaintext in `StagedJob` rows.

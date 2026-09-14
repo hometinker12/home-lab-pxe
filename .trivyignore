@@ -1,0 +1,2 @@
+# Reviewed, time-bounded vulnerability exceptions for Trivy image scans.
+# Add CVE IDs here only after documenting risk acceptance and an expiry note.

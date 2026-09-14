@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ image.name }} — Images{% endblock %}
+{% block body %}
+<p><a href="/images">← Images</a></p>
+<h1>Edit {{ image.name }}</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<section class="card">
+  <p class="meta">Leave a file empty to keep the current payload. A new upload replaces that slot. Paths are relative to the image volume. Linux kernel/initrd fields hide when Windows is selected, and WIM fields hide when Linux is selected.</p>
+  <form method="post" action="/images/{{ image.id }}" enctype="multipart/form-data" class="image-form">
+    <label>Name <input name="name" value="{{ image.name }}" required></label>
+    <label>OS
+      <select name="os_family">
+        <option value="linux" {% if image.os_family == "linux" %}selected{% endif %}>linux</option>
+        <option value="windows" {% if image.os_family == "windows" %}selected{% endif %}>windows</option>
+      </select>
+    </label>
+    <label>Arch <input name="arch" value="{{ image.arch }}"></label>
+    <div data-os="linux">
+      <label>Kernel path <input name="kernel_path" value="{{ image.kernel_path }}"></label>
+      <label>Replace kernel <input type="file" name="kernel_file"></label>
+      <label>Initrd path <input name="initrd_path" value="{{ image.initrd_path }}"></label>
+      <label>Replace initrd <input type="file" name="initrd_file"></label>
+    </div>
+    <div data-os="windows">
+      <label>boot.wim path <input name="boot_wim_path" value="{{ image.boot_wim_path }}"></label>
+      <label>Replace boot.wim <input type="file" name="boot_wim_file"></label>
+      <label>install.wim path <input name="install_wim_path" value="{{ image.install_wim_path }}"></label>
+      <label>Replace install.wim <input type="file" name="install_wim_file"></label>
+    </div>
+    <label>ISO path <input name="iso_path" value="{{ image.iso_path }}"></label>
+    <label>Replace ISO <input type="file" name="iso_file" accept=".iso,.img"></label>
+    <label>Extra cmdline <input name="cmdline" value="{{ image.cmdline }}"></label>
+    <button type="submit">Save image</button>
+  </form>
+</section>
+{% endblock %}
