@@ -16,11 +16,13 @@ PID_FILE="/tmp/dnsmasq-pxe.pid"
 export PXE_DATA_DIR="$DATA_DIR"
 export PXE_SSL_DIR="$SSL_DIR"
 
-mkdir -p "$TFTP_ROOT" "$IMAGE_ROOT" "$DATA_DIR" "$SSL_DIR"
+mkdir -p "$TFTP_ROOT" "$IMAGE_ROOT" "$DATA_DIR" "$SSL_DIR" || true
 
 for f in undionly.kpxe ipxe.efi snponly.efi wimboot; do
   if [ ! -f "$TFTP_ROOT/$f" ]; then
-    printf 'ipxe-stub\n' > "$TFTP_ROOT/$f"
+    if ! printf 'ipxe-stub\n' > "$TFTP_ROOT/$f" 2>/dev/null; then
+      echo "WARN: cannot write $TFTP_ROOT/$f (read-only rootfs?)" >&2
+    fi
   fi
 done
 

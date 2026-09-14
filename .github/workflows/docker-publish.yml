@@ -130,17 +130,6 @@ jobs:
             -e "PXE_DHCP_MODE=proxy" \
             "$IMAGE_TAG"
 
-          UID_IN_CONTAINER="$(docker exec "$CONTAINER_NAME" python -c 'print(open("/proc/1/status").read().split("Uid:")[1].split()[0])')"
-          if [ "$UID_IN_CONTAINER" = "0" ]; then
-            echo "Container PID 1 is running as root"
-            exit 1
-          fi
-
-          if docker exec "$CONTAINER_NAME" python -c "import pytest" 2>/dev/null; then
-            echo "pytest must not be importable in the production image"
-            exit 1
-          fi
-
           ready=0
           for attempt in $(seq 1 45); do
             if curl --fail --silent --show-error http://127.0.0.1:8080/health; then
@@ -155,6 +144,17 @@ jobs:
           done
           if [ "$ready" != "1" ]; then
             echo "Container health endpoint did not become ready"
+            exit 1
+          fi
+
+          UID_IN_CONTAINER="$(docker exec "$CONTAINER_NAME" python -c 'print(open("/proc/1/status").read().split("Uid:")[1].split()[0])')"
+          if [ "$UID_IN_CONTAINER" = "0" ]; then
+            echo "Container PID 1 is running as root"
+            exit 1
+          fi
+
+          if docker exec "$CONTAINER_NAME" python -c "import pytest" 2>/dev/null; then
+            echo "pytest must not be importable in the production image"
             exit 1
           fi
 
