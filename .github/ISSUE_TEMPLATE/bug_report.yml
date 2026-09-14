@@ -1,0 +1,92 @@
+name: Bug report
+description: Report unexpected behavior or a regression.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. For security vulnerabilities, use
+        [private security reporting](https://github.com/hometinker12/home-lab-pxe/security/advisories/new)
+        instead of a public issue.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong in one or two sentences?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps another person can follow.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Docker Compose (Linux host)
+        - Local Python
+        - Published Docker image
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Value from the VERSION file, image tag, or commit SHA.
+      placeholder: "0.0.1 or abc1234"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area (if relevant)
+      options:
+        - Not applicable
+        - PXE / iPXE boot policy
+        - Machine discovery / inventory
+        - Linux image deploy
+        - Windows Server deploy
+        - cloud-init / Cloudbase-Init
+        - Encrypted local accounts
+        - Admin web UI
+        - Docker / networking
+        - Multiple / unknown
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      description: Paste relevant operational log snippets. Redact secrets and cloud-init user-data.
+      render: text
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues for duplicates.
+          required: true
+        - label: I redacted secrets, SSH keys, passwords, and cloud-init user-data from this report.
+          required: true
