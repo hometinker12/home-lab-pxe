@@ -1,0 +1,37 @@
+---
+description: Python and FastAPI conventions for home-lab-pxe source and tests
+globs: "{src,tests}/**/*.py"
+alwaysApply: false
+---
+
+# Python conventions (home-lab-pxe)
+
+## Layout
+
+- Application code lives under `src/`; pytest under `tests/`.
+- Prefer new HTTP routes in `src/routes/` over growing `src/app.py`.
+- Boot-policy and iPXE rendering belong in `src/boot/`. Cloud-init rendering belongs in `src/cloudinit/`. Windows unattend/Cloudbase-Init belong in `src/windows/`. Machine lifecycle and encrypted local accounts belong in `src/inventory/`.
+
+## Style and lint
+
+- Target Python 3.12; Ruff config in `pyproject.toml` (line length 120, rules E/F/I/UP).
+- Run before commit: `python -m ruff check src tests` and `python -m ruff format --check src tests`.
+
+## Security defaults
+
+- Never log or return cloud-init user-data, unattend.xml secrets, Cloudbase-Init user-data, SSH private keys, local-account passwords, or session secrets.
+- Fail fast when `SECRET_KEY` or `ENCRYPTION_KEY` are missing in production (`PXE_ALLOW_INSECURE_DEFAULTS=1` is test-only).
+- Persist Linux root and Windows local Administrator username+password only as Fernet ciphertext; decrypt in memory at guest-seed render time. Passwords are write-only in the UI/API.
+- Browser POSTs need CSRF; JSON API routes use session auth or an API key as appropriate.
+- Treat MAC-based boot URLs as LAN-trust only; do not put secrets in iPXE scripts that a neighbor can TFTP/HTTP.
+
+## Tests
+
+- Use fixtures from `tests/conftest.py` for isolated SQLite and test settings.
+- Mock DHCP/TFTP/dnsmasq and external image downloads; container/PXE behavior is covered by CI smoke.
+- Name tests `tests/test_<module>.py` matching the module under test.
+
+## Version and docs
+
+- User-visible changes need `CHANGELOG.md` `[Unreleased]` entries.
+- New env vars need `.env.example` entries with safe placeholders.

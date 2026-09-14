@@ -1,0 +1,34 @@
+.env
+.plans/
+data/
+data/ssl/
+
+# Operator-uploaded boot payloads (large binaries; keep on the data volume)
+images/
+*.iso
+*.img
+*.squashfs
+*.qcow2
+# Cursor IDE — track project agents, rules, and skills; ignore local/ephemeral files
+.cursor/*
+!.cursor/agents/
+!.cursor/agents/**
+!.cursor/rules/
+!.cursor/rules/**
+!.cursor/skills/
+!.cursor/skills/**
+docker-compose.override.yml
+
+# Pytest cache and artifacts
+.pytest_cache/
+.testmondata
+pytestdebug.log
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test coverage reports
+.coverage
+htmlcov/
+coverage.xml
+*.lcov
