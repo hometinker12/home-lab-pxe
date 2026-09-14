@@ -53,11 +53,18 @@ RUN apt-get update \
     && useradd --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin app \
     && mkdir -p /var/lib/pxe/tftp /var/lib/pxe/images /var/lib/pxe/data /var/lib/pxe/ssl
 
-# Best-effort official iPXE binaries; stubs are created at runtime if these fail.
-RUN curl -fsSL -o /var/lib/pxe/tftp/undionly.kpxe https://boot.ipxe.org/undionly.kpxe \
-    && curl -fsSL -o /var/lib/pxe/tftp/ipxe.efi https://boot.ipxe.org/ipxe.efi \
-    && curl -fsSL -o /var/lib/pxe/tftp/snponly.efi https://boot.ipxe.org/snponly.efi \
-    || true
+# Best-effort official iPXE binaries. Always leave non-empty TFTP files so a
+# read-only rootfs (CI hardened smoke) can start even when the downloads 404.
+RUN set -e; \
+    mkdir -p /var/lib/pxe/tftp; \
+    curl -fsSL -o /var/lib/pxe/tftp/undionly.kpxe https://boot.ipxe.org/undionly.kpxe || true; \
+    curl -fsSL -o /var/lib/pxe/tftp/ipxe.efi https://boot.ipxe.org/ipxe.efi || true; \
+    curl -fsSL -o /var/lib/pxe/tftp/snponly.efi https://boot.ipxe.org/snponly.efi || true; \
+    for f in undionly.kpxe ipxe.efi snponly.efi wimboot; do \
+      if [ ! -s "/var/lib/pxe/tftp/$f" ]; then \
+        printf 'ipxe-stub\n' > "/var/lib/pxe/tftp/$f"; \
+      fi; \
+    done
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
