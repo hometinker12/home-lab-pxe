@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -49,6 +49,12 @@ def create_app() -> FastAPI:
     )
     static_dir = Path(__file__).resolve().parent / "static"
     static_dir.mkdir(exist_ok=True)
+    favicon_file = static_dir / "favicon.png"
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        return FileResponse(favicon_file, media_type="image/png")
+
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     app.add_middleware(SecurityMiddleware)
     app.include_router(health_router)

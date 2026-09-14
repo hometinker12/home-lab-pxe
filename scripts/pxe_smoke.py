@@ -61,6 +61,18 @@ def main() -> None:
     health = json.loads(body)
     expect(health.get("status") == "ok", f"health body {health}")
 
+    status, _, body = c.request("GET", "/login")
+    expect(status == 200, f"/login {status}")
+    expect(b"/static/logo.png" in body, "login missing logo")
+    expect(b'rel="icon"' in body, "login missing favicon link")
+    expect(b"brand-mark" in body, "header missing brand mark")
+    status, _, body = c.request("GET", "/static/logo.png")
+    expect(status == 200 and body.startswith(b"\x89PNG"), "logo png")
+    status, _, body = c.request("GET", "/static/favicon.png")
+    expect(status == 200 and body.startswith(b"\x89PNG"), "favicon png")
+    status, _, body = c.request("GET", "/favicon.ico")
+    expect(status == 200 and len(body) > 32, "favicon.ico")
+
     status, _, body = c.request("GET", "/boot.ipxe")
     expect(status == 200 and body.startswith(b"#!ipxe"), "/boot.ipxe")
     expect(b"chain" in body, "boot.ipxe missing chain")

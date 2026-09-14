@@ -25,7 +25,27 @@ a { color: var(--accent); }
   background: #0b0f14;
   border-bottom: 1px solid #2a3440;
 }
-.brand { font-weight: 700; text-decoration: none; color: var(--text); }
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--text);
+}
+.brand-mark {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.login-logo {
+  display: block;
+  width: 9rem;
+  height: 9rem;
+  margin: 0 auto 0.75rem;
+  border-radius: 12px;
+}
 nav { display: flex; gap: 1rem; }
 .logout { margin-left: auto; display: flex; gap: 0.75rem; align-items: center; }
 .who { color: var(--muted); font-size: 0.9rem; }
@@ -43,6 +63,7 @@ main { padding: 1.25rem; max-width: 1100px; }
   padding: 1rem 1.25rem;
 }
 .login { max-width: 24rem; margin: 3rem auto; }
+.login h1 { text-align: center; margin-top: 0; }
 label { display: block; margin: 0.75rem 0; }
 input, select, textarea, button {
   font: inherit;

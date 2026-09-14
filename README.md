@@ -40,7 +40,7 @@ On a Linux lab host, add `network_mode: host` in `docker-compose.override.yml` s
 ## Tests and CI
 
 - Unit: `python -m pytest` (also `ruff` on `develop`)
-- Container PXE smoke: GitHub Actions **builds the image on the runner and never `docker push`**. `scripts/pxe_smoke.py` covers `/health`, `/boot.ipxe`, `/ipxe/{mac}` pending/deploy/deployed/staged, Linux cloud-init, Windows unattend/Cloudbase-Init, and phone-home. On `develop`, `develop commit smoke gate` requires both pytest and that container job.
+- Container PXE smoke: GitHub Actions **builds the image on the runner and never `docker push`**. `scripts/pxe_smoke.py` covers `/health`, `/login` brand assets and `/favicon.ico`, `/boot.ipxe`, `/ipxe/{mac}` pending/deploy/deployed/staged, Linux cloud-init, Windows unattend/Cloudbase-Init, and phone-home. On `develop`, `develop commit smoke gate` requires both pytest and that container job.
 
 ## Documentation
 
