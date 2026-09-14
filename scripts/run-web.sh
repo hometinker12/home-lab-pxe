@@ -19,6 +19,10 @@ start_http() {
   HTTP_PID=$!
 }
 
+https_health() {
+  python -c "import ssl, urllib.request; urllib.request.urlopen('https://127.0.0.1:${HTTPS_PORT}/health', timeout=1, context=ssl._create_unverified_context())" >/dev/null 2>&1
+}
+
 start_https() {
   HTTPS_PID=""
   if [ ! -f "$CERT" ] || [ ! -f "$KEY" ]; then
@@ -28,11 +32,21 @@ start_https() {
   uvicorn src.app:create_app --factory --host "$BIND" --port "$HTTPS_PORT" --workers 1 \
     --ssl-certfile "$CERT" --ssl-keyfile "$KEY" &
   HTTPS_PID=$!
-  sleep 0.3
-  if ! kill -0 "$HTTPS_PID" 2>/dev/null; then
-    echo "WARN: HTTPS uvicorn failed to start" >&2
-    HTTPS_PID=""
-  fi
+  i=0
+  while [ "$i" -lt 50 ]; do
+    if [ -n "$HTTPS_PID" ] && ! kill -0 "$HTTPS_PID" 2>/dev/null; then
+      echo "WARN: HTTPS uvicorn exited during startup" >&2
+      HTTPS_PID=""
+      return 0
+    fi
+    if https_health; then
+      echo "HTTPS listening on ${HTTPS_PORT}"
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 0.1
+  done
+  echo "WARN: HTTPS did not become ready on ${HTTPS_PORT}" >&2
 }
 
 stop_pid() {

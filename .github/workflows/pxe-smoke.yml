@@ -123,6 +123,19 @@ jobs:
             exit 1
           fi
           curl -fsS http://127.0.0.1:8080/health
+          https_ready=0
+          for i in $(seq 1 30); do
+            if curl -kfsS https://127.0.0.1:8443/health >/dev/null; then
+              https_ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$https_ready" != "1" ]; then
+            echo "HTTPS failed to become healthy"
+            docker logs pxe-smoke || true
+            exit 1
+          fi
           curl -kfsS https://127.0.0.1:8443/health
           docker exec pxe-smoke test -f /var/lib/pxe/ssl/tls.crt
           docker exec pxe-smoke test -f /var/lib/pxe/ssl/tls.key

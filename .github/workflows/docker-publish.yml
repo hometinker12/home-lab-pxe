@@ -158,6 +158,19 @@ jobs:
             exit 1
           fi
 
+          https_ready=0
+          for attempt in $(seq 1 30); do
+            if curl -k --fail --silent --show-error https://127.0.0.1:8443/health >/dev/null; then
+              https_ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$https_ready" != "1" ]; then
+            echo "HTTPS health endpoint did not become ready"
+            exit 1
+          fi
+
           python3 scripts/pxe_smoke.py \
             --base-url http://127.0.0.1:8080 \
             --user admin \
