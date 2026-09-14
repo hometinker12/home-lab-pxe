@@ -9,6 +9,7 @@ title = "home-lab-pxe secret-scanning allowlist"
   ]
   regexes = [
     '''change-me-to-a-long-random-string''',
+    '''change-me-admin-password''',
     '''replace-with-fernet-key''',
     '''http://192\.168\.1\.10:8080''',
   ]

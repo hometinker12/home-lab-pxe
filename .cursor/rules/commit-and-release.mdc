@@ -9,7 +9,7 @@ When the user asks to **commit** (or "commit all pending changes"), perform this
 
 **Workflow path:** commit → push → **wait for matching CI (blocking; SHA-matched green required)** → **adversarial security review (blocking)** → PR to `release` → merge → watch integration smoke until green. On any CI or security-gate failure, fix on **`develop`** and **restart from §1 Commit**. **Never open a PR while CI is pending or red, or while security review is FAIL.**
 
-**Stop at `release`.** Do **not** open PRs to `main`, merge to `main`, or push to `main` as part of this workflow. Docker publish ([`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)) is a separate, manual step the user performs when ready.
+**Stop at `release`.** Do **not** open PRs to `main`, merge to `main`, or push to `main` as part of this workflow. Docker publish ([`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)) runs automatically on push to `main` after a manual `release` → `main` merge.
 
 Work on **`develop`** unless the user specifies another branch.
 
@@ -18,11 +18,13 @@ Work on **`develop`** unless the user specifies another branch.
 | Stage | Branch | Workflow | Jobs to watch |
 |-------|--------|----------|---------------|
 | Unit tests | `develop` | [`.github/workflows/pxe-smoke.yml`](.github/workflows/pxe-smoke.yml) | `pytest (ubuntu)` |
-| Integration smoke | `release` | same workflow | `PXE and Docker image smoke` |
+| Container PXE smoke | `develop` and `release` | same workflow | `PXE and Docker image smoke` (local `docker build` only — never `docker push`) |
+| Develop commit gate | `develop` | same workflow | `develop commit smoke gate` (needs both jobs above) |
+| Docker Hub + GitHub Release | `main` | [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) | `Test`, `Build and smoke-test container`, `Build and publish`, `Create GitHub Release` |
 
-Promotion path: **`develop` → `release`** (end).
+Promotion path: **`develop` → `release`** (end of the default commit workflow). **`release` → `main`** is a separate, explicit request and triggers Docker publish.
 
-Until `src/` and `tests/` exist, the develop job may pass as a bootstrap skip. After the first application commit, the job must run real pytest. Until a `Dockerfile` exists, the release smoke job may pass as a bootstrap skip; after that it must build, Trivy-scan, and exercise `/health` plus `/ipxe/{mac}` pending vs deployed.
+Until `src/` and `tests/` exist, the develop job may pass as a bootstrap skip. After the first application commit, **both** `pytest (ubuntu)` and `PXE and Docker image smoke` must be green on `develop`. The container job builds the image on the runner and **must not** `docker push`.
 
 ## 1. Commit
 
@@ -167,7 +169,7 @@ If any precondition fails, CI is **red or incomplete** — go to [§2.2 Diagnose
 
 Workflow: **`pxe-smoke.yml`** on branch **`develop`**.
 
-Required green job: **`pytest (ubuntu)`**.
+Required green jobs: **`pytest (ubuntu)`**, **`PXE and Docker image smoke (ubuntu + Docker)`**, and **`develop commit smoke gate`**.
 
 ```powershell
 git rev-parse HEAD

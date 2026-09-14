@@ -1,4 +1,5 @@
 .env
+.host-lan-ip.env
 .plans/
 data/
 data/ssl/
@@ -21,6 +22,7 @@ docker-compose.override.yml
 
 # Pytest cache and artifacts
 .pytest_cache/
+pytest-cache-files*/
 .testmondata
 pytestdebug.log
 __pycache__/

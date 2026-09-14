@@ -1,10 +1,8 @@
-# Tests: pytest on **develop**; Docker PXE stack smoke on **release**.
-# - **pytest**: unit tests on ubuntu (`python -m pytest`) once src/tests exist.
-# - **pxe-smoke-linux**: build the image, Trivy High/Critical scan, then hit
-#   /health and /ipxe/{mac} for pending vs deployed once a Dockerfile exists.
-#
-# During repo bootstrap (no requirements-dev.txt / Dockerfile yet) the matching
-# job records a skip and succeeds so the develop → release workflow can run.
+# Tests: pytest + container PXE smoke on **develop**; same container PXE smoke on **release**.
+# Container jobs **build the image locally and never docker push**.
+# - **pytest**: ruff + unit tests on ubuntu.
+# - **pxe-smoke-linux**: docker build (no push), Trivy High/Critical, run container, scripts/pxe_smoke.py
+#   covering /health, /boot.ipxe, /ipxe pending vs deploy vs deployed vs staged, cloud-init, phone-home.
 
 name: Pytest + PXE smoke
 
@@ -30,30 +28,138 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run pytest or bootstrap skip
+      - name: Install dependencies
         run: |
-          set -euo pipefail
-          if [ -f requirements-dev.txt ] && [ -d tests ]; then
-            python -m pip install --upgrade pip
-            python -m pip install -r requirements-dev.txt
-            python -m pytest
-          else
-            echo "Bootstrap: requirements-dev.txt or tests/ not present; skipping pytest."
-          fi
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Ruff
+        run: |
+          python -m ruff check src tests
+          python -m ruff format --check src tests
+
+      - name: Pytest
+        run: python -m pytest
 
   pxe-smoke-linux:
     name: PXE and Docker image smoke (ubuntu + Docker)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/release'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Build, scan, and smoke or bootstrap skip
+      - name: Generate test secrets
+        run: |
+          python3 - <<'PY'
+          import base64, os, pathlib, secrets
+          enc = base64.urlsafe_b64encode(os.urandom(32)).decode()
+          secret = secrets.token_urlsafe(32)
+          pathlib.Path("ci.env").write_text(
+              "\n".join(
+                  [
+                      f"SECRET_KEY={secret}",
+                      f"ENCRYPTION_KEY={enc}",
+                      "ADMIN_USER=admin",
+                      "ADMIN_PASSWORD=smokepass",
+                      "PXE_PUBLIC_URL=http://127.0.0.1:8080",
+                      "PXE_HTTP_PORT=8080",
+                      "PXE_HTTPS_PORT=8443",
+                      "PXE_ENABLE_DHCP=1",
+                      "PXE_DHCP_OPTIONAL=1",
+                      "PXE_BIND_INTERFACE=eth0",
+                      "PXE_DHCP_MODE=proxy",
+                  ]
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Build image (no push)
         run: |
           set -euo pipefail
-          if [ ! -f Dockerfile ]; then
-            echo "Bootstrap: Dockerfile not present; skipping PXE/Docker smoke."
-            exit 0
+          IMAGE_TAG="home-lab-pxe:ci-${GITHUB_SHA}"
+          docker build . --file Dockerfile --build-arg VERSION="$(tr -d '\r\n' < VERSION)" --tag "$IMAGE_TAG"
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+          echo "CI smoke does not docker push."
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: home-lab-pxe:ci-${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+
+      - name: Run container and PXE HTTP smoke
+        run: |
+          set -euo pipefail
+          IMAGE_TAG="home-lab-pxe:ci-${GITHUB_SHA}"
+          # Local image only. This workflow must never docker login or docker push.
+          docker run -d --name pxe-smoke \
+            --env-file ci.env \
+            -p 8080:8080 \
+            -p 8443:8443 \
+            --cap-add NET_ADMIN \
+            --cap-add NET_RAW \
+            --cap-add NET_BIND_SERVICE \
+            --cap-add SETUID \
+            --cap-add SETGID \
+            --cap-add CHOWN \
+            "$IMAGE_TAG"
+          ready=0
+          for i in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != "1" ]; then
+            echo "container failed to become healthy"
+            docker logs pxe-smoke || true
+            exit 1
           fi
-          echo "Dockerfile present — implement image build, Trivy, and /health + /ipxe smoke in this job."
-          exit 1
+          curl -fsS http://127.0.0.1:8080/health
+          https_ready=0
+          for i in $(seq 1 30); do
+            if curl -kfsS https://127.0.0.1:8443/health >/dev/null; then
+              https_ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$https_ready" != "1" ]; then
+            echo "HTTPS failed to become healthy"
+            docker logs pxe-smoke || true
+            exit 1
+          fi
+          curl -kfsS https://127.0.0.1:8443/health
+          docker exec pxe-smoke test -f /var/lib/pxe/ssl/tls.crt
+          docker exec pxe-smoke test -f /var/lib/pxe/ssl/tls.key
+          python3 scripts/pxe_smoke.py --base-url http://127.0.0.1:8080 --user admin --password smokepass
+          echo "PXE HTTP smoke passed (image was not pushed)."
+      - name: Container logs (always)
+        if: always()
+        run: docker logs pxe-smoke || true
+      - name: Remove smoke container (never push)
+        if: always()
+        run: |
+          docker rm -f pxe-smoke || true
+          echo "No docker push was performed."
+
+  develop-commit-gate:
+    name: develop commit smoke gate
+    if: github.ref == 'refs/heads/develop'
+    needs:
+      - pytest
+      - pxe-smoke-linux
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Confirm pytest + PXE container smoke (no image push)
+        run: |
+          echo "develop smoke gate passed"
+          echo "pytest and local docker PXE smoke are green"
+          echo "no registry publish"
