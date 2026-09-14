@@ -1,0 +1,14 @@
+title = "home-lab-pxe secret-scanning allowlist"
+
+[allowlist]
+  description = "Documentation placeholders, not credentials"
+  paths = [
+    '''\.env\.example''',
+    '''PLAN\.md''',
+    '''README\.md''',
+  ]
+  regexes = [
+    '''change-me-to-a-long-random-string''',
+    '''replace-with-fernet-key''',
+    '''http://192\.168\.1\.10:8080''',
+  ]

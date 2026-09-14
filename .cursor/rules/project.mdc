@@ -1,0 +1,29 @@
+---
+description: Product context for the home-lab-pxe Docker PXE boot server
+alwaysApply: true
+---
+
+# home-lab-pxe
+
+Docker-packaged PXE/iPXE server with a web console. It discovers machines on the LAN, holds **unknown** systems in a wait menu until an operator acts, and lets **deployed** systems fall through to local disk. Linux installs use full cloud-init. Windows Server uses unattend.xml plus Cloudbase-Init. Staged console changes apply on the **next PXE boot** as a new image, not as in-place config management. Linux root and Windows local Administrator usernames/passwords are Fernet-encrypted at rest.
+
+## Invariants
+
+- Machine identity is MAC-primary, SMBIOS UUID secondary.
+- Unknown MAC → wait/poll menu. Never auto-install.
+- Deployed + no staged job → immediate local-disk boot (no menu).
+- Deployed + staged job → next PXE serves the new image + guest-init (cloud-init or Cloudbase-Init).
+- Cloud-init, unattend.xml, Cloudbase-Init user-data, SSH keys, and local-account passwords are secrets — never log or echo them.
+- `ENCRYPTION_KEY` required in production; local-account username+password ciphertext only in SQLite.
+- PXE/DHCP/TFTP are LAN-only; do not expose them to the internet.
+
+## Layout (target)
+
+- `src/routes/` — HTTP routes (admin UI, inventory API, iPXE, cloud-init, Windows seeds).
+- `src/boot/` — boot-policy and iPXE script generation.
+- `src/cloudinit/` — per-machine Linux user-data / meta-data / vendor-data.
+- `src/windows/` — unattend.xml and Cloudbase-Init metadata.
+- `src/inventory/` — machine registry, lifecycle, encrypted local accounts.
+- `tests/` — pytest. Mock DHCP/TFTP; CI covers container smoke.
+
+See `PLAN.md` and `ARCHITECTURE.md` for architecture and milestones. This is **not** api-to-dns; do not add DNS-provider plugins or WinRM DNS jobs.

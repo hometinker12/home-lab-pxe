@@ -1,0 +1,59 @@
+# Tests: pytest on **develop**; Docker PXE stack smoke on **release**.
+# - **pytest**: unit tests on ubuntu (`python -m pytest`) once src/tests exist.
+# - **pxe-smoke-linux**: build the image, Trivy High/Critical scan, then hit
+#   /health and /ipxe/{mac} for pending vs deployed once a Dockerfile exists.
+#
+# During repo bootstrap (no requirements-dev.txt / Dockerfile yet) the matching
+# job records a skip and succeeds so the develop → release workflow can run.
+
+name: Pytest + PXE smoke
+
+on:
+  push:
+    branches:
+      - develop
+      - release
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: pytest (ubuntu)
+    runs-on: ubuntu-24.04
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Run pytest or bootstrap skip
+        run: |
+          set -euo pipefail
+          if [ -f requirements-dev.txt ] && [ -d tests ]; then
+            python -m pip install --upgrade pip
+            python -m pip install -r requirements-dev.txt
+            python -m pytest
+          else
+            echo "Bootstrap: requirements-dev.txt or tests/ not present; skipping pytest."
+          fi
+
+  pxe-smoke-linux:
+    name: PXE and Docker image smoke (ubuntu + Docker)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/release'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Build, scan, and smoke or bootstrap skip
+        run: |
+          set -euo pipefail
+          if [ ! -f Dockerfile ]; then
+            echo "Bootstrap: Dockerfile not present; skipping PXE/Docker smoke."
+            exit 0
+          fi
+          echo "Dockerfile present — implement image build, Trivy, and /health + /ipxe smoke in this job."
+          exit 1

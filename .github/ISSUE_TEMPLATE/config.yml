@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/hometinker12/home-lab-pxe/security/advisories/new
+    about: Report security issues privately. Do not open a public issue.
+  - name: Contributing guide
+    url: https://github.com/hometinker12/home-lab-pxe/blob/develop/CONTRIBUTING.md
+    about: Setup, coding standards, tests, and pull request expectations.
+  - name: Architecture plan
+    url: https://github.com/hometinker12/home-lab-pxe/blob/develop/PLAN.md
+    about: Product goals, boot policy, and implementation milestones.
+  - name: Architecture diagrams
+    url: https://github.com/hometinker12/home-lab-pxe/blob/develop/ARCHITECTURE.md
+    about: Container, web console, and security Mermaid diagrams.
