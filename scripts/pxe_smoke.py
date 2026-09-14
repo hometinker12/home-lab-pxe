@@ -223,6 +223,8 @@ def main() -> None:
     expect(machine is not None, "linux MAC missing before deploy")
     mid = machine["id"]
     expect(machine["state"] == "pending", f"state {machine['state']}")
+    status, _, body = c.request("GET", f"/cloud-init/{mid}/user-data")
+    expect(status == 404 and b"lab-default" not in body and b"root:" not in body, "pending must not serve user-data")
 
     status, _, _ = c.request(
         "POST",
@@ -257,6 +259,8 @@ def main() -> None:
 
     status, _, body = c.request("GET", f"/ipxe/{mac}")
     expect("exit" in body.decode() and "Waiting" not in body.decode(), "deployed should skip menu")
+    status, _, body = c.request("GET", f"/cloud-init/{mid}/user-data")
+    expect(status == 404, "deployed must not keep serving user-data")
 
     status, _, _ = c.request("POST", f"/machines/{mid}/stage", form={})
     expect(status in {200, 303, 302}, f"stage {status}")

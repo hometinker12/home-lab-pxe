@@ -34,6 +34,11 @@ WAIT_STATES = frozenset(
 )
 
 
+def guest_init_allowed(machine: Machine) -> bool:
+    """Installer seeds with vault secrets are only served during deploy/reimage."""
+    return machine.state in INSTALL_STATES
+
+
 def now() -> datetime:
     return datetime.now(UTC)
 
@@ -86,6 +91,13 @@ def list_boot_events(db: Session, machine_id: int, limit: int = 25) -> list[Boot
 
 def get_machine(db: Session, machine_id: int) -> Machine | None:
     return db.get(Machine, machine_id)
+
+
+def get_machine_for_guest_init(db: Session, machine_id: int) -> Machine | None:
+    machine = get_machine(db, machine_id)
+    if machine is None or not guest_init_allowed(machine):
+        return None
+    return machine
 
 
 def find_by_mac(db: Session, mac: str) -> Machine | None:

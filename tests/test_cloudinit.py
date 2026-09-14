@@ -1,6 +1,12 @@
 from tests.conftest import login
 
-from src.inventory.service import create_image, deploy_machine, touch_machine, upsert_local_account
+from src.inventory.service import (
+    LAB_DEFAULT_MACHINE_ID,
+    create_image,
+    deploy_machine,
+    touch_machine,
+    upsert_local_account,
+)
 from src.models import AccountKind, OsFamily
 
 
@@ -32,6 +38,42 @@ def test_cloud_init_injects_root_and_bumps_instance_id(client):
     assert client.get(f"/cloud-init/{mid}/vendor-data").status_code == 200
     detail = client.get(f"/api/machines/{mid}").json()
     assert "root-secret" not in str(detail)
+
+
+def test_guest_init_hidden_until_deploy_and_after_phone_home(client):
+    login(client)
+    from src.db import session_scope
+
+    with session_scope() as db:
+        upsert_local_account(
+            db,
+            machine_id=LAB_DEFAULT_MACHINE_ID,
+            kind=AccountKind.linux_root,
+            username="root",
+            password="lab-default-secret",
+        )
+        machine = touch_machine(db, mac="02:00:00:00:00:13", uuid=None, client_ip="10.0.0.10")
+        db.commit()
+        mid = machine.id
+    pending = client.get(f"/cloud-init/{mid}/user-data")
+    assert pending.status_code == 404
+    assert "lab-default-secret" not in pending.text
+    assert client.get(f"/windows/{mid}/unattend.xml").status_code == 404
+
+    with session_scope() as db:
+        machine = touch_machine(db, mac="02:00:00:00:00:13", uuid=None, client_ip="10.0.0.10")
+        image = create_image(db, name="u24-gate", os_family=OsFamily.linux, actor="admin")
+        deploy_machine(db, machine, image=image, actor="admin")
+        db.commit()
+    installing = client.get(f"/cloud-init/{mid}/user-data")
+    assert installing.status_code == 200
+    assert "lab-default-secret" in installing.text
+
+    phone = client.post(f"/api/machines/{mid}/events", json={"event": "deployed"})
+    assert phone.status_code == 200
+    closed = client.get(f"/cloud-init/{mid}/user-data")
+    assert closed.status_code == 404
+    assert "lab-default-secret" not in closed.text
 
 
 def test_phone_home_marks_deployed(client):

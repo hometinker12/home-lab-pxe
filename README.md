@@ -51,7 +51,7 @@ On a Linux lab host, add `network_mode: host` in `docker-compose.override.yml` s
 ## Tests and CI
 
 - Unit: `python -m pytest` (also `ruff` on `develop` and on the Docker publish workflow)
-- Container PXE smoke: GitHub Actions **builds the image on the runner and never `docker push`**. `scripts/pxe_smoke.py` covers `/health`, `/login` brand assets and `/favicon.ico`, `/boot.ipxe`, `/ipxe/{mac}` pending/deploy/deployed/staged, ISO-only `sanboot`, Linux cloud-init, Windows unattend/Cloudbase-Init, phone-home, PXE/DHCP/TFTP/HTTPS settings, manual MAC add, ISO image register, and image edit. On `develop`, `develop commit smoke gate` requires both pytest and that container job.
+- Container PXE smoke: GitHub Actions **builds the image on the runner and never `docker push`**. `scripts/pxe_smoke.py` covers `/health`, `/login` brand assets and `/favicon.ico`, `/boot.ipxe`, `/ipxe/{mac}` pending/deploy/deployed/staged, ISO-only `sanboot`, Linux cloud-init, Windows unattend/Cloudbase-Init, phone-home, guest-init 404 when pending/deployed, PXE/DHCP/TFTP/HTTPS settings, manual MAC add, ISO image register, and image edit. On `develop`, `develop commit smoke gate` requires both pytest and that container job.
 - Publish: push (or merge) to `main` runs [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) — tests, Trivy, PXE HTTP smoke, then Docker Hub (`latest`, `0.1.1`, `sha-*`) and a GitHub Release `v0.1.1` when that tag is new.
 
 ## Publishing a release

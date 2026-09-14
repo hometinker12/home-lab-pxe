@@ -133,6 +133,8 @@ Per machine, HTTP nocloud-net:
 - `GET /cloud-init/{machine_id}/meta-data`
 - `GET /cloud-init/{machine_id}/vendor-data`
 
+These URLs are unauthenticated (installers have no console session) and return **404** unless the machine is `deploying` or `staged`.
+
 `meta-data.instance-id` **must change** when a staged job should re-run cloud-init / reimage.
 
 Rendered `user-data` injects the decrypted Linux **root** username/password (and SSH keys) from the credential vault. Do not leave root password as a plaintext console field stored in SQLite.

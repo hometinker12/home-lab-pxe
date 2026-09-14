@@ -13,6 +13,7 @@
 - Console DHCP controls: enable/disable the in-container dnsmasq helper, edit mode/interface/range/router/DNS, and add validated extra dhcp-option lines.
 - Image library: multipart upload of kernel/initrd/WIM payloads plus edit of existing image metadata and files.
 - Manual machine registration by MAC, ISO image upload/register, and OS-specific image form fields (Linux hides WIM; Windows hides kernel/initrd).
+- Guest-init HTTP (cloud-init, unattend, Cloudbase-Init) is served only while a machine is `deploying` or `staged`. Pending and deployed hosts return 404 so vault passwords are not enumerable by id.
 - Settings sections are collapsed by default. PXE includes external DHCP next-server/filename hints; DHCP and TFTP are separate toggles.
 - Docker image + Compose stack (dnsmasq optional; HTTP PXE always on).
 - `scripts/pxe_smoke.py` and GitHub Actions container smoke that **builds locally and never pushes** an image.

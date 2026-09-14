@@ -416,10 +416,10 @@ flowchart TD
   K --> B["/ipxe/{mac}"]
   B --> LAN1["No session — boot policy only"]
   K --> G["/cloud-init/{id}  /windows/{id}  /cloudbase-init/{id}"]
-  G --> LAN2["No session — render from vault"]
+  G --> LAN2["No session — only while deploying or staged"]
 ```
 
-Guest seeds must not require a browser cookie (installers cannot log in). They **must not** appear in iPXE text. A LAN attacker who spoofs the MAC can pull that machine’s seed for that boot; that is an accepted home-lab residual risk.
+Guest seeds must not require a browser cookie (installers cannot log in). They **must not** appear in iPXE text. Seeds that decrypt the vault are served **only** while the machine is `deploying` or `staged` (404 otherwise). A LAN attacker who spoofs the MAC during that window can still pull that machine’s seed; that is an accepted home-lab residual risk.
 
 ### 4.3 Credential vault
 
