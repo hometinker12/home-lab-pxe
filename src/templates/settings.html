@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Settings — home-lab-pxe{% endblock %}
+{% block body %}
+<h1>Settings</h1>
+<section class="card">
+  <h2>PXE</h2>
+  <p>Public URL: <code>{{ settings.public_url }}</code></p>
+  <p>DHCP mode: <code>{{ settings.dhcp_mode }}</code> on <code>{{ settings.bind_interface }}</code></p>
+  <p>TFTP: <code>{{ settings.tftp_root }}</code> · Images: <code>{{ settings.image_root }}</code></p>
+</section>
+<section class="card">
+  <h2>Lab default local accounts</h2>
+  <p>Stored encrypted. Passwords are write-only.</p>
+  <form method="post" action="/settings/accounts">
+    <h3>Linux root</h3>
+    <p>{% if linux.set %}set{% else %}not set{% endif %}</p>
+    <label>Username <input name="linux_username" value="{{ linux.username or 'root' }}"></label>
+    <label>Password <input type="password" name="linux_password" autocomplete="new-password"></label>
+    <h3>Windows Administrator</h3>
+    <p>{% if windows.set %}set{% else %}not set{% endif %}</p>
+    <label>Username <input name="windows_username" value="{{ windows.username or 'Administrator' }}"></label>
+    <label>Password <input type="password" name="windows_password" autocomplete="new-password"></label>
+    <button type="submit">Save defaults</button>
+  </form>
+</section>
+{% endblock %}

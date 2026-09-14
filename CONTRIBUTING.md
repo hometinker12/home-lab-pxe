@@ -47,7 +47,7 @@ Target layout (see `PLAN.md` and `ARCHITECTURE.md`):
 - `src/inventory/` — machine registry, lifecycle, and encrypted local accounts.
 - `src/templates/` and `src/static/` — administration interface.
 - `src/models.py` and `src/db.py` — database models and initialization.
-- `src/auth.py`, `src/rbac.py`, `src/csrf.py`, and `src/security.py` — security-sensitive components.
+- `src/auth.py`, `src/csrf.py`, and `src/security.py` — security-sensitive components.
 - `tests/` — pytest test suite.
 - `.github/workflows/` — CI and integration smoke tests.
 

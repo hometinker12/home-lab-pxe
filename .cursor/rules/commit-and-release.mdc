@@ -18,11 +18,12 @@ Work on **`develop`** unless the user specifies another branch.
 | Stage | Branch | Workflow | Jobs to watch |
 |-------|--------|----------|---------------|
 | Unit tests | `develop` | [`.github/workflows/pxe-smoke.yml`](.github/workflows/pxe-smoke.yml) | `pytest (ubuntu)` |
-| Integration smoke | `release` | same workflow | `PXE and Docker image smoke` |
+| Container PXE smoke | `develop` and `release` | same workflow | `PXE and Docker image smoke` (local `docker build` only — never `docker push`) |
+| Develop commit gate | `develop` | same workflow | `develop commit smoke gate` (needs both jobs above) |
 
 Promotion path: **`develop` → `release`** (end).
 
-Until `src/` and `tests/` exist, the develop job may pass as a bootstrap skip. After the first application commit, the job must run real pytest. Until a `Dockerfile` exists, the release smoke job may pass as a bootstrap skip; after that it must build, Trivy-scan, and exercise `/health` plus `/ipxe/{mac}` pending vs deployed.
+Until `src/` and `tests/` exist, the develop job may pass as a bootstrap skip. After the first application commit, **both** `pytest (ubuntu)` and `PXE and Docker image smoke` must be green on `develop`. The container job builds the image on the runner and **must not** `docker push`.
 
 ## 1. Commit
 
@@ -167,7 +168,7 @@ If any precondition fails, CI is **red or incomplete** — go to [§2.2 Diagnose
 
 Workflow: **`pxe-smoke.yml`** on branch **`develop`**.
 
-Required green job: **`pytest (ubuntu)`**.
+Required green jobs: **`pytest (ubuntu)`**, **`PXE and Docker image smoke (ubuntu + Docker)`**, and **`develop commit smoke gate`**.
 
 ```powershell
 git rev-parse HEAD

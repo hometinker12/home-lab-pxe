@@ -1,0 +1,48 @@
+services:
+  pxe:
+    image: home-lab-pxe:local
+    build:
+      context: .
+      args:
+        VERSION: "0.1.0"
+    # Bridge + published HTTP port works on Docker Desktop. For real LAN DHCP/TFTP
+    # on Linux, set network_mode: host in docker-compose.override.yml.
+    ports:
+      - "8080:8080"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - NET_BIND_SERVICE
+      - SETUID
+      - SETGID
+      - CHOWN
+      - FOWNER
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - .env
+    environment:
+      PXE_DATABASE_URL: sqlite:////var/lib/pxe/data/pxe.db
+      PXE_TFTP_ROOT: /var/lib/pxe/tftp
+      PXE_IMAGE_ROOT: /var/lib/pxe/images
+      PXE_HTTP_PORT: "8080"
+      PXE_DHCP_OPTIONAL: "1"
+    volumes:
+      - pxe-data:/var/lib/pxe/data
+      - pxe-images:/var/lib/pxe/images
+      - pxe-tftp:/var/lib/pxe/tftp
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  pxe-data:
+  pxe-images:
+  pxe-tftp:

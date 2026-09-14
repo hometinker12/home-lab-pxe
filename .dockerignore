@@ -1,0 +1,12 @@
+.git
+.cursor
+.github
+.pytest_cache
+.venv
+__pycache__
+*.pyc
+data
+images
+*.iso
+tests
+.env

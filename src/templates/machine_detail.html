@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ machine.hostname or machine.mac }} — home-lab-pxe{% endblock %}
+{% block body %}
+<p><a href="/machines">← Machines</a></p>
+<h1>{{ machine.hostname or "(unnamed)" }}</h1>
+<p class="meta"><code>{{ machine.mac }}</code> · UUID {{ machine.uuid or "—" }} · {{ machine.state }} · {{ machine.last_ip or "no IP" }}</p>
+
+<section class="card">
+  <h2>Actions</h2>
+  <form class="row" method="post" action="/machines/{{ machine.id }}/deploy">
+    <label>Image
+      <select name="image_id" required>
+        {% for img in images %}
+        <option value="{{ img.id }}" {% if machine.assigned_image_id == img.id %}selected{% endif %}>{{ img.name }} ({{ img.os_family }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Local user <input name="username" value="{{ account.username }}" placeholder="root or Administrator"></label>
+    <label>Password <input type="password" name="password" autocomplete="new-password" placeholder="{% if account.set %}set — leave blank to keep{% else %}required to deploy{% endif %}"></label>
+    <button type="submit">Deploy</button>
+  </form>
+  <form class="inline" method="post" action="/machines/{{ machine.id }}/stage"><button type="submit">Stage reimage</button></form>
+  <form class="inline" method="post" action="/machines/{{ machine.id }}/mark-deployed"><button type="submit">Mark deployed</button></form>
+  {% if machine.state == "disabled" %}
+  <form class="inline" method="post" action="/machines/{{ machine.id }}/enable"><button type="submit">Enable</button></form>
+  {% else %}
+  <form class="inline" method="post" action="/machines/{{ machine.id }}/disable"><button type="submit">Disable</button></form>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Guest init</h2>
+  <form method="post" action="/machines/{{ machine.id }}/save">
+    <label>Hostname <input name="hostname" value="{{ machine.hostname }}"></label>
+    <label>Timezone <input name="timezone" value="{{ overlay.timezone or 'UTC' }}"></label>
+    <label>Packages (comma) <input name="packages" value="{{ overlay.packages|join(', ') if overlay.packages else '' }}"></label>
+    <label>SSH keys (one per line)
+      <textarea name="ssh_keys" rows="3">{{ overlay.ssh_keys|join('\n') if overlay.ssh_keys else '' }}</textarea>
+    </label>
+    <label>Raw overlay
+      <textarea name="raw_overlay" rows="6">{{ overlay.raw_overlay or '' }}</textarea>
+    </label>
+    <button type="submit">Save</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Local account ({{ family }})</h2>
+  <p>Username is visible. Password is write-only ({% if account.set %}set{% else %}not set{% endif %}).</p>
+  <form method="post" action="/machines/{{ machine.id }}/account">
+    <label>Username <input name="username" value="{{ account.username }}"></label>
+    <label>New password <input type="password" name="password" autocomplete="new-password"></label>
+    <button type="submit">Rotate</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Recent boots</h2>
+  <ul>
+    {% for ev in events %}
+    <li>{{ ev.at }} · {{ ev.script_kind }} · {{ ev.client_ip }}</li>
+    {% else %}
+    <li>None yet.</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

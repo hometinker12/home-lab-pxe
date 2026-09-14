@@ -220,13 +220,13 @@ SQLite only. Idempotent `_migrate_*` helpers in `src/db.py`, no Alembic.
 
 | Stage | Branch | Job |
 |-------|--------|-----|
-| Unit | `develop` | `pytest (ubuntu)` in `.github/workflows/pxe-smoke.yml` |
-| Integration | `release` | `PXE and Docker image smoke` — build, Trivy High/Critical, `/health`, `/ipxe/{mac}` pending vs deployed |
-| Publish | `main` (manual) | `.github/workflows/docker-publish.yml` (add when a Dockerfile exists) |
+| Unit | `develop` | `pytest (ubuntu)` in `.github/workflows/pxe-smoke.yml` (ruff + pytest) |
+| Container PXE | `develop` and `release` | `PXE and Docker image smoke` — local `docker build` (never push), Trivy High/Critical, `scripts/pxe_smoke.py` |
+| Publish | `main` (manual) | `.github/workflows/docker-publish.yml` when added; **not** part of PXE smoke |
 
 Unit tests mock dnsmasq and image I/O. They must cover: unknown → wait, deployed → local, staged → install, instance-id bump, cloud-init/unattend redaction, Fernet round-trip for `linux_root` and `windows_administrator`, password never present in API/log fixtures.
 
-Promotion: `develop` → `release` after green pytest and a `security-reviewer` PASS. Do not promote to `main` as part of the default commit workflow.
+Promotion: `develop` → `release` after green pytest **and** green container PXE smoke on `develop`, then a `security-reviewer` PASS. Do not promote to `main` as part of the default commit workflow. Container smoke **builds the image on the runner and never `docker push`**.
 
 ## 12. Milestones
 
@@ -294,4 +294,4 @@ Resolve during the matching milestone; do not block M0–M2.
 - Windows Server install completes with `unattend.xml` + Cloudbase-Init; **local Administrator** username/password stored encrypted.
 - Staging a new image or guest-init on a deployed host applies on the next PXE boot (Linux and Windows).
 - Vault secrets never land in git, logs, iPXE scripts, or API responses; `ENCRYPTION_KEY` is required outside tests.
-- `develop` pytest and `release` container smoke are green.
+- `develop` pytest **and** container PXE smoke (local `docker build`, no registry push) are green; `release` container smoke is green.

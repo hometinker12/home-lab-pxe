@@ -4,9 +4,10 @@
 
 ### Added
 
-- Repository bootstrap: Cursor rules/agents, GitHub issue/PR templates, CI workflow stub, contributing and security docs, and the initial `PLAN.md` for the Docker PXE boot server.
-- v1 plan includes Windows Server deploy (`unattend.xml` + Cloudbase-Init) and Fernet-encrypted storage for Linux root and Windows local Administrator usernames/passwords.
-- `ARCHITECTURE.md` with Mermaid diagrams for the container, web console, and security model.
+- FastAPI PXE control plane: machine inventory, iPXE wait/skip/install policy, Linux cloud-init, Windows unattend + Cloudbase-Init seeds, Fernet local-account vault, and admin console.
+- Docker image + Compose stack (dnsmasq optional; HTTP PXE always on).
+- `scripts/pxe_smoke.py` and GitHub Actions container smoke that **builds locally and never pushes** an image.
+- Repository bootstrap: Cursor rules/agents, GitHub issue/PR templates, contributing and security docs, `PLAN.md`, and `ARCHITECTURE.md`.
 
 ### Changed
 
