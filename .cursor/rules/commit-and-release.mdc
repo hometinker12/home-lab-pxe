@@ -26,6 +26,17 @@ Promotion path: **`develop` → `release`** (end of the default commit workflow)
 
 Until `src/` and `tests/` exist, the develop job may pass as a bootstrap skip. After the first application commit, **both** `pytest (ubuntu)` and `PXE and Docker image smoke` must be green on `develop`. The container job builds the image on the runner and **must not** `docker push`.
 
+### Docker Hub GitHub secrets (do not put in README)
+
+Set these on the repository (**Settings → Secrets and variables → Actions**) before the first `main` publish:
+
+| Secret | Value |
+|--------|--------|
+| `DOCKERHUB_USERNAME` | Docker Hub username that owns `hometinker12/home-lab-pxe` |
+| `DOCKERHUB_TOKEN` | Docker Hub [access token](https://hub.docker.com/settings/security) with permission to push that image |
+
+No Cosign key is stored in GitHub. Signing uses GitHub Actions OIDC (`id-token: write` on the publish job).
+
 ## 1. Commit
 
 1. Run `git status`, `git diff`, and `git log --oneline -5` in parallel.
@@ -103,7 +114,7 @@ Checklist:
 
 | Artifact | Update when… |
 |----------|--------------|
-| `README.md` | New/changed features, config keys, ports, boot/DHCP setup |
+| `README.md` | Install/run or operator-facing capabilities only (ports, `.env`, Compose, what the app does). See `.cursor/rules/readme.mdc`. Not CI, secrets, promotion, or publish internals. |
 | `CHANGELOG.md` | Any user-visible fix, feature, or breaking change |
 | `.env.example` | New or renamed environment variables |
 | `VERSION` | Release-bound changes (usually when preparing a release merge, not every commit) |

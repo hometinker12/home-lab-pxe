@@ -136,7 +136,7 @@ Security-sensitive changes may receive an additional adversarial review before r
 
 Update documentation alongside behavior changes:
 
-- Update `README.md` for user-facing features, configuration, routes, or deployment changes.
+- Update `README.md` only when install/run steps or operator-facing capabilities change. Keep CI, GitHub secrets, branch promotion, and publish internals out of the README (see `CONTRIBUTING.md` and `.github/workflows/` instead).
 - Add user-visible changes to the `[Unreleased]` section of `CHANGELOG.md`.
 - Update `.env.example` when environment variables are added or renamed.
 - Update `PLAN.md` when architecture or milestone status changes.

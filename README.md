@@ -4,14 +4,6 @@
 
 Docker-packaged PXE/iPXE boot server for a home lab. It discovers machines on the LAN, holds **unknown** systems in a wait menu until you act in the web console, and lets **already deployed** systems fall through to local disk. Linux installs get full [cloud-init](https://cloudinit.readthedocs.io/); Windows Server uses `unattend.xml` plus [Cloudbase-Init](https://cloudbase.it/cloudbase-init/). Linux **root** and Windows **local Administrator** credentials are stored encrypted. Changes you stage in the console apply on the **next PXE boot** as a new image.
 
-## Status
-
-| Item | State |
-|------|--------|
-| Version | `0.1.1` |
-| Application | FastAPI console + iPXE/cloud-init/Windows seeds |
-| Promotion path | `develop` → `release` → `main` (push to `main` publishes Docker Hub and a GitHub Release) |
-
 ## Run locally
 
 ```powershell
@@ -28,7 +20,7 @@ Open `http://127.0.0.1:8080/login` or `https://127.0.0.1:8443/login` (self-signe
 python scripts/pxe_smoke.py --base-url http://127.0.0.1:8080 --user admin --password <ADMIN_PASSWORD>
 ```
 
-Published image (after a `main` release):
+Published image:
 
 ```powershell
 docker pull hometinker12/home-lab-pxe:0.1.1
@@ -47,34 +39,6 @@ On a Linux lab host, add `network_mode: host` in `docker-compose.override.yml` s
 - Deploy Windows Server with `unattend.xml` and Cloudbase-Init
 - Store Linux root and Windows local Administrator usernames/passwords encrypted at rest
 - Re-image on the next PXE boot when the console has a staged job
-
-## Tests and CI
-
-- Unit: `python -m pytest` (also `ruff` on `develop` and on the Docker publish workflow)
-- Container PXE smoke: GitHub Actions **builds the image on the runner and never `docker push`**. `scripts/pxe_smoke.py` covers `/health`, `/login` brand assets and `/favicon.ico`, `/boot.ipxe`, `/ipxe/{mac}` pending/deploy/deployed/staged, ISO-only `sanboot`, Linux cloud-init, Windows unattend/Cloudbase-Init, phone-home, guest-init 404 when pending/deployed, PXE/DHCP/TFTP/HTTPS settings, manual MAC add, ISO image register, and image edit. On `develop`, `develop commit smoke gate` requires both pytest and that container job.
-- Publish: push (or merge) to `main` runs [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) — tests, Trivy, PXE HTTP smoke, then Docker Hub (`latest`, `0.1.1`, `sha-*`) and a GitHub Release `v0.1.1` when that tag is new.
-
-## Publishing a release
-
-Promotion to production is a manual **`release` → `main`** pull request. Before merging:
-
-1. Bump [`VERSION`](VERSION) (keep `pyproject.toml`, Dockerfile `ARG VERSION`, Compose build-arg, README badge, and version tests in sync).
-2. Cut a matching `## [X.Y.Z] - YYYY-MM-DD` section in [`CHANGELOG.md`](CHANGELOG.md) out of `[Unreleased]`.
-
-Push to `main` runs [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml): tests, container smoke, Docker Hub publish (`latest`, `${VERSION}`, `sha-*`), Cosign keyless signing, then a GitHub Release `v${VERSION}` when that tag does not already exist. Release notes are taken from the matching CHANGELOG section (or a short fallback naming the image and commit).
-
-Required GitHub Actions secrets are listed under [GitHub secrets](#github-secrets).
-
-## GitHub secrets
-
-Set these on the repository (**Settings → Secrets and variables → Actions**) before the first `main` publish:
-
-| Secret | Value |
-|--------|--------|
-| `DOCKERHUB_USERNAME` | Docker Hub username that owns `hometinker12/home-lab-pxe` |
-| `DOCKERHUB_TOKEN` | Docker Hub [access token](https://hub.docker.com/settings/security) with permission to push that image |
-
-No Cosign key is stored in GitHub. Signing uses GitHub Actions OIDC (`id-token: write` on the publish job).
 
 ## Documentation
 

@@ -24,7 +24,7 @@
 
 ## Docs
 
-- [ ] `README.md` updated (if user-facing)
+- [ ] `README.md` updated (if install/run or operator-facing capabilities changed)
 - [ ] `CHANGELOG.md` `[Unreleased]` updated (if user-visible)
 - [ ] `.env.example` updated (if env vars changed)
 - [ ] `PLAN.md` updated (if architecture or milestones changed)

@@ -1,0 +1,27 @@
+---
+description: README.md is public install/run docs only — no CI, secrets, or maintainer commentary
+alwaysApply: true
+---
+
+# README scope
+
+`README.md` is public: what the app is, how to install it, and how to run it. It is not a changelog, CI runbook, or maintainer diary.
+
+## Put in README
+
+- What the product is
+- How to copy `.env`, start Compose, open the console, pull the published image
+- Operator-facing capabilities (DHCP/TFTP, console, images, cloud-init, Windows)
+- Links to `ARCHITECTURE.md`, `PLAN.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`, `.env.example`, `LICENSE.md`
+
+## Keep out of README
+
+- GitHub Actions secrets (`DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`) and Cosign/OIDC notes
+- Branch promotion (`develop` → `release` → `main`)
+- Workflow job names, smoke-test inventories, Trivy/Cosign internals
+- Release-cut steps (VERSION bump, CHANGELOG cut, merge to `main`)
+- Running commentary on what CI currently covers
+
+Put that in `.cursor/rules/commit-and-release.mdc` (agents) or `CONTRIBUTING.md` (human contributors). User-visible history belongs in `CHANGELOG.md`.
+
+When docs alignment runs: update README only if install steps, ports, operator env vars, or product capabilities changed. Do not add a paragraph because CI or the publish workflow changed.
