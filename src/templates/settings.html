@@ -14,7 +14,7 @@
         <code>{{ net.host_lan_ipv4 }}</code>
         <span class="meta">({{ net.host_lan_source }})</span>
         {% else %}
-        <span class="meta">not detected — run <code>python scripts/host_lan_ipv4.py --write</code> on the Docker host, then recreate the container</span>
+        <span class="meta">not set — add <code>PXE_HOST_LAN_IPV4</code> to <code>.env</code> (this computer's LAN IPv4, not 127.0.0.1)</span>
         {% endif %}
       </dd>
       {% if net.in_container %}

@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `docker-compose.yml` always pulls `hometinker12/home-lab-pxe:latest` from Docker Hub instead of building a local image.
+- Host LAN IPv4 is set with `PXE_HOST_LAN_IPV4` in `.env`. `scripts/host_lan_ipv4.py` and `.host-lan-ip.env` are removed.
+
+### Removed
+
+- `scripts/host_lan_ipv4.py` (auto-detect host LAN IPv4 for Compose).
+
 ## [0.1.1] - 2026-09-14
 
 ### Added

@@ -9,21 +9,14 @@ Docker-packaged PXE/iPXE boot server for a home lab. It discovers machines on th
 ```powershell
 Copy-Item .env.example .env
 python -c "from cryptography.fernet import Fernet; import secrets; print('ENCRYPTION_KEY=' + Fernet.generate_key().decode()); print('SECRET_KEY=' + secrets.token_urlsafe(32))"
-# paste those into .env, set ADMIN_PASSWORD, then:
-python scripts/host_lan_ipv4.py --write
-docker compose up --build
+# paste those into .env, set ADMIN_PASSWORD and PXE_HOST_LAN_IPV4 (this computer's LAN IPv4), then:
+docker compose up
 ```
 
-Open `http://127.0.0.1:8080/login` or `https://127.0.0.1:8443/login` (self-signed until you upload a PEM cert under Settings → HTTPS). Settings → PXE shows this computer's LAN IPv4 (detected on the host, not the Docker 172.x address). HTTP PXE smoke (no registry push):
+Compose always pulls [`hometinker12/home-lab-pxe:latest`](https://hub.docker.com/r/hometinker12/home-lab-pxe) from Docker Hub. Open `http://127.0.0.1:8080/login` or `https://127.0.0.1:8443/login` (self-signed until you upload a PEM cert under Settings → HTTPS). Settings → PXE shows `PXE_HOST_LAN_IPV4`. HTTP PXE smoke (no registry push):
 
 ```powershell
 python scripts/pxe_smoke.py --base-url http://127.0.0.1:8080 --user admin --password <ADMIN_PASSWORD>
-```
-
-Published image:
-
-```powershell
-docker pull hometinker12/home-lab-pxe:0.1.1
 ```
 
 On a Linux lab host, add `network_mode: host` in `docker-compose.override.yml` so DHCP/TFTP see LAN broadcasts. Keep `PXE_BIND_INTERFACE` on the LAN NIC. Do not publish DHCP/TFTP/HTTP-boot to the internet.

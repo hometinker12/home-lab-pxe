@@ -79,7 +79,7 @@ One image, one Compose service for v1 (dnsmasq + uvicorn via `scripts/entrypoint
 | `proxy` (default) | proxyDHCP / `dhcp-range=...,proxy` — existing router/Windows DHCP stays authoritative |
 | `authoritative` | dnsmasq owns the range (`PXE_DHCP_RANGE`, router, DNS) |
 
-First-boot defaults come from env. After that, **Settings** in the console is the source of truth (SQLite). **PXE**, **DHCP**, and **TFTP** are separate collapsed sections. PXE shows the Docker **host** LAN IPv4 (`PXE_HOST_LAN_IPV4`, from `python scripts/host_lan_ipv4.py --write`) plus bind interface, extra allowlisted dnsmasq lines, and copy-paste values for an existing LAN DHCP server. DHCP and TFTP each have their own enable toggle. Saving writes `dnsmasq-pxe.conf` plus `dhcp.enabled` / `tftp.enabled`; `scripts/entrypoint.sh` starts, stops, or reloads dnsmasq when either service is on. Extra option lines are allowlisted (`dhcp-option`, `dhcp-host`, …); `dhcp-script` and `conf-file` are rejected.
+First-boot defaults come from env. After that, **Settings** in the console is the source of truth (SQLite). **PXE**, **DHCP**, and **TFTP** are separate collapsed sections. PXE shows the Docker **host** LAN IPv4 (`PXE_HOST_LAN_IPV4` in `.env`) plus bind interface, extra allowlisted dnsmasq lines, and copy-paste values for an existing LAN DHCP server. DHCP and TFTP each have their own enable toggle. Saving writes `dnsmasq-pxe.conf` plus `dhcp.enabled` / `tftp.enabled`; `scripts/entrypoint.sh` starts, stops, or reloads dnsmasq when either service is on. Extra option lines are allowlisted (`dhcp-option`, `dhcp-host`, …); `dhcp-script` and `conf-file` are rejected.
 
 ## 5. Machine identity and lifecycle
 

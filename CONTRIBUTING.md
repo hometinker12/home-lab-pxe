@@ -147,7 +147,6 @@ Release version changes must remain synchronized across:
 - `VERSION`
 - `pyproject.toml`
 - `Dockerfile`
-- `docker-compose.yml`
 - The README release badge
 - Version-related tests
 
