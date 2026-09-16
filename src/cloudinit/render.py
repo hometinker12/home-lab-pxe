@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from sqlmodel import Session
 
-from ..inventory.service import load_overlay, resolve_local_account
+from ..inventory.service import get_open_attempt, load_overlay, resolve_local_account
 from ..models import AccountKind, Machine
+from ..seed_render import SeedRenderError, render_selected_seed
 from ..settings import get_settings
 
 
@@ -18,7 +19,7 @@ def render_vendor_data() -> str:
     return "#cloud-config\n"
 
 
-def render_user_data(db: Session, machine: Machine) -> str:
+def render_user_data_legacy(db: Session, machine: Machine) -> str:
     overlay = load_overlay(machine.guest_overlay)
     hostname = (machine.hostname or overlay.get("hostname") or f"pxe-{machine.id}").strip()
     timezone = str(overlay.get("timezone") or "UTC")
@@ -62,8 +63,13 @@ def render_user_data(db: Session, machine: Machine) -> str:
     lines.append(f"  url: {phone}")
     lines.append("  tries: 5")
     if raw:
-        if not raw.startswith("#"):
-            lines.append(raw)
-        else:
-            lines.append(raw)
+        lines.append(raw)
     return "\n".join(lines) + "\n"
+
+
+def render_user_data(db: Session, machine: Machine) -> str:
+    attempt = get_open_attempt(db, machine)
+    try:
+        return render_selected_seed(db, machine, attempt=attempt)
+    except SeedRenderError:
+        return render_user_data_legacy(db, machine)

@@ -58,14 +58,16 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-  subgraph pid1["PID 1 — run-web.sh as uid 10001"]
+   subgraph pid1["PID 1 — run-web.sh as uid 10001"]
     H["uvicorn HTTP :8080"]
     S["uvicorn HTTPS :8443"]
+    X["extract_worker"]
   end
   subgraph root["entrypoint.sh then exec gosu"]
-    E["starts dnsmasq + TLS files"]
+    E["starts dnsmasq + smbd + TLS files"]
   end
   E --> D["dnsmasq<br/>caps: NET_ADMIN, NET_RAW<br/>ports 67 / 69"]
+  E --> SMB["smbd pxe-media<br/>TCP 445, not published on Docker Desktop"]
   E --> pid1
   H --> F["FastAPI app"]
   S --> F

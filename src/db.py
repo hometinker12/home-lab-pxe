@@ -88,6 +88,11 @@ def _migrate_schema() -> None:
         tables = {row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
         if "image" in tables:
             _add_column_if_missing(conn, "image", "iso_path", "iso_path VARCHAR DEFAULT ''")
+            _add_column_if_missing(conn, "image", "extract_status", "extract_status VARCHAR DEFAULT 'idle'")
+            _add_column_if_missing(conn, "image", "extract_error", "extract_error VARCHAR DEFAULT ''")
+            _add_column_if_missing(conn, "image", "extract_revision", "extract_revision INTEGER DEFAULT 0")
+            _add_column_if_missing(conn, "image", "extract_generation", "extract_generation VARCHAR DEFAULT ''")
+            _add_column_if_missing(conn, "image", "wim_index", "wim_index INTEGER DEFAULT 1")
         if "dhcpruntime" in tables:
             _add_column_if_missing(conn, "dhcpruntime", "tftp_enabled", "tftp_enabled BOOLEAN DEFAULT 1")
 

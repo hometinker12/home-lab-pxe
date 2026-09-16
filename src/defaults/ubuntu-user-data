@@ -1,0 +1,21 @@
+#cloud-config
+autoinstall:
+  version: 1
+  ssh:
+    install-server: true
+    allow-pw: true
+    authorized-keys: []
+  user-data:
+    hostname: {{hostname}}
+    manage_etc_hosts: true
+    timezone: {{timezone}}
+    disable_root: false
+    ssh_pwauth: true
+    chpasswd:
+      expire: false
+      users:
+        - name: {{username}}
+          password: {{password_hash}}
+          type: hash
+  late-commands:
+    - [wget, -q, --post-data=, -O, /dev/null, {{phone_home_url}}]

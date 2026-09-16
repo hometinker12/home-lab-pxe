@@ -19,14 +19,14 @@ Compose always pulls [`hometinker12/home-lab-pxe:latest`](https://hub.docker.com
 python scripts/pxe_smoke.py --base-url http://127.0.0.1:8080 --user admin --password <ADMIN_PASSWORD>
 ```
 
-On a Linux lab host, add `network_mode: host` in `docker-compose.override.yml` so DHCP/TFTP see LAN broadcasts. Keep `PXE_BIND_INTERFACE` on the LAN NIC. Do not publish DHCP/TFTP/HTTP-boot to the internet.
+On a Linux lab host, add `network_mode: host` in `docker-compose.override.yml` so DHCP/TFTP/SMB see the LAN. Keep `PXE_BIND_INTERFACE` on the LAN NIC. Set `PXE_SMB_PASSWORD` in `.env` for Windows Setup media. Do not publish DHCP/TFTP/HTTP-boot to the internet.
 
 ## What it does
 
 - Serve DHCP (proxyDHCP by default) and TFTP as **separate** Settings toggles, plus HTTP so BIOS/UEFI clients can iPXE-boot. The PXE settings section includes copy-paste DHCP options 60 (`PXEClient`), 66 (next-server), and 67 (boot file) for an existing LAN DHCP server, plus extra dnsmasq option lines. **Files** in the console browses the TFTP volume so you can upload real iPXE binaries over stubs.
 - Serve the operator console on HTTPS (`8443`) with a self-signed certificate created on first start (replace it under **Settings → HTTPS** with a PEM cert and key). Keep `PXE_PUBLIC_URL` as `http://` so iPXE and guest-init are not blocked by that certificate.
 - Add machines by MAC from the console, or let unknown hosts register on first iPXE check-in.
-- Upload Linux kernels/initrd, Windows WIM files, or ISO images in **Images**, or register paths already on the image volume; existing images can be edited. Linux forms hide WIM fields; Windows forms hide kernel/initrd.
+- Upload Linux kernels/initrd, Windows WIM files, or Ubuntu/Windows Server ISO images in **Images**. ISO import returns immediately and extracts netboot payloads in the background. Each Linux image has editable cloud-init user-data; each Windows image has editable `unattend.xml`. A machine may override that file. Ubuntu live-server installs use HTTP `url=` plus autoinstall; Windows Setup maps an authenticated read-only SMB share (Linux `network_mode: host` — Docker Desktop cannot publish LAN TCP 445). Stock Windows ISOs do not include Cloudbase-Init.
 - Skip the menu for known deployed hosts (immediate local-disk boot)
 - Deploy Linux images with per-machine cloud-init user-data / meta-data
 - Deploy Windows Server with `unattend.xml` and Cloudbase-Init

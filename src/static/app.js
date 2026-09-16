@@ -39,6 +39,58 @@
     syncDhcpForm(form);
   });
 
+  const extractCells = [...document.querySelectorAll(".extract-status[data-status]")];
+  const extractBusy = extractCells.some((el) => {
+    const status = el.getAttribute("data-status");
+    return status === "queued" || status === "extracting";
+  });
+  if (extractBusy && !document.querySelector("form.image-form textarea")) {
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await fetch("/api/images", { headers: { Accept: "application/json" } });
+        if (!response.ok) {
+          return;
+        }
+        const images = await response.json();
+        let stillBusy = false;
+        images.forEach((img) => {
+          const row = document.querySelector(`[data-image-id="${img.id}"]`);
+          if (!row) {
+            return;
+          }
+          const cell = row.querySelector(".extract-status");
+          if (!cell) {
+            return;
+          }
+          const status = img.extract_status || "idle";
+          cell.setAttribute("data-status", status);
+          if (status === "queued" || status === "extracting") {
+            stillBusy = true;
+          }
+          const label =
+            status === "queued"
+              ? "queued"
+              : status === "extracting"
+                ? "extracting"
+                : status === "ready"
+                  ? "ready"
+                  : status === "failed"
+                    ? "failed"
+                    : "—";
+          cell.textContent = label;
+          if (status === "failed" && img.extract_error) {
+            cell.title = img.extract_error;
+          }
+        });
+        if (!stillBusy) {
+          window.clearInterval(timer);
+        }
+      } catch {
+        /* keep polling */
+      }
+    }, 5000);
+  }
+
   const fm = document.querySelector(".fm");
   if (fm) {
     const rows = () => [...fm.querySelectorAll(".fm-row")];

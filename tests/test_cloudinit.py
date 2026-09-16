@@ -8,6 +8,7 @@ from src.inventory.service import (
     upsert_local_account,
 )
 from src.models import AccountKind, OsFamily
+from src.seed_store import factory_seed_text, read_image_seed, write_machine_seed
 
 
 def test_cloud_init_injects_root_and_bumps_instance_id(client):
@@ -17,7 +18,14 @@ def test_cloud_init_injects_root_and_bumps_instance_id(client):
     with session_scope() as db:
         machine = touch_machine(db, mac="02:00:00:00:00:11", uuid=None, client_ip="10.0.0.8")
         machine.hostname = "web1"
-        image = create_image(db, name="u24", os_family=OsFamily.linux, actor="admin")
+        image = create_image(
+            db,
+            name="u24",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
         upsert_local_account(
             db,
             machine_id=int(machine.id),
@@ -29,15 +37,57 @@ def test_cloud_init_injects_root_and_bumps_instance_id(client):
         db.commit()
         mid = machine.id
         first_id = machine.instance_id
+        image_id = int(image.id)
     user_data = client.get(f"/cloud-init/{mid}/user-data").text
     meta = client.get(f"/cloud-init/{mid}/meta-data").text
-    assert "hostname: web1" in user_data
-    assert "root:root-secret" in user_data
-    assert f"url: http://pxe.test:8080/api/machines/{mid}/events" in user_data
+    assert "web1" in user_data
+    assert "root" in user_data
+    assert "root-secret" not in user_data
+    assert "$6$" in user_data
+    assert f"/api/machines/{mid}/events" in user_data
     assert first_id in meta
+    disk = read_image_seed(image_id, OsFamily.linux)
+    assert "{{password_hash}}" in disk
+    assert "root-secret" not in disk
     assert client.get(f"/cloud-init/{mid}/vendor-data").status_code == 200
     detail = client.get(f"/api/machines/{mid}").json()
     assert "root-secret" not in str(detail)
+
+
+def test_machine_seed_override_replaces_image(client):
+    login(client)
+    from src.db import session_scope
+
+    with session_scope() as db:
+        machine = touch_machine(db, mac="02:00:00:00:00:15", uuid=None, client_ip="10.0.0.8")
+        machine.hostname = "web2"
+        image = create_image(
+            db,
+            name="u24-override",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
+        upsert_local_account(
+            db,
+            machine_id=int(machine.id),
+            kind=AccountKind.linux_root,
+            username="root",
+            password="root-secret",
+        )
+        write_machine_seed(
+            int(machine.id),
+            OsFamily.linux,
+            "#cloud-config\n# machine-override-token\nhostname: {{hostname}}\n",
+        )
+        deploy_machine(db, machine, image=image, actor="admin")
+        db.commit()
+        mid = machine.id
+    user_data = client.get(f"/cloud-init/{mid}/user-data").text
+    assert "machine-override-token" in user_data
+    assert "autoinstall" not in user_data
+    assert "autoinstall:" in factory_seed_text(OsFamily.linux)
 
 
 def test_guest_init_hidden_until_deploy_and_after_phone_home(client):
@@ -62,12 +112,21 @@ def test_guest_init_hidden_until_deploy_and_after_phone_home(client):
 
     with session_scope() as db:
         machine = touch_machine(db, mac="02:00:00:00:00:13", uuid=None, client_ip="10.0.0.10")
-        image = create_image(db, name="u24-gate", os_family=OsFamily.linux, actor="admin")
+        image = create_image(
+            db,
+            name="u24-gate",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
         deploy_machine(db, machine, image=image, actor="admin")
         db.commit()
     installing = client.get(f"/cloud-init/{mid}/user-data")
     assert installing.status_code == 200
-    assert "lab-default-secret" in installing.text
+    assert "lab-default-secret" not in installing.text
+    assert "root" in installing.text
+    assert "$6$" in installing.text
 
     phone = client.post(f"/api/machines/{mid}/events", json={"event": "deployed"})
     assert phone.status_code == 200
@@ -84,7 +143,14 @@ def test_phone_home_marks_deployed(client):
 
     with session_scope() as db:
         machine = touch_machine(db, mac="02:00:00:00:00:12", uuid=None, client_ip="10.0.0.9")
-        image = create_image(db, name="u24b", os_family=OsFamily.linux, actor="admin")
+        image = create_image(
+            db,
+            name="u24b",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
         deploy_machine(db, machine, image=image, actor="admin")
         db.commit()
         mid = machine.id

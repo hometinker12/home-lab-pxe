@@ -6,21 +6,24 @@
   <h1>{{ machine.hostname or "(unnamed)" }} <span class="badge badge-{{ machine.state }}">{{ machine.state }}</span></h1>
   <p class="description"><code>{{ machine.mac }}</code> · UUID {{ machine.uuid or "—" }} · {{ machine.last_ip or "no IP" }}</p>
 </header>
+{% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 
 <section class="card">
   <h2>Actions</h2>
   <form class="form" method="post" action="/machines/{{ machine.id }}/deploy">
     <label>Image
       <select name="image_id" required>
-        {% for img in images %}
-        <option value="{{ img.id }}" {% if machine.assigned_image_id == img.id %}selected{% endif %}>{{ img.name }} ({{ img.os_family }})</option>
+        {% for opt in image_options %}
+        <option value="{{ opt.image.id }}" {% if machine.assigned_image_id == opt.image.id %}selected{% endif %} {% if opt.blocked %}disabled{% endif %}>
+          {{ opt.image.name }} ({{ opt.image.os_family }}{% if opt.blocked %} — {{ opt.reason }}{% endif %})
+        </option>
         {% endfor %}
       </select>
     </label>
-    <label>Local user <input name="username" value="{{ account.username }}" placeholder="root or Administrator"></label>
-    <label>Password <input type="password" name="password" autocomplete="new-password" placeholder="{% if account.set %}set — leave blank to keep{% else %}required to deploy{% endif %}"></label>
+    <label>Local user <input name="username" value="{{ account.username }}" placeholder="root or Administrator" {% if deploying %}disabled{% endif %}></label>
+    <label>Password <input type="password" name="password" autocomplete="new-password" placeholder="{% if account.set %}set — leave blank to keep{% else %}required to deploy{% endif %}" {% if deploying %}disabled{% endif %}></label>
     <div class="btn-row">
-      <button type="submit">Deploy</button>
+      <button type="submit" {% if deploying %}disabled{% endif %}>Deploy</button>
     </div>
   </form>
   <hr class="sep">
@@ -37,18 +40,32 @@
 
 <section class="card">
   <h2>Guest init</h2>
+  {% if overlay.raw_overlay %}
+  <p class="alert alert-error" role="status">This machine still has a legacy raw overlay. Saving a machine seed file replaces it.</p>
+  {% endif %}
   <form class="form" method="post" action="/machines/{{ machine.id }}/save">
-    <label>Hostname <input name="hostname" value="{{ machine.hostname }}"></label>
-    <label>Timezone <input name="timezone" value="{{ overlay.timezone or 'UTC' }}"></label>
-    <label>Packages (comma) <input name="packages" value="{{ overlay.packages|join(', ') if overlay.packages else '' }}"></label>
+    <label>Hostname <input name="hostname" value="{{ machine.hostname }}" {% if deploying %}disabled{% endif %}></label>
+    <label>Timezone <input name="timezone" value="{{ overlay.timezone or 'UTC' }}" {% if deploying %}disabled{% endif %}></label>
+    <label>Packages (comma) <input name="packages" value="{{ overlay.packages|join(', ') if overlay.packages else '' }}" {% if deploying %}disabled{% endif %}></label>
     <label>SSH keys (one per line)
-      <textarea name="ssh_keys" rows="3">{{ overlay.ssh_keys|join('\n') if overlay.ssh_keys else '' }}</textarea>
+      <textarea name="ssh_keys" rows="3" {% if deploying %}disabled{% endif %}>{{ overlay.ssh_keys|join('\n') if overlay.ssh_keys else '' }}</textarea>
     </label>
-    <label>Raw overlay
-      <textarea name="raw_overlay" rows="6">{{ overlay.raw_overlay or '' }}</textarea>
+    {% if image %}
+    {% if family == 'windows' %}
+    <label>Machine unattend.xml
+      <textarea name="unattend_xml" rows="16" class="seed-editor" {% if deploying %}disabled{% endif %}>{{ machine_seed }}</textarea>
     </label>
+    {% else %}
+    <label>Machine user-data
+      <textarea name="user_data" rows="16" class="seed-editor" {% if deploying %}disabled{% endif %}>{{ machine_seed }}</textarea>
+    </label>
+    {% endif %}
+    <p class="meta">{{ placeholder_help }} Served file: <code>{{ served_hint }}</code></p>
+    {% else %}
+    <p class="meta">Assign an image to edit a per-machine cloud-init or unattend file.</p>
+    {% endif %}
     <div class="btn-row">
-      <button type="submit">Save</button>
+      <button type="submit" {% if deploying %}disabled{% endif %}>Save</button>
     </div>
   </form>
 </section>
@@ -57,10 +74,10 @@
   <h2>Local account ({{ family }})</h2>
   <p class="meta">Username is visible. Password is write-only ({% if account.set %}set{% else %}not set{% endif %}).</p>
   <form class="form" method="post" action="/machines/{{ machine.id }}/account">
-    <label>Username <input name="username" value="{{ account.username }}"></label>
-    <label>New password <input type="password" name="password" autocomplete="new-password"></label>
+    <label>Username <input name="username" value="{{ account.username }}" {% if deploying %}disabled{% endif %}></label>
+    <label>New password <input type="password" name="password" autocomplete="new-password" {% if deploying %}disabled{% endif %}></label>
     <div class="btn-row">
-      <button type="submit">Rotate</button>
+      <button type="submit" {% if deploying %}disabled{% endif %}>Rotate</button>
     </div>
   </form>
 </section>

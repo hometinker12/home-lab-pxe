@@ -366,6 +366,10 @@ input[type="file"] { width: auto; }
 input[type="file"] { padding: 0.3rem 0; border: 0; background: transparent; }
 
 textarea { resize: vertical; }
+textarea.seed-editor {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.85rem;
+}
 
 .form,
 .row-form {

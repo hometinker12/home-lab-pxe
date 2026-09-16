@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 def _flag(name: str, default: bool = False) -> bool:
@@ -15,6 +18,21 @@ def _flag(name: str, default: bool = False) -> bool:
     if raw in {"0", "false", "no"}:
         return False
     return default
+
+
+_SMB_USER_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
+_SMB_PASSWORD_RE = re.compile(r"^[A-Za-z0-9._~-]{20,128}$")
+
+
+def _int_env(name: str, default: int, *, minimum: int = 1) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, value)
 
 
 @dataclass(frozen=True)
@@ -41,6 +59,13 @@ class Settings:
     debug_errors: bool
     data_dir: Path
     max_upload_bytes: int
+    max_seed_bytes: int
+    max_extract_bytes: int
+    extract_timeout_seconds: int
+    seven_z_bin: str
+    smb_host: str
+    smb_user: str
+    smb_password: str
 
 
 def _database_url() -> str:
@@ -60,20 +85,45 @@ def _data_dir() -> Path:
     return Path("./data")
 
 
-def _max_upload_bytes() -> int:
-    raw = (os.getenv("PXE_MAX_UPLOAD_BYTES") or "").strip()
-    if not raw:
-        return 8 * 1024 * 1024 * 1024
-    try:
-        value = int(raw)
-    except ValueError:
-        return 8 * 1024 * 1024 * 1024
-    return max(1, value)
+def _seven_z_bin() -> str:
+    configured = (os.getenv("PXE_7Z_BIN") or "").strip()
+    if configured:
+        return configured
+    for name in ("7z", "7zz", "7za"):
+        if shutil.which(name):
+            return name
+    return "7z"
+
+
+def _host_from_public_url(public: str) -> str:
+    parsed = urlparse(public)
+    host = (parsed.hostname or "").strip()
+    return host or "127.0.0.1"
+
+
+def validate_smb_user(value: str) -> str:
+    text = (value or "").strip()
+    if not _SMB_USER_RE.match(text):
+        raise ValueError("PXE_SMB_USER must be 1-32 letters, digits, dot, underscore, or hyphen")
+    return text
+
+
+def validate_smb_password(value: str) -> str:
+    if not _SMB_PASSWORD_RE.match(value or ""):
+        raise ValueError("PXE_SMB_PASSWORD must be 20-128 URL-safe characters (A-Z a-z 0-9 . _ - ~)")
+    return value
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     public = (os.getenv("PXE_PUBLIC_URL") or "http://127.0.0.1:8080").rstrip("/")
+    smb_user = (os.getenv("PXE_SMB_USER") or "pxemedia").strip() or "pxemedia"
+    if not _SMB_USER_RE.match(smb_user):
+        smb_user = "pxemedia"
+    smb_password = os.getenv("PXE_SMB_PASSWORD") or ""
+    if smb_password and not _SMB_PASSWORD_RE.match(smb_password):
+        smb_password = ""
+    smb_host = (os.getenv("PXE_SMB_HOST") or "").strip() or _host_from_public_url(public)
     return Settings(
         http_bind=os.getenv("PXE_HTTP_BIND", "0.0.0.0").strip() or "0.0.0.0",
         http_port=int(os.getenv("PXE_HTTP_PORT") or os.getenv("HTTP_PORT") or "8080"),
@@ -96,8 +146,19 @@ def get_settings() -> Settings:
         openapi_enabled=_flag("OPENAPI_ENABLED", default=False),
         debug_errors=_flag("DEBUG_ERRORS", default=False),
         data_dir=_data_dir(),
-        max_upload_bytes=_max_upload_bytes(),
+        max_upload_bytes=_int_env("PXE_MAX_UPLOAD_BYTES", 8 * 1024 * 1024 * 1024),
+        max_seed_bytes=_int_env("PXE_MAX_SEED_BYTES", 1024 * 1024),
+        max_extract_bytes=_int_env("PXE_MAX_EXTRACT_BYTES", 20 * 1024 * 1024 * 1024),
+        extract_timeout_seconds=_int_env("PXE_EXTRACT_TIMEOUT_SECONDS", 3600),
+        seven_z_bin=_seven_z_bin(),
+        smb_host=smb_host,
+        smb_user=smb_user,
+        smb_password=smb_password,
     )
+
+
+def smb_password_configured() -> bool:
+    return bool(get_settings().smb_password)
 
 
 def clear_settings_cache() -> None:
