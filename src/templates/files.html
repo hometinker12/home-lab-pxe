@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Files — home-lab-pxe{% endblock %}
+{% block body_class %}files-page{% endblock %}
+{% block main_class %}files-shell{% endblock %}
+{% block body %}
+{% set path_disp = tftp.path_display %}
+<div class="fm" data-dir="{{ tftp.dir }}" data-parent="{{ tftp.parent }}">
+  <aside class="fm-sidebar">
+    <details class="fm-side-group" open>
+      <summary>Volumes</summary>
+      <a class="fm-side-item{% if not tftp.dir %} is-active{% endif %}" href="/files">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm0 3v7h16V9H4z"/></svg>
+        <span>/</span>
+      </a>
+    </details>
+    <details class="fm-side-group" open>
+      <summary>System</summary>
+      {% for item in tftp.expected %}
+      <a class="fm-side-item fm-stage-{{ item.state }}" href="{% if item.state == 'missing' %}/files{% else %}/files/download?path={{ item.name|urlencode }}{% endif %}" title="{{ item.name }} — {{ item.state }}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm1 7V3.5L19.5 9H15z"/></svg>
+        <span>{{ item.name }}</span>
+      </a>
+      {% endfor %}
+    </details>
+    <details class="fm-side-group" open>
+      <summary>Favorites</summary>
+      <p class="fm-side-empty">First-stage iPXE files live at the TFTP root.</p>
+    </details>
+  </aside>
+  <div class="fm-main">
+    <div class="fm-toolbar">
+      <div class="fm-tool-group">
+        <button type="button" class="fm-tool" data-fm="back" title="Back" aria-label="Back">
+          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+        </button>
+        <button type="button" class="fm-tool" data-fm="forward" title="Forward" aria-label="Forward">
+          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M8.59 16.59 10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg>
+        </button>
+        {% if tftp.dir %}
+        <a class="fm-tool" href="/files{% if tftp.parent %}?dir={{ tftp.parent|urlencode }}{% endif %}" title="Up" aria-label="Up">
+          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.59 5.58L20 12l-8-8z"/></svg>
+        </a>
+        {% else %}
+        <span class="fm-tool is-disabled" title="Up" aria-disabled="true">
+          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.59 5.58L20 12l-8-8z"/></svg>
+        </span>
+        {% endif %}
+        <a class="fm-tool" href="/files{% if tftp.dir %}?dir={{ tftp.dir|urlencode }}{% endif %}" title="Refresh" aria-label="Refresh">
+          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M17.65 6.35A8 8 0 1 0 19 12h-2a6 6 0 1 1-1.76-4.24L13 10h6V4l-1.35 2.35z"/></svg>
+        </a>
+        <button type="button" class="fm-tool" data-fm="mkdir" title="New folder" aria-label="New folder">
+          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2zm7 9h-3v3h-2v-3h-3v-2h3V8h2v3h3v2z"/></svg>
+        </button>
+      </div>
+      <form class="fm-path" method="get" action="/files">
+        <input name="dir" value="{{ path_disp }}" aria-label="Path" spellcheck="false">
+      </form>
+      <label class="fm-search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.5 6.5 0 1 0 14 15.5l.27.28v.79l5 5 1.5-1.5-5-5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></svg>
+        <input type="search" data-fm="search" placeholder="" aria-label="Search">
+      </label>
+    </div>
+    {% if error or tftp.error %}<p class="fm-error">{{ error or tftp.error }}</p>{% endif %}
+    <div class="fm-list-wrap">
+      <table class="fm-list">
+        <thead>
+          <tr>
+            <th data-sort="name">Name</th>
+            <th data-sort="mtime">Date Modified</th>
+            <th data-sort="size">Size</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in tftp.entries %}
+          <tr class="fm-row" data-name="{{ entry.name }}" data-kind="{% if entry.is_dir %}dir{% else %}file{% endif %}" data-path="{{ entry.relative }}" data-size="{{ entry.size }}" data-mtime="{{ entry.mtime_sort }}" data-href="{% if entry.is_dir %}/files?dir={{ entry.relative|urlencode }}{% else %}/files/download?path={{ entry.relative|urlencode }}{% endif %}">
+            <td>
+              {% if entry.is_dir %}
+              <a class="fm-name" href="/files?dir={{ entry.relative|urlencode }}">
+                <svg class="fm-icon-folder" viewBox="0 0 24 24" aria-hidden="true"><path fill="#e6b325" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>
+                {{ entry.name }}
+              </a>
+              {% else %}
+              <a class="fm-name" href="/files/download?path={{ entry.relative|urlencode }}">
+                <svg class="fm-icon-file" viewBox="0 0 24 24" aria-hidden="true"><path fill="#c5cdd6" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm1 7V3.5L19.5 9H15z"/></svg>
+                {{ entry.name }}
+                {% if entry.is_stub %}<span class="badge badge-pending">stub</span>{% endif %}
+              </a>
+              {% endif %}
+            </td>
+            <td>{{ entry.mtime }}</td>
+            <td>{% if entry.is_dir %}{% else %}{{ entry.size_label }}{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="fm-footer">
+      <input class="fm-filename" data-fm="filename" readonly value="" placeholder="" aria-label="Selected name" title="{{ tftp.root }}{{ tftp.path_display }}">
+      <form method="post" action="/files/delete" class="fm-delete" onsubmit="return confirm('Delete this TFTP file or folder?');">
+        <input type="hidden" name="dir" value="{{ tftp.dir }}">
+        <input type="hidden" name="path" value="" data-fm="delete-path">
+        <button type="submit" class="fm-btn-secondary" data-fm="delete" disabled>Delete</button>
+      </form>
+      <form method="post" action="/files/upload" enctype="multipart/form-data" class="fm-upload">
+        <input type="hidden" name="dir" value="{{ tftp.dir }}">
+        <input type="file" name="file" required data-fm="file">
+        <button type="button" class="fm-btn-primary" data-fm="upload">Upload</button>
+      </form>
+    </div>
+  </div>
+</div>
+<dialog class="fm-dialog" id="fm-mkdir">
+  <form method="post" action="/files/mkdir">
+    <input type="hidden" name="dir" value="{{ tftp.dir }}">
+    <h3>New folder</h3>
+    <label>Name <input name="name" required maxlength="120" pattern="[A-Za-z0-9._+-]+" title="Letters, numbers, dot, underscore, plus, hyphen" autofocus></label>
+    <div class="fm-dialog-actions">
+      <button type="button" class="fm-btn-secondary" data-fm="mkdir-cancel">Cancel</button>
+      <button type="submit" class="fm-btn-primary">Create</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

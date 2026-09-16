@@ -1,12 +1,7 @@
 services:
   pxe:
-    image: home-lab-pxe:local
-    build:
-      context: .
-      args:
-        VERSION: "0.1.1"
-    # After a main publish you can instead pin:
-    # image: hometinker12/home-lab-pxe:0.1.1
+    image: hometinker12/home-lab-pxe:latest
+    pull_policy: always
     # Bridge + published HTTP/HTTPS ports work on Docker Desktop. For real LAN DHCP/TFTP
     # on Linux, set network_mode: host in docker-compose.override.yml.
     ports:
@@ -29,8 +24,6 @@ services:
       - "host.docker.internal:host-gateway"
     env_file:
       - .env
-      - path: .host-lan-ip.env
-        required: false
     environment:
       PXE_DATABASE_URL: sqlite:////var/lib/pxe/data/pxe.db
       PXE_TFTP_ROOT: /var/lib/pxe/tftp

@@ -50,4 +50,4 @@ Identity: MAC is primary; SMBIOS UUID is secondary. If UUID matches a known mach
 3. Unit-test Fernet round-trip and “password absent from JSON/logs.”
 4. CI container smoke (`.github/workflows/pxe-smoke.yml`) must hit `/ipxe/{mac}` for pending vs deployed.
 
-If the change is user-visible, update `README.md`, `CHANGELOG.md` `[Unreleased]`, and `.env.example`.
+If the change is user-visible, update `CHANGELOG.md` `[Unreleased]` and `.env.example`. Update `README.md` only when install/run steps or operator-facing capabilities change (see `.cursor/rules/readme.mdc`).

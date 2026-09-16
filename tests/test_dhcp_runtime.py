@@ -7,8 +7,15 @@ def test_settings_saves_dhcp_toggle_and_options(client, tmp_path):
     assert page.status_code == 200
     assert "DHCP" in page.text
     assert "TFTP" in page.text
+    assert "tftp-browser" not in page.text
+    assert 'href="/files"' in page.text
     assert "<details" in page.text
-    assert "Next-server" in page.text
+    assert "Option 60 (PXEClient)" in page.text
+    assert "Option 66 (Next Server)" in page.text
+    assert "Option 67 (Boot File Name)" in page.text
+    assert "same physical machine" in page.text
+    assert "mandatory" in page.text
+    assert "undionly.kpxe" in page.text
     assert 'data-dhcp-mode="authoritative"' in page.text
     assert "dhcp-form" in page.text
     pxe = client.post(
@@ -102,3 +109,15 @@ def test_settings_can_toggle_tftp_separately(client):
     assert enabled.status_code in {302, 303}
     assert tftp_enabled_path().read_text(encoding="utf-8").strip() == "1"
     assert "enable-tftp" in conf_path().read_text(encoding="utf-8")
+
+
+def test_external_dhcp_hints_include_option_60(client):
+    from src.dhcp_runtime import external_dhcp_hints
+
+    hints = external_dhcp_hints()
+    assert hints["vendor_class"] == "PXEClient"
+    assert hints["bios_filename"] == "undionly.kpxe"
+    assert hints["efi_filename"] == "ipxe.efi"
+    assert hints["arm_filename"] == "snponly.efi"
+    assert hints["ipxe_script"].endswith("/boot.ipxe")
+    assert hints["next_server"]
