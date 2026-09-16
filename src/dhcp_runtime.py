@@ -148,6 +148,7 @@ def external_dhcp_hints(snapshot=None) -> dict[str, str]:
         next_server = host
         ipxe_base = public
     return {
+        "vendor_class": "PXEClient",
         "next_server": next_server,
         "bios_filename": "undionly.kpxe",
         "efi_filename": "ipxe.efi",

@@ -94,10 +94,13 @@ def main() -> None:
     expect(b'data-dhcp-mode="authoritative"' in body, "authoritative DHCP fields grouped")
     expect(b"<details" in body, "settings sections should be collapsible")
     expect(b"TFTP" in body, "settings TFTP form")
+    expect(b'href="/files"' in body, "files nav link")
     expect(b"HTTPS" in body, "settings HTTPS form")
     expect(b"self-signed" in body, "first-boot TLS certificate")
     expect(b"BEGIN PRIVATE" not in body, "TLS private key leaked into settings")
-    expect(b"Next-server" in body, "external DHCP hints")
+    expect(b"Option 60 (PXEClient)" in body, "external DHCP option 60 hint")
+    expect(b"Option 66 (Next Server)" in body, "external DHCP option 66 hint")
+    expect(b"Option 67 (Boot File Name)" in body, "external DHCP option 67 hint")
     expect(b"Host LAN IPv4" in body, "settings host LAN address")
     expect(b"/boot.ipxe" in body, "settings advertised PXE URL")
     expect(b"This page" not in body, "settings should not show request host")
@@ -134,6 +137,10 @@ def main() -> None:
     expect(status in {200, 303, 302}, f"dhcp enable {status}")
     status, _, _ = c.request("POST", "/settings/tftp", form={"tftp_enabled": "1"})
     expect(status in {200, 303, 302}, f"tftp enable {status}")
+    status, _, body = c.request("GET", "/files")
+    expect(status == 200 and b'class="fm"' in body, "TFTP file manager page")
+    status, _, body = c.request("GET", "/files/download?path=undionly.kpxe")
+    expect(status == 200 and len(body) > 0, "authenticated tftp download")
 
     status, _, _ = c.request(
         "POST",

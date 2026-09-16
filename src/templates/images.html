@@ -1,28 +1,33 @@
 {% extends "base.html" %}
 {% block title %}Images — home-lab-pxe{% endblock %}
 {% block body %}
-<h1>Images</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
-<table>
-  <thead><tr><th>Name</th><th>OS</th><th>Arch</th><th>Paths</th><th></th></tr></thead>
-  <tbody>
-    {% for img in images %}
-    <tr>
-      <td>{{ img.name }}</td>
-      <td>{{ img.os_family }}</td>
-      <td>{{ img.arch }}</td>
-      <td><code>{{ img.kernel_path or img.boot_wim_path or img.iso_path or "—" }}</code></td>
-      <td><a href="/images/{{ img.id }}">Edit</a></td>
-    </tr>
-    {% else %}
-    <tr><td colspan="5">No images registered.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+<header class="page-header">
+  <h1>Images</h1>
+  <p class="description">Boot payloads served over PXE: Linux kernel/initrd pairs, Windows WIM files, or ISOs.</p>
+</header>
+{% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Name</th><th>OS</th><th>Arch</th><th>Paths</th><th></th></tr></thead>
+    <tbody>
+      {% for img in images %}
+      <tr>
+        <td>{{ img.name }}</td>
+        <td>{{ img.os_family }}</td>
+        <td>{{ img.arch }}</td>
+        <td><code>{{ img.kernel_path or img.boot_wim_path or img.iso_path or "—" }}</code></td>
+        <td><a class="btn-ghost btn-sm" href="/images/{{ img.id }}">Edit</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">No images registered. Add one below to start deploying.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 <section class="card">
   <h2>Add image</h2>
   <p class="meta">Upload an ISO, Linux kernel/initrd, or Windows WIM files, or point at paths already on the image volume (relative, no <code>../</code>).</p>
-  <form method="post" action="/images" enctype="multipart/form-data" class="image-form">
+  <form method="post" action="/images" enctype="multipart/form-data" class="image-form form">
     <label>Name <input name="name" required></label>
     <label>OS
       <select name="os_family">
@@ -46,7 +51,9 @@
     <label>ISO path <input name="iso_path" placeholder="ubuntu/ubuntu-24.04.iso"></label>
     <label>ISO file <input type="file" name="iso_file" accept=".iso,.img"></label>
     <label>Extra cmdline <input name="cmdline"></label>
-    <button type="submit">Add</button>
+    <div class="btn-row">
+      <button type="submit">Add</button>
+    </div>
   </form>
 </section>
 {% endblock %}

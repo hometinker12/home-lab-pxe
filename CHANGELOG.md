@@ -2,10 +2,18 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-16
+
+### Added
+
+- **Files** in the header browses the TFTP volume (list, upload, download, delete) with stub warnings for placeholder iPXE binaries. TFTP enable stays in Settings.
+
 ### Changed
 
 - `docker-compose.yml` always pulls `hometinker12/home-lab-pxe:latest` from Docker Hub instead of building a local image.
 - Host LAN IPv4 is set with `PXE_HOST_LAN_IPV4` in `.env`. `scripts/host_lan_ipv4.py` and `.host-lan-ip.env` are removed.
+- Settings → PXE explains external DHCP options 60 (PXEClient), 66 (next-server), and 67 (boot file), including when option 60 is required.
+- Console pages share a tighter design system (nav, tables, forms); Files uses a file-manager layout for the TFTP volume.
 
 ### Removed
 

@@ -108,6 +108,8 @@ flowchart LR
 
 Authoritative mode (`PXE_DHCP_MODE=authoritative`) makes dnsmasq own the address range instead. Default is **proxy** so the home-lab router stays the DHCP server.
 
+When the existing LAN DHCP server must point clients at this box (DHCP disabled here), set option 66 to the host LAN IPv4 and option 67 to `undionly.kpxe` / `ipxe.efi` / `snponly.efi`. Option 60 (`PXEClient`) is required only when that DHCP server and this PXE/TFTP service share the same physical machine. Leave 60/66/67 unset on the other server if this container is already running proxyDHCP.
+
 ---
 
 ## 2. Boot data plane
@@ -315,6 +317,9 @@ flowchart LR
   subgraph images["Images"]
     Limg["ubuntu-24.04   linux    x86_64   kernel+initrd or ISO"]
     Wimg["ws2022         windows  x86_64   boot.wim + install.wim"]
+  end
+  subgraph files["Files"]
+    Browser["TFTP volume browser"]
   end
   subgraph settings["Settings"]
     Pxe["PXE  public URL  bind  extra options  next-server hints"]

@@ -37,10 +37,19 @@ def _truthy(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "on", "yes"}
 
 
-def _settings_context(request: Request, db: Session, *, error=None, notice=None, open_section: str | None = None):
+def _settings_context(
+    request: Request,
+    db: Session,
+    *,
+    error=None,
+    notice=None,
+    open_section: str | None = None,
+):
     settings = get_settings()
     dhcp = load_runtime(db)
     snapshot = net_snapshot(request)
+    if open_section is None:
+        open_section = (request.query_params.get("section") or "").strip() or None
     try:
         tls = ensure_tls_material()
         tls_error = None
@@ -123,7 +132,7 @@ def settings_tftp(
         save_tftp(db, tftp_enabled=_truthy(tftp_enabled), actor=user)
     except DhcpConfigError as exc:
         return _settings_context(request, db, error=str(exc), open_section="tftp")
-    return RedirectResponse(url="/settings", status_code=HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?section=tftp", status_code=HTTP_303_SEE_OTHER)
 
 
 @router.post("/settings/accounts")

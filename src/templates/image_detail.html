@@ -1,12 +1,15 @@
 {% extends "base.html" %}
 {% block title %}{{ image.name }} — Images{% endblock %}
 {% block body %}
-<p><a href="/images">← Images</a></p>
-<h1>Edit {{ image.name }}</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<p class="back"><a href="/images">← Images</a></p>
+<header class="page-header">
+  <h1>Edit {{ image.name }}</h1>
+  <p class="description">{{ image.os_family }} · {{ image.arch }}</p>
+</header>
+{% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 <section class="card">
   <p class="meta">Leave a file empty to keep the current payload. A new upload replaces that slot. Paths are relative to the image volume. Linux kernel/initrd fields hide when Windows is selected, and WIM fields hide when Linux is selected.</p>
-  <form method="post" action="/images/{{ image.id }}" enctype="multipart/form-data" class="image-form">
+  <form method="post" action="/images/{{ image.id }}" enctype="multipart/form-data" class="image-form form">
     <label>Name <input name="name" value="{{ image.name }}" required></label>
     <label>OS
       <select name="os_family">
@@ -30,7 +33,9 @@
     <label>ISO path <input name="iso_path" value="{{ image.iso_path }}"></label>
     <label>Replace ISO <input type="file" name="iso_file" accept=".iso,.img"></label>
     <label>Extra cmdline <input name="cmdline" value="{{ image.cmdline }}"></label>
-    <button type="submit">Save image</button>
+    <div class="btn-row">
+      <button type="submit">Save image</button>
+    </div>
   </form>
 </section>
 {% endblock %}

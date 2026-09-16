@@ -1,46 +1,53 @@
 {% extends "base.html" %}
 {% block title %}Machines — home-lab-pxe{% endblock %}
 {% block body %}
-<h1>Machines</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<header class="page-header">
+  <h1>Machines</h1>
+  <p class="description">Every host that PXE-boots checks in here. Unknown hosts wait for operator approval; deployed hosts boot from local disk unless you stage a reimage.</p>
+</header>
+{% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+{% if pending %}
+<section class="alert alert-warn">
+  <strong>{{ pending|length }} waiting for operator</strong>
+  <ul>
+    {% for m in pending %}
+    <li>
+      <a href="/machines/{{ m.id }}"><code>{{ m.mac }}</code></a>
+      <span class="meta">{{ m.last_ip }} · {{ m.state }} · last {{ m.last_seen_at }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Host</th><th>MAC</th><th>State</th><th>Image</th><th>IP</th></tr>
+    </thead>
+    <tbody>
+      {% for m in machines %}
+      <tr class="state-{{ m.state }}">
+        <td><a href="/machines/{{ m.id }}">{{ m.hostname or "(unnamed)" }}</a></td>
+        <td><code>{{ m.mac }}</code></td>
+        <td><span class="badge badge-{{ m.state }}">{{ m.state }}</span></td>
+        <td>{% if m.assigned_image_id and images.get(m.assigned_image_id) %}{{ images[m.assigned_image_id].name }}{% else %}—{% endif %}</td>
+        <td>{{ m.last_ip or "—" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">No machines yet. Add a MAC below or PXE-boot a host to register it.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 <section class="card">
   <h2>Add machine</h2>
   <p class="meta">Register a MAC before it PXE-boots. Unknown MACs still appear here after their first iPXE check-in.</p>
   <form method="post" action="/machines" class="row-form">
     <label>MAC address <input name="mac" required placeholder="de:ad:be:ef:00:01" autocomplete="off"></label>
     <label>Hostname (optional) <input name="hostname" placeholder="lab-node-01"></label>
-    <button type="submit">Add machine</button>
+    <div class="btn-row">
+      <button type="submit">Add machine</button>
+    </div>
   </form>
 </section>
-{% if pending %}
-<section class="banner">
-  <h2>{{ pending|length }} waiting for operator</h2>
-  <ul>
-    {% for m in pending %}
-    <li>
-      <a href="/machines/{{ m.id }}"><code>{{ m.mac }}</code></a>
-      {{ m.last_ip }} · {{ m.state }} · last {{ m.last_seen_at }}
-    </li>
-    {% endfor %}
-  </ul>
-</section>
-{% endif %}
-<table>
-  <thead>
-    <tr><th>Host</th><th>MAC</th><th>State</th><th>Image</th><th>IP</th></tr>
-  </thead>
-  <tbody>
-    {% for m in machines %}
-    <tr class="state-{{ m.state }}">
-      <td><a href="/machines/{{ m.id }}">{{ m.hostname or "(unnamed)" }}</a></td>
-      <td><code>{{ m.mac }}</code></td>
-      <td>{{ m.state }}</td>
-      <td>{% if m.assigned_image_id and images.get(m.assigned_image_id) %}{{ images[m.assigned_image_id].name }}{% else %}—{% endif %}</td>
-      <td>{{ m.last_ip or "—" }}</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="5">No machines yet. Add a MAC above or PXE-boot a host to register it.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
 {% endblock %}

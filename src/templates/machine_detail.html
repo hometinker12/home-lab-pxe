@@ -1,13 +1,15 @@
 {% extends "base.html" %}
 {% block title %}{{ machine.hostname or machine.mac }} — home-lab-pxe{% endblock %}
 {% block body %}
-<p><a href="/machines">← Machines</a></p>
-<h1>{{ machine.hostname or "(unnamed)" }}</h1>
-<p class="meta"><code>{{ machine.mac }}</code> · UUID {{ machine.uuid or "—" }} · {{ machine.state }} · {{ machine.last_ip or "no IP" }}</p>
+<p class="back"><a href="/machines">← Machines</a></p>
+<header class="page-header">
+  <h1>{{ machine.hostname or "(unnamed)" }} <span class="badge badge-{{ machine.state }}">{{ machine.state }}</span></h1>
+  <p class="description"><code>{{ machine.mac }}</code> · UUID {{ machine.uuid or "—" }} · {{ machine.last_ip or "no IP" }}</p>
+</header>
 
 <section class="card">
   <h2>Actions</h2>
-  <form class="row" method="post" action="/machines/{{ machine.id }}/deploy">
+  <form class="form" method="post" action="/machines/{{ machine.id }}/deploy">
     <label>Image
       <select name="image_id" required>
         {% for img in images %}
@@ -17,20 +19,25 @@
     </label>
     <label>Local user <input name="username" value="{{ account.username }}" placeholder="root or Administrator"></label>
     <label>Password <input type="password" name="password" autocomplete="new-password" placeholder="{% if account.set %}set — leave blank to keep{% else %}required to deploy{% endif %}"></label>
-    <button type="submit">Deploy</button>
+    <div class="btn-row">
+      <button type="submit">Deploy</button>
+    </div>
   </form>
-  <form class="inline" method="post" action="/machines/{{ machine.id }}/stage"><button type="submit">Stage reimage</button></form>
-  <form class="inline" method="post" action="/machines/{{ machine.id }}/mark-deployed"><button type="submit">Mark deployed</button></form>
-  {% if machine.state == "disabled" %}
-  <form class="inline" method="post" action="/machines/{{ machine.id }}/enable"><button type="submit">Enable</button></form>
-  {% else %}
-  <form class="inline" method="post" action="/machines/{{ machine.id }}/disable"><button type="submit">Disable</button></form>
-  {% endif %}
+  <hr class="sep">
+  <div class="btn-row">
+    <form method="post" action="/machines/{{ machine.id }}/stage"><button type="submit" class="btn-secondary">Stage reimage</button></form>
+    <form method="post" action="/machines/{{ machine.id }}/mark-deployed"><button type="submit" class="btn-secondary">Mark deployed</button></form>
+    {% if machine.state == "disabled" %}
+    <form method="post" action="/machines/{{ machine.id }}/enable"><button type="submit" class="btn-secondary">Enable</button></form>
+    {% else %}
+    <form method="post" action="/machines/{{ machine.id }}/disable" onsubmit="return confirm('Disable this machine? It will no longer be served a boot image.');"><button type="submit" class="btn-danger">Disable</button></form>
+    {% endif %}
+  </div>
 </section>
 
 <section class="card">
   <h2>Guest init</h2>
-  <form method="post" action="/machines/{{ machine.id }}/save">
+  <form class="form" method="post" action="/machines/{{ machine.id }}/save">
     <label>Hostname <input name="hostname" value="{{ machine.hostname }}"></label>
     <label>Timezone <input name="timezone" value="{{ overlay.timezone or 'UTC' }}"></label>
     <label>Packages (comma) <input name="packages" value="{{ overlay.packages|join(', ') if overlay.packages else '' }}"></label>
@@ -40,27 +47,31 @@
     <label>Raw overlay
       <textarea name="raw_overlay" rows="6">{{ overlay.raw_overlay or '' }}</textarea>
     </label>
-    <button type="submit">Save</button>
+    <div class="btn-row">
+      <button type="submit">Save</button>
+    </div>
   </form>
 </section>
 
 <section class="card">
   <h2>Local account ({{ family }})</h2>
-  <p>Username is visible. Password is write-only ({% if account.set %}set{% else %}not set{% endif %}).</p>
-  <form method="post" action="/machines/{{ machine.id }}/account">
+  <p class="meta">Username is visible. Password is write-only ({% if account.set %}set{% else %}not set{% endif %}).</p>
+  <form class="form" method="post" action="/machines/{{ machine.id }}/account">
     <label>Username <input name="username" value="{{ account.username }}"></label>
     <label>New password <input type="password" name="password" autocomplete="new-password"></label>
-    <button type="submit">Rotate</button>
+    <div class="btn-row">
+      <button type="submit">Rotate</button>
+    </div>
   </form>
 </section>
 
 <section class="card">
   <h2>Recent boots</h2>
-  <ul>
+  <ul class="event-list">
     {% for ev in events %}
     <li>{{ ev.at }} · {{ ev.script_kind }} · {{ ev.client_ip }}</li>
     {% else %}
-    <li>None yet.</li>
+    <li class="meta">None yet.</li>
     {% endfor %}
   </ul>
 </section>
