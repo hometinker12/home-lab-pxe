@@ -3,30 +3,38 @@
 {% block body %}
 <header class="page-header">
   <h1>Images</h1>
-  <p class="description">Boot payloads served over PXE: Linux kernel/initrd pairs, Windows WIM files, or ISOs.</p>
+  <p class="description">Boot payloads served over PXE. Uploading an Ubuntu live-server or Windows Server ISO returns immediately; a background worker extracts netboot files. Linux kernel/initrd pairs and custom Windows boot.wim uploads still work.</p>
 </header>
 {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Name</th><th>OS</th><th>Arch</th><th>Paths</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>OS</th><th>Arch</th><th>Extract</th><th>Paths</th><th></th></tr></thead>
     <tbody>
       {% for img in images %}
-      <tr>
+      <tr data-image-id="{{ img.id }}">
         <td>{{ img.name }}</td>
         <td>{{ img.os_family }}</td>
         <td>{{ img.arch }}</td>
+        <td class="extract-status" data-status="{{ img.extract_status or 'idle' }}">
+          {% if img.extract_status == 'queued' %}<span class="badge badge-pending">queued</span>
+          {% elif img.extract_status == 'extracting' %}<span class="badge badge-deploying">extracting</span>
+          {% elif img.extract_status == 'ready' %}<span class="badge badge-deployed">ready</span>
+          {% elif img.extract_status == 'failed' %}<span class="badge badge-disabled" title="{{ img.extract_error }}">failed</span>
+          {% else %}—{% endif %}
+          {% if img.extract_status == 'failed' and img.extract_error %}<div class="meta">{{ img.extract_error }}</div>{% endif %}
+        </td>
         <td><code>{{ img.kernel_path or img.boot_wim_path or img.iso_path or "—" }}</code></td>
         <td><a class="btn-ghost btn-sm" href="/images/{{ img.id }}">Edit</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="empty">No images registered. Add one below to start deploying.</td></tr>
+      <tr><td colspan="6" class="empty">No images registered. Add one below to start deploying.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
 <section class="card">
   <h2>Add image</h2>
-  <p class="meta">Upload an ISO, Linux kernel/initrd, or Windows WIM files, or point at paths already on the image volume (relative, no <code>../</code>).</p>
+  <p class="meta">Ubuntu live-server ISOs extract <code>casper/vmlinuz</code> and <code>casper/initrd</code> and PXE-install with HTTP <code>url=</code> plus autoinstall. Windows Server extraction publishes Setup media on an authenticated read-only SMB share; a stock ISO does <strong>not</strong> include Cloudbase-Init. Paths are relative to the image volume (no <code>../</code>).</p>
   <form method="post" action="/images" enctype="multipart/form-data" class="image-form form">
     <label>Name <input name="name" required></label>
     <label>OS
@@ -47,6 +55,7 @@
       <label>boot.wim file <input type="file" name="boot_wim_file"></label>
       <label>install.wim path <input name="install_wim_path"></label>
       <label>install.wim file <input type="file" name="install_wim_file"></label>
+      <label>WIM index <input name="wim_index" type="number" min="1" value="1"></label>
     </div>
     <label>ISO path <input name="iso_path" placeholder="ubuntu/ubuntu-24.04.iso"></label>
     <label>ISO file <input type="file" name="iso_file" accept=".iso,.img"></label>

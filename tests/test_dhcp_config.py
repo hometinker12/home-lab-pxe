@@ -28,6 +28,13 @@ def test_proxy_dnsmasq_has_no_secrets(tmp_path: Path):
         debug_errors=False,
         data_dir=tmp_path,
         max_upload_bytes=1024,
+        max_seed_bytes=1024,
+        max_extract_bytes=1024,
+        extract_timeout_seconds=60,
+        seven_z_bin="7z",
+        smb_host="192.168.1.10",
+        smb_user="pxemedia",
+        smb_password="",
     )
     text = render_dnsmasq_conf(settings, tftp_root=tmp_path, conf_path=tmp_path / "dnsmasq.conf")
     assert "enable-tftp" in text

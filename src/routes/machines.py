@@ -12,6 +12,8 @@ from ..inventory.service import (
     dump_overlay,
     get_image,
     get_machine,
+    image_deploy_blocked,
+    image_deploy_reason,
     list_boot_events,
     list_images,
     list_machines,
@@ -22,12 +24,21 @@ from ..inventory.service import (
     os_family_for,
     register_machine,
     stage_machine,
+    update_staged_attempt,
     upsert_local_account,
 )
 from ..models import AccountKind, MachineState, OsFamily
+from ..seed_render import validate_seed_template
+from ..seed_store import SeedError, delete_machine_seed, read_machine_seed, write_machine_seed
 from ..web import render
 
 router = APIRouter(tags=["console"], include_in_schema=False)
+
+_PLACEHOLDER_HELP = (
+    "Leave empty to use the image file. Saving a non-empty file replaces the image document for this machine only. "
+    "Placeholders: {{hostname}} {{username}} {{password}} {{password_hash}} {{instance_id}} {{machine_id}} "
+    "{{public_url}} {{phone_home_url}} {{timezone}} {{ssh_keys}} {{packages}} {{wim_index}} {{install_media_path}}"
+)
 
 
 def _machine_or_404(db: Session, machine_id: int):
@@ -35,6 +46,62 @@ def _machine_or_404(db: Session, machine_id: int):
     if machine is None:
         raise HTTPException(status_code=404, detail="unknown machine")
     return machine
+
+
+def _image_options(images):
+    rows = []
+    for img in images:
+        blocked = image_deploy_blocked(img)
+        rows.append(
+            {
+                "image": img,
+                "blocked": blocked,
+                "reason": image_deploy_reason(img) if blocked else "",
+            }
+        )
+    return rows
+
+
+def _detail(request: Request, db: Session, machine, *, error=None):
+    images = list_images(db)
+    image = get_image(db, machine.assigned_image_id)
+    family = os_family_for(db, machine)
+    kind = AccountKind.windows_administrator if family == OsFamily.windows else AccountKind.linux_root
+    account = local_account_status(db, int(machine.id), kind)
+    overlay = load_overlay(machine.guest_overlay)
+    events = list_boot_events(db, int(machine.id))
+    machine_seed = read_machine_seed(int(machine.id), family) if image is not None else ""
+    image_seed_path = ""
+    served_hint = "Assign an image first"
+    if image is not None:
+        image_seed_path = (
+            f"uploads/{image.id}/unattend.xml" if family == OsFamily.windows else f"uploads/{image.id}/user-data"
+        )
+        if machine_seed.strip():
+            served_hint = (
+                f"machine seeds/{machine.id}/unattend.xml"
+                if family == OsFamily.windows
+                else f"machine seeds/{machine.id}/user-data"
+            )
+        else:
+            served_hint = f"image {image_seed_path}"
+    return render(
+        request,
+        "machine_detail.html",
+        machine=machine,
+        images=images,
+        image_options=_image_options(images),
+        image=image,
+        family=family.value,
+        account=account,
+        overlay=overlay,
+        events=events,
+        machine_seed=machine_seed,
+        served_hint=served_hint,
+        placeholder_help=_PLACEHOLDER_HELP,
+        deploying=machine.state == MachineState.deploying.value,
+        error=error,
+    )
 
 
 @router.get("/api/machines")
@@ -110,25 +177,7 @@ def machines_create(
 @router.get("/machines/{machine_id}", response_class=HTMLResponse)
 def machine_detail(request: Request, machine_id: int, db: Session = Depends(get_db), user: str = Depends(require_user)):
     machine = _machine_or_404(db, machine_id)
-    images = list_images(db)
-    image = get_image(db, machine.assigned_image_id)
-    family = os_family_for(db, machine)
-    kind = AccountKind.windows_administrator if family == OsFamily.windows else AccountKind.linux_root
-    account = local_account_status(db, int(machine.id), kind)
-    overlay = load_overlay(machine.guest_overlay)
-    events = list_boot_events(db, int(machine.id))
-    return render(
-        request,
-        "machine_detail.html",
-        machine=machine,
-        images=images,
-        image=image,
-        family=family.value,
-        account=account,
-        overlay=overlay,
-        events=events,
-        error=None,
-    )
+    return _detail(request, db, machine)
 
 
 @router.post("/machines/{machine_id}/save")
@@ -139,12 +188,15 @@ def machine_save(
     timezone: str = Form("UTC"),
     packages: str = Form(""),
     ssh_keys: str = Form(""),
-    raw_overlay: str = Form(""),
+    user_data: str = Form(""),
+    unattend_xml: str = Form(""),
     image_id: int | None = Form(default=None),
     db: Session = Depends(get_db),
     user: str = Depends(require_user),
 ):
     machine = _machine_or_404(db, machine_id)
+    if machine.state == MachineState.deploying.value:
+        return _detail(request, db, machine, error="Cannot edit guest-init while a deploy is in progress")
     overlay = load_overlay(machine.guest_overlay)
     overlay.update(
         {
@@ -152,22 +204,50 @@ def machine_save(
             "timezone": timezone.strip() or "UTC",
             "packages": [p.strip() for p in packages.split(",") if p.strip()],
             "ssh_keys": [k.strip() for k in ssh_keys.splitlines() if k.strip()],
-            "raw_overlay": raw_overlay,
         }
     )
-    mark_ready(db, machine, hostname=hostname, actor=user)
     if image_id:
         img = get_image(db, image_id)
         if img:
             machine.assigned_image_id = img.id
-    machine.guest_overlay = dump_overlay(overlay)
-    db.add(machine)
-    db.commit()
+    family = os_family_for(db, machine)
+    seed_body = unattend_xml if family == OsFamily.windows else user_data
+    assigned = get_image(db, machine.assigned_image_id)
+    try:
+        if assigned is None:
+            pass
+        elif seed_body.strip():
+            validate_seed_template(seed_body, family)
+            write_machine_seed(int(machine.id), family, seed_body)
+            overlay.pop("raw_overlay", None)
+        else:
+            delete_machine_seed(int(machine.id), family)
+            overlay.pop("raw_overlay", None)
+        machine.guest_overlay = dump_overlay(overlay)
+        db.add(machine)
+        if machine.state == MachineState.disabled.value:
+            db.commit()
+            return RedirectResponse(url=f"/machines/{machine_id}", status_code=HTTP_303_SEE_OTHER)
+        if machine.state == MachineState.deployed.value:
+            if assigned is None:
+                raise ValueError("Assign an image before staging a reimage")
+            stage_machine(db, machine, actor=user, image=assigned)
+        elif machine.state == MachineState.staged.value:
+            if assigned is None:
+                raise ValueError("Assign an image first")
+            update_staged_attempt(db, machine, actor=user, image=assigned)
+        else:
+            mark_ready(db, machine, hostname=hostname, actor=user)
+        db.commit()
+    except (ValueError, SeedError) as exc:
+        db.rollback()
+        return _detail(request, db, machine, error=str(exc))
     return RedirectResponse(url=f"/machines/{machine_id}", status_code=HTTP_303_SEE_OTHER)
 
 
 @router.post("/machines/{machine_id}/deploy")
 def machine_deploy(
+    request: Request,
     machine_id: int,
     image_id: int = Form(...),
     username: str = Form(""),
@@ -181,29 +261,38 @@ def machine_deploy(
         raise HTTPException(status_code=400, detail="unknown image")
     kind = AccountKind.windows_administrator if image.os_family == OsFamily.windows.value else AccountKind.linux_root
     default_user = "Administrator" if kind == AccountKind.windows_administrator else "root"
-    if password:
-        upsert_local_account(
-            db,
-            machine_id=int(machine.id),
-            kind=kind,
-            username=(username.strip() or default_user),
-            password=password,
-        )
-    deploy_machine(db, machine, image=image, actor=user)
-    db.commit()
+    try:
+        if password:
+            upsert_local_account(
+                db,
+                machine_id=int(machine.id),
+                kind=kind,
+                username=(username.strip() or default_user),
+                password=password,
+            )
+        deploy_machine(db, machine, image=image, actor=user)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return _detail(request, db, machine, error=str(exc))
     return RedirectResponse(url=f"/machines/{machine_id}", status_code=HTTP_303_SEE_OTHER)
 
 
 @router.post("/machines/{machine_id}/stage")
 def machine_stage(
+    request: Request,
     machine_id: int,
     db: Session = Depends(get_db),
     user: str = Depends(require_user),
 ):
     machine = _machine_or_404(db, machine_id)
     image = get_image(db, machine.assigned_image_id)
-    stage_machine(db, machine, actor=user, image=image)
-    db.commit()
+    try:
+        stage_machine(db, machine, actor=user, image=image)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return _detail(request, db, machine, error=str(exc))
     return RedirectResponse(url=f"/machines/{machine_id}", status_code=HTTP_303_SEE_OTHER)
 
 
@@ -233,6 +322,7 @@ def machine_enable(machine_id: int, db: Session = Depends(get_db), user: str = D
 
 @router.post("/machines/{machine_id}/account")
 def machine_account(
+    request: Request,
     machine_id: int,
     username: str = Form(""),
     password: str = Form(""),
@@ -240,15 +330,25 @@ def machine_account(
     user: str = Depends(require_user),
 ):
     machine = _machine_or_404(db, machine_id)
+    if machine.state == MachineState.deploying.value:
+        return _detail(request, db, machine, error="Cannot change the local account while a deploy is in progress")
     family = os_family_for(db, machine)
     kind = AccountKind.windows_administrator if family == OsFamily.windows else AccountKind.linux_root
     default_user = "Administrator" if kind == AccountKind.windows_administrator else "root"
-    upsert_local_account(
-        db,
-        machine_id=int(machine.id),
-        kind=kind,
-        username=(username.strip() or default_user),
-        password=password or None,
-    )
-    db.commit()
+    try:
+        upsert_local_account(
+            db,
+            machine_id=int(machine.id),
+            kind=kind,
+            username=(username.strip() or default_user),
+            password=password or None,
+        )
+        if machine.state == MachineState.deployed.value:
+            image = get_image(db, machine.assigned_image_id)
+            if image is not None:
+                stage_machine(db, machine, actor=user, image=image)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return _detail(request, db, machine, error=str(exc))
     return RedirectResponse(url=f"/machines/{machine_id}", status_code=HTTP_303_SEE_OTHER)

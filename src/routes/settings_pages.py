@@ -17,7 +17,7 @@ from ..dhcp_runtime import (
 from ..inventory.service import LAB_DEFAULT_MACHINE_ID, local_account_status, upsert_local_account
 from ..models import AccountKind
 from ..netinfo import net_snapshot
-from ..settings import get_settings
+from ..settings import get_settings, smb_password_configured
 from ..tls_store import (
     MAX_PEM_BYTES,
     TlsError,
@@ -69,6 +69,9 @@ def _settings_context(
         https_url=console_https_url(),
         linux=local_account_status(db, LAB_DEFAULT_MACHINE_ID, AccountKind.linux_root),
         windows=local_account_status(db, LAB_DEFAULT_MACHINE_ID, AccountKind.windows_administrator),
+        smb_host=settings.smb_host,
+        smb_user=settings.smb_user,
+        smb_password_set=smb_password_configured(),
         error=error,
         notice=notice,
         open_section=open_section,

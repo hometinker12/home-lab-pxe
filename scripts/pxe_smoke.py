@@ -37,6 +37,32 @@ class Client:
         except urllib.error.HTTPError as exc:
             return exc.code, dict(exc.headers), exc.read()
 
+    def multipart(self, path: str, fields: dict[str, str], files: dict[str, tuple[str, bytes, str]]):
+        boundary = f"pxesmoke{int(time.time())}"
+        chunks: list[bytes] = []
+        for name, value in fields.items():
+            chunks.append(
+                (
+                    f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+                ).encode()
+            )
+        for name, (filename, content, ctype) in files.items():
+            chunks.append(
+                (
+                    f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; "
+                    f"filename=\"{filename}\"\r\nContent-Type: {ctype}\r\n\r\n"
+                ).encode()
+                + content
+                + b"\r\n"
+            )
+        chunks.append(f"--{boundary}--\r\n".encode())
+        return self.request(
+            "POST",
+            path,
+            data=b"".join(chunks),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+
 
 def fail(message: str) -> None:
     print(f"SMOKE FAIL: {message}", file=sys.stderr)
@@ -53,8 +79,10 @@ def main() -> None:
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--user", default="admin")
     parser.add_argument("--password", default="smokepass")
+    parser.add_argument("--smb-password", default="")
     args = parser.parse_args()
     c = Client(args.base_url)
+    smb_secret = (args.smb_password or "").strip()
 
     status, _, body = c.request("GET", "/health")
     expect(status == 200, f"/health {status}")
@@ -84,6 +112,7 @@ def main() -> None:
     expect("Waiting for operator" in text, "expected wait menu")
     expect("sleep" in text, "wait menu should poll")
     expect("smokepass" not in text, "password leaked into iPXE")
+    expect(not smb_secret or smb_secret not in text, "SMB password leaked into pending iPXE")
 
     status, _, _ = c.request("POST", "/login", form={"username": args.user, "password": args.password})
     expect(status in {200, 303, 302}, f"login {status}")
@@ -141,6 +170,46 @@ def main() -> None:
     expect(status == 200 and b'class="fm"' in body, "TFTP file manager page")
     status, _, body = c.request("GET", "/files/download?path=undionly.kpxe")
     expect(status == 200 and len(body) > 0, "authenticated tftp download")
+    status, _, body = c.request("GET", "/tftp/wimboot")
+    expect(status == 200 and len(body) > 1024 and body.strip() != b"ipxe-stub", "http wimboot must be real")
+
+    status, _, body = c.request("GET", "/api/machines")
+    pending_linux = next(m for m in json.loads(body) if m.get("mac") == "de:ad:be:ef:00:01")
+    pmid = pending_linux["id"]
+    status, _, body = c.request("GET", f"/windows/{pmid}/startnet.cmd")
+    expect(status == 404, "pending must not receive startnet")
+    expect(b"pxe-media" not in body, "pending startnet leaked media")
+    status, _, _ = c.request("GET", f"/install-files/{pmid}/kernel")
+    expect(status == 404, "pending must not receive install-files")
+
+    dummy_iso = f"smoke-extract-{int(time.time())}"
+    status, _, _ = c.multipart(
+        "/images",
+        {"name": dummy_iso, "os_family": "linux", "arch": "x86_64"},
+        {"iso_file": ("dummy.iso", b"not-an-iso", "application/octet-stream")},
+    )
+    expect(status in {200, 303, 302}, f"dummy iso create {status}")
+    dummy_row = None
+    for _ in range(60):
+        status, _, body = c.request("GET", "/api/images")
+        dummy_row = next((img for img in json.loads(body) if img.get("name") == dummy_iso), None)
+        if dummy_row and dummy_row.get("extract_status") in {"failed", "ready", "idle"}:
+            break
+        time.sleep(1)
+    expect(dummy_row is not None, "dummy iso image missing")
+    expect(dummy_row.get("extract_status") == "failed", f"dummy iso extract {dummy_row}")
+    err = dummy_row.get("extract_error") or ""
+    expect("/var/lib" not in err and "C:\\" not in err, "extract_error leaked a host path")
+    status, _, body = c.request(
+        "POST",
+        f"/machines/{pmid}/deploy",
+        form={"image_id": str(dummy_row["id"]), "username": "root", "password": "iso-extract-secret"},
+    )
+    expect(status == 200 and b"not ready" in body.lower(), "failed extract must block deploy")
+    status, _, body = c.request("POST", f"/images/{dummy_row['id']}/extract")
+    expect(status in {200, 303, 302}, f"retry extract {status}")
+    status, _, body = c.request("POST", f"/images/{dummy_row['id']}/seed/reset")
+    expect(status in {200, 303, 302}, f"reset seed {status}")
 
     status, _, _ = c.request(
         "POST",
@@ -151,11 +220,12 @@ def main() -> None:
     status, _, body = c.request("GET", "/api/machines")
     expect(any(m.get("mac") == "aa:bb:cc:dd:ee:0f" for m in json.loads(body)), "manually added MAC missing")
 
+    ubuntu_name = f"smoke-ubuntu-{int(time.time())}"
     status, _, body = c.request(
         "POST",
         "/images",
         form={
-            "name": f"smoke-ubuntu-{int(time.time())}",
+            "name": ubuntu_name,
             "os_family": "linux",
             "arch": "x86_64",
             "kernel_path": "ubuntu/vmlinuz",
@@ -166,16 +236,17 @@ def main() -> None:
 
     status, _, body = c.request("GET", "/api/images")
     expect(status == 200, f"/api/images after create {status}")
-    linux_images = [img for img in json.loads(body) if img["os_family"] == "linux"]
-    expect(linux_images, "linux image missing after create")
-    linux_image_id = linux_images[-1]["id"]
+    linux_image = next((img for img in json.loads(body) if img.get("name") == ubuntu_name), None)
+    expect(linux_image is not None, "linux image missing after create")
+    linux_image_id = linux_image["id"]
+    expect("extract_status" in linux_image, "extract_status missing from /api/images")
     status, _, body = c.request("GET", f"/images/{linux_image_id}")
     expect(status == 200 and b"Save image" in body, "image edit page")
     status, _, _ = c.request(
         "POST",
         f"/images/{linux_image_id}",
         form={
-            "name": linux_images[-1]["name"],
+            "name": ubuntu_name,
             "os_family": "linux",
             "arch": "x86_64",
             "kernel_path": "ubuntu/vmlinuz",
@@ -186,6 +257,45 @@ def main() -> None:
     expect(status in {200, 303, 302}, f"edit image {status}")
     status, _, body = c.request("GET", f"/images/{linux_image_id}")
     expect(b"smoke-edit" in body, "edited cmdline missing")
+    token = f"pxe-smoke-token-{int(time.time())}"
+    seed = (
+        "#cloud-config\n"
+        f"# {token}\n"
+        "autoinstall:\n"
+        "  version: 1\n"
+        "  ssh:\n"
+        "    install-server: true\n"
+        "    allow-pw: true\n"
+        "    authorized-keys: []\n"
+        "  user-data:\n"
+        "    hostname: {{hostname}}\n"
+        "    manage_etc_hosts: true\n"
+        "    timezone: {{timezone}}\n"
+        "    disable_root: false\n"
+        "    ssh_pwauth: true\n"
+        "    chpasswd:\n"
+        "      expire: false\n"
+        "      users:\n"
+        "        - name: {{username}}\n"
+        "          password: {{password_hash}}\n"
+        "          type: hash\n"
+        "  late-commands:\n"
+        "    - [wget, -q, --post-data=, -O, /dev/null, {{phone_home_url}}]\n"
+    )
+    status, _, _ = c.request(
+        "POST",
+        f"/images/{linux_image_id}",
+        form={
+            "name": ubuntu_name,
+            "os_family": "linux",
+            "arch": "x86_64",
+            "kernel_path": "ubuntu/vmlinuz",
+            "initrd_path": "ubuntu/initrd",
+            "cmdline": "smoke-edit",
+            "user_data": seed,
+        },
+    )
+    expect(status in {200, 303, 302}, f"edit image seed {status}")
     expect(b'data-os="linux"' in body, "linux image fields")
     expect(b'data-os="windows"' in body, "windows image fields")
 
@@ -243,12 +353,18 @@ def main() -> None:
     status, _, body = c.request("GET", f"/ipxe/{mac}")
     text = body.decode()
     expect("kernel" in text and "nocloud-net" in text, "expected linux install iPXE")
+    expect(r"\;s=" in text or "seed-url" in text, "nocloud-net semicolon must be escaped")
     expect("root-smoke-secret" not in text, "password leaked into install iPXE")
+    expect(not smb_secret or smb_secret not in text, "SMB password leaked into linux iPXE")
+    expect(token not in text, "user-data token leaked into iPXE")
 
     status, _, body = c.request("GET", f"/cloud-init/{mid}/user-data")
     expect(status == 200, f"user-data {status}")
     user_data = body.decode()
-    expect("root:root-smoke-secret" in user_data, "cloud-init missing injected root")
+    expect(token in user_data, "cloud-init missing image seed token")
+    expect("root" in user_data, "cloud-init missing vault user")
+    expect("root-smoke-secret" not in user_data, "plaintext password leaked into user-data")
+    expect("$6$" in user_data, "cloud-init missing password_hash")
     expect("instance-id" in c.request("GET", f"/cloud-init/{mid}/meta-data")[2].decode(), "meta-data")
 
     status, _, body = c.request("GET", f"/api/machines/{mid}")
@@ -315,10 +431,19 @@ def main() -> None:
     status, _, body = c.request("GET", f"/ipxe/{win_mac}")
     text = body.decode()
     expect("unattend.xml" in text and "wimboot" in text, "expected windows install iPXE")
+    expect("winpeshl.ini" in text and "startnet.cmd" in text, "windows script missing WinPE startup files")
+    expect("install.wim" not in text, "install.wim must not be an iPXE initrd")
     expect("Win-smoke-secret" not in text, "password leaked into windows iPXE")
+    expect(not smb_secret or smb_secret not in text, "SMB password leaked into windows iPXE")
 
     status, _, body = c.request("GET", f"/windows/{win_machine['id']}/unattend.xml")
     expect(status == 200 and b"Win-smoke-secret" in body, "unattend missing Administrator password")
+    expect(b"windowsPE" in body, "unattend missing windowsPE")
+    status, _, body = c.request("GET", f"/windows/{win_machine['id']}/startnet.cmd")
+    expect(status == 200 and b"pxe-media" in body, "startnet missing SMB share")
+    expect(b"Win-smoke-secret" not in body, "windows local password leaked into startnet")
+    if smb_secret:
+        expect(smb_secret.encode() in body, "startnet missing SMB password")
     status, _, body = c.request("GET", f"/cloudbase-init/{win_machine['id']}/user-data")
     expect(status == 200 and b"Win-smoke-secret" in body, "cloudbase-init missing password")
     expect(b"phone_home" in body, "cloudbase-init missing phone_home")

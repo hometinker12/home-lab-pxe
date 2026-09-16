@@ -117,7 +117,11 @@ Installer success: Linux cloud-init `phone_home` or a Windows Setup/Cloudbase-In
 
 ### 7.1 Image library
 
-Operator-imported artifacts under `PXE_IMAGE_ROOT` (not git). The console can **upload** kernel/initrd/`boot.wim`/`install.wim`/ISO files or register relative paths already on the volume, and **edit** existing image records (metadata and replacement uploads). Linux image forms hide WIM fields; Windows forms hide kernel/initrd. An ISO-only image is served with iPXE `sanboot`; kernel+initrd still wins for Linux cloud-init installs.
+Operator-imported artifacts under `PXE_IMAGE_ROOT` (not git). The console can **upload** kernel/initrd/`boot.wim`/`install.wim`/ISO files or register relative paths already on the volume, and **edit** existing image records (metadata, replacement uploads, and the image seed file). Linux image forms hide WIM fields; Windows forms hide kernel/initrd.
+
+A registered ISO is saved immediately. A dedicated extractor process unpacks Ubuntu live-server `casper/` payloads or a full Windows Server media tree. Image status is `idle | queued | extracting | ready | failed`. Managed Ubuntu installs use kernel/initrd plus HTTP `url=` to the ISO and autoinstall. Managed Windows installs boot WinPE via `wimboot` and run Setup from an authenticated read-only SMB share. ISO-only `sanboot` remains the fallback when there is no kernel/WIM pair and extraction did not fail.
+
+Each Linux image has a cloud-init **user-data** file; each Windows image has **unattend.xml**. A machine may store its own file of the same kind; a non-empty machine file replaces the image file (no YAML/XML merge). Vault credentials are substituted at serve time through allowlisted `{{placeholders}}`.
 
 - Ubuntu live-server kernel/initrd + autoinstall (first Linux distro)
 - Windows Server install WIM + WinPE `boot.wim` (first Windows target: Server 2022 or 2025)

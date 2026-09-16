@@ -4,11 +4,19 @@
 <p class="back"><a href="/images">← Images</a></p>
 <header class="page-header">
   <h1>Edit {{ image.name }}</h1>
-  <p class="description">{{ image.os_family }} · {{ image.arch }}</p>
+  <p class="description">{{ image.os_family }} · {{ image.arch }}
+    · extract
+    {% if image.extract_status == 'queued' %}<span class="badge badge-pending">queued</span>
+    {% elif image.extract_status == 'extracting' %}<span class="badge badge-deploying">extracting</span>
+    {% elif image.extract_status == 'ready' %}<span class="badge badge-deployed">ready</span>
+    {% elif image.extract_status == 'failed' %}<span class="badge badge-disabled">failed</span>
+    {% else %}idle{% endif %}
+  </p>
 </header>
 {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+{% if image.extract_status == 'failed' and image.extract_error %}<p class="alert alert-error" role="alert">{{ image.extract_error }}</p>{% endif %}
 <section class="card">
-  <p class="meta">Leave a file empty to keep the current payload. A new upload replaces that slot. Paths are relative to the image volume. Linux kernel/initrd fields hide when Windows is selected, and WIM fields hide when Linux is selected.</p>
+  <p class="meta">Leave a file empty to keep the current payload. A new upload replaces that slot. Ubuntu live-server ISO extraction fills kernel/initrd unless you set custom paths. Windows extraction publishes Setup media over authenticated SMB; stock ISOs do not include Cloudbase-Init.</p>
   <form method="post" action="/images/{{ image.id }}" enctype="multipart/form-data" class="image-form form">
     <label>Name <input name="name" value="{{ image.name }}" required></label>
     <label>OS
@@ -29,13 +37,31 @@
       <label>Replace boot.wim <input type="file" name="boot_wim_file"></label>
       <label>install.wim path <input name="install_wim_path" value="{{ image.install_wim_path }}"></label>
       <label>Replace install.wim <input type="file" name="install_wim_file"></label>
+      <label>WIM index <input name="wim_index" type="number" min="1" value="{{ image.wim_index or 1 }}"></label>
     </div>
     <label>ISO path <input name="iso_path" value="{{ image.iso_path }}"></label>
     <label>Replace ISO <input type="file" name="iso_file" accept=".iso,.img"></label>
     <label>Extra cmdline <input name="cmdline" value="{{ image.cmdline }}"></label>
+    <div data-os="linux">
+      <label>cloud-init user-data
+        <textarea name="user_data" rows="24" class="seed-editor">{{ seed_text }}</textarea>
+      </label>
+      <p class="meta">Placeholders: <code>{{ placeholder_help }}</code>. Use <code>{{ '{{password_hash}}' }}</code> for Ubuntu autoinstall. Image files cannot be saved empty — reset to factory instead.</p>
+    </div>
+    <div data-os="windows">
+      <label>unattend.xml
+        <textarea name="unattend_xml" rows="24" class="seed-editor">{{ seed_text }}</textarea>
+      </label>
+      <p class="meta">Placeholders: <code>{{ placeholder_help }}</code>. Use <code>{{ '{{password}}' }}</code> for the local Administrator. Stock ISO Setup does not install Cloudbase-Init.</p>
+    </div>
     <div class="btn-row">
       <button type="submit">Save image</button>
     </div>
   </form>
+  <hr class="sep">
+  <div class="btn-row">
+    <form method="post" action="/images/{{ image.id }}/extract"><button type="submit" class="btn-secondary">Retry extract</button></form>
+    <form method="post" action="/images/{{ image.id }}/seed/reset" onsubmit="return confirm('Replace this image seed with the factory starter?');"><button type="submit" class="btn-secondary">Reset seed to factory default</button></form>
+  </div>
 </section>
 {% endblock %}

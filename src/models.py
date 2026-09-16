@@ -32,6 +32,14 @@ class AccountKind(StrEnum):
     windows_administrator = "windows_administrator"
 
 
+class ExtractStatus(StrEnum):
+    idle = "idle"
+    queued = "queued"
+    extracting = "extracting"
+    ready = "ready"
+    failed = "failed"
+
+
 class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True)
@@ -51,6 +59,11 @@ class Image(SQLModel, table=True):
     install_wim_path: str = ""
     iso_path: str = ""
     cmdline: str = ""
+    extract_status: str = ExtractStatus.idle.value
+    extract_error: str = ""
+    extract_revision: int = 0
+    extract_generation: str = ""
+    wim_index: int = 1
 
 
 class Machine(SQLModel, table=True):
@@ -83,6 +96,26 @@ class StagedJob(SQLModel, table=True):
     created_by: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     applied_at: datetime | None = None
+
+
+class InstallAttempt(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    machine_id: int = Field(foreign_key="machine.id", index=True)
+    instance_id: str = Field(index=True)
+    image_id: int | None = Field(default=None, foreign_key="image.id")
+    os_family: str = ""
+    extract_revision: int = 0
+    kernel_path: str = ""
+    initrd_path: str = ""
+    boot_wim_path: str = ""
+    install_wim_path: str = ""
+    iso_path: str = ""
+    cmdline: str = ""
+    wim_index: int = 1
+    media_relative: str = ""
+    seed_snapshot_path: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    completed_at: datetime | None = None
 
 
 class BootEvent(SQLModel, table=True):

@@ -12,7 +12,9 @@ from ..models import (
     AccountKind,
     ActivityLog,
     BootEvent,
+    ExtractStatus,
     Image,
+    InstallAttempt,
     LocalAccount,
     Machine,
     MachineState,
@@ -20,6 +22,14 @@ from ..models import (
     StagedJob,
 )
 from ..security import decrypt_value, encrypt_value
+from ..seed_store import (
+    SeedError,
+    ensure_image_seed,
+    factory_seed_text,
+    snapshot_seed_relative,
+    write_seed,
+)
+from ..settings import get_settings, smb_password_configured
 from .mac import normalize_mac, normalize_uuid
 
 LAB_DEFAULT_MACHINE_ID = 0
@@ -32,6 +42,7 @@ WAIT_STATES = frozenset(
         MachineState.disabled.value,
     }
 )
+EXTRACT_BLOCKING = frozenset({ExtractStatus.queued.value, ExtractStatus.extracting.value, ExtractStatus.failed.value})
 
 
 def guest_init_allowed(machine: Machine) -> bool:
@@ -102,6 +113,114 @@ def get_machine_for_guest_init(db: Session, machine_id: int) -> Machine | None:
 
 def find_by_mac(db: Session, mac: str) -> Machine | None:
     return db.exec(select(Machine).where(Machine.mac == normalize_mac(mac))).first()
+
+
+def get_open_attempt(db: Session, machine: Machine) -> InstallAttempt | None:
+    if not machine.id:
+        return None
+    return db.exec(
+        select(InstallAttempt).where(
+            InstallAttempt.machine_id == machine.id,
+            InstallAttempt.instance_id == machine.instance_id,
+            InstallAttempt.completed_at == None,  # noqa: E711
+        )
+    ).first()
+
+
+def close_open_attempts(db: Session, machine: Machine) -> None:
+    if not machine.id:
+        return
+    rows = db.exec(
+        select(InstallAttempt).where(
+            InstallAttempt.machine_id == machine.id,
+            InstallAttempt.completed_at == None,  # noqa: E711
+        )
+    ).all()
+    for row in rows:
+        row.completed_at = now()
+        db.add(row)
+
+
+def image_extract_blocking(image: Image) -> bool:
+    return (image.extract_status or ExtractStatus.idle.value) in EXTRACT_BLOCKING
+
+
+def image_deploy_reason(image: Image) -> str:
+    status = image.extract_status or ExtractStatus.idle.value
+    if status == ExtractStatus.queued.value or status == ExtractStatus.extracting.value:
+        return "extraction in progress"
+    if status == ExtractStatus.failed.value:
+        return "extraction failed"
+    if image.os_family == OsFamily.linux.value:
+        if (image.kernel_path or "").strip() and (image.initrd_path or "").strip():
+            return ""
+        if (image.iso_path or "").strip():
+            return ""
+        return "Linux image needs a kernel and initrd, or an ISO"
+    if (image.extract_generation or "").strip() and (image.boot_wim_path or "").strip():
+        from ..tftp_store import wimboot_available
+
+        if not wimboot_available():
+            return "valid wimboot is not installed"
+        if not smb_password_configured():
+            return "Windows installation media share is not configured"
+        return ""
+    if (image.iso_path or "").strip() or (image.boot_wim_path or "").strip():
+        return ""
+    return "Windows image needs extracted Setup media or an ISO"
+
+
+def image_deploy_blocked(image: Image) -> bool:
+    return bool(image_deploy_reason(image))
+
+
+def assert_image_deployable(image: Image) -> None:
+    reason = image_deploy_reason(image)
+    if reason:
+        if image_extract_blocking(image):
+            raise ValueError("This image is not ready to deploy until extraction succeeds")
+        raise ValueError(reason)
+
+
+def create_install_attempt(db: Session, machine: Machine, image: Image) -> InstallAttempt:
+    from ..seed_render import select_seed_text
+
+    close_open_attempts(db, machine)
+    text = select_seed_text(image, machine, image.os_family)
+    if not text.strip():
+        text = factory_seed_text(image.os_family)
+    relative = snapshot_seed_relative(int(machine.id), machine.instance_id, image.os_family)
+    try:
+        write_seed(get_settings().data_dir, relative, text)
+    except SeedError as exc:
+        raise ValueError(str(exc)) from exc
+    media = (image.extract_generation or "").strip()
+    attempt = InstallAttempt(
+        machine_id=int(machine.id),
+        instance_id=machine.instance_id,
+        image_id=image.id,
+        os_family=image.os_family,
+        extract_revision=int(image.extract_revision or 0),
+        kernel_path=image.kernel_path or "",
+        initrd_path=image.initrd_path or "",
+        boot_wim_path=image.boot_wim_path or "",
+        install_wim_path=image.install_wim_path or "",
+        iso_path=image.iso_path or "",
+        cmdline=image.cmdline or "",
+        wim_index=int(image.wim_index or 1),
+        media_relative=media,
+        seed_snapshot_path=relative,
+    )
+    db.add(attempt)
+    db.flush()
+    return attempt
+
+
+def refresh_install_attempt(db: Session, machine: Machine, image: Image) -> InstallAttempt:
+    close_open_attempts(db, machine)
+    bump_instance_id(machine)
+    db.add(machine)
+    return create_install_attempt(db, machine, image)
 
 
 def touch_machine(
@@ -215,10 +334,12 @@ def bump_instance_id(machine: Machine) -> None:
 
 
 def deploy_machine(db: Session, machine: Machine, *, image: Image, actor: str) -> Machine:
+    assert_image_deployable(image)
     machine.assigned_image_id = image.id
     machine.state = MachineState.deploying.value
     bump_instance_id(machine)
     db.add(machine)
+    create_install_attempt(db, machine, image)
     record_activity(db, actor=actor, action="machine.deploy", detail=f"image={image.name}")
     return machine
 
@@ -240,13 +361,37 @@ def mark_deployed(db: Session, machine: Machine, *, actor: str = "installer") ->
     for job in open_jobs:
         job.applied_at = now()
         db.add(job)
+    attempts = db.exec(
+        select(InstallAttempt).where(
+            InstallAttempt.machine_id == machine.id,
+            InstallAttempt.completed_at == None,  # noqa: E711
+        )
+    ).all()
+    image_ids: set[int] = set()
+    for attempt in attempts:
+        attempt.completed_at = now()
+        db.add(attempt)
+        if attempt.image_id:
+            image_ids.add(int(attempt.image_id))
+        if attempt.seed_snapshot_path:
+            from ..seed_store import delete_seed
+
+            delete_seed(get_settings().data_dir, attempt.seed_snapshot_path)
     db.add(machine)
     record_activity(db, actor=actor, action="machine.deployed", detail=machine.mac)
+    from ..extract_worker import gc_extract_generations
+
+    for image_id in image_ids:
+        image = get_image(db, image_id)
+        if image is not None:
+            gc_extract_generations(db, image)
     return machine
 
 
 def disable_machine(db: Session, machine: Machine, *, actor: str, disabled: bool) -> Machine:
     machine.state = MachineState.disabled.value if disabled else MachineState.ready.value
+    if disabled:
+        close_open_attempts(db, machine)
     db.add(machine)
     record_activity(db, actor=actor, action="machine.disabled" if disabled else "machine.enabled", detail=machine.mac)
     return machine
@@ -255,6 +400,10 @@ def disable_machine(db: Session, machine: Machine, *, actor: str, disabled: bool
 def stage_machine(
     db: Session, machine: Machine, *, actor: str, image: Image | None = None, overlay: dict | None = None
 ) -> Machine:
+    target = image or get_image(db, machine.assigned_image_id)
+    if target is None:
+        raise ValueError("Assign an image before staging a reimage")
+    assert_image_deployable(target)
     if image is not None:
         machine.assigned_image_id = image.id
     if overlay is not None:
@@ -270,7 +419,15 @@ def stage_machine(
         )
     )
     db.add(machine)
+    create_install_attempt(db, machine, target)
     record_activity(db, actor=actor, action="machine.staged", detail=machine.mac)
+    return machine
+
+
+def update_staged_attempt(db: Session, machine: Machine, *, actor: str, image: Image) -> Machine:
+    assert_image_deployable(image)
+    refresh_install_attempt(db, machine, image)
+    record_activity(db, actor=actor, action="machine.staged-update", detail=machine.mac)
     return machine
 
 
@@ -286,6 +443,7 @@ def create_image(
     install_wim_path: str = "",
     iso_path: str = "",
     cmdline: str = "",
+    wim_index: int = 1,
     actor: str,
 ) -> Image:
     trimmed = name.strip()
@@ -303,9 +461,12 @@ def create_image(
         install_wim_path=install_wim_path.strip(),
         iso_path=iso_path.strip(),
         cmdline=cmdline.strip(),
+        wim_index=max(1, int(wim_index or 1)),
     )
     db.add(image)
     db.flush()
+    if image.id is not None:
+        ensure_image_seed(int(image.id), os_family)
     record_activity(db, actor=actor, action="image.create", detail=image.name)
     return image
 
@@ -323,6 +484,7 @@ def update_image(
     install_wim_path: str | None = None,
     iso_path: str | None = None,
     cmdline: str | None = None,
+    wim_index: int | None = None,
     actor: str,
 ) -> Image:
     new_name = name.strip()
@@ -346,7 +508,11 @@ def update_image(
         image.iso_path = iso_path.strip()
     if cmdline is not None:
         image.cmdline = cmdline.strip()
+    if wim_index is not None:
+        image.wim_index = max(1, int(wim_index))
     db.add(image)
+    if image.id is not None:
+        ensure_image_seed(int(image.id), os_family)
     record_activity(db, actor=actor, action="image.update", detail=image.name)
     return image
 

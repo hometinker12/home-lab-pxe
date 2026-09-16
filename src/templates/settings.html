@@ -149,6 +149,20 @@
     </form>
   </div>
 </details>
+<details class="card" {% if open_section == "smb" %}open{% endif %}>
+  <summary>Windows installation media (SMB)</summary>
+  <div class="card-body">
+    <p class="meta">WinPE maps the authenticated read-only share <code>pxe-media</code> for Setup files. Set <code>PXE_SMB_PASSWORD</code> in <code>.env</code> (20–128 URL-safe characters). Do not publish host TCP 445 from Docker Desktop; LAN Windows PXE needs Linux <code>network_mode: host</code>.</p>
+    <dl class="hints">
+      <dt>SMB host</dt>
+      <dd><code>{{ smb_host }}</code></dd>
+      <dt>SMB user</dt>
+      <dd><code>{{ smb_user }}</code></dd>
+      <dt>Password</dt>
+      <dd>{% if smb_password_set %}<span class="badge badge-deployed">set</span>{% else %}<span class="badge badge-disabled">not set</span>{% endif %}</dd>
+    </dl>
+  </div>
+</details>
 <details class="card" {% if open_section == "accounts" %}open{% endif %}>
   <summary>Lab default local accounts</summary>
   <div class="card-body">

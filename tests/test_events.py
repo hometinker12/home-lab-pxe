@@ -18,7 +18,14 @@ def test_phone_home_form_post_marks_deployed(client):
 
     with session_scope() as db:
         machine = touch_machine(db, mac="02:00:00:00:00:32", uuid=None, client_ip="10.0.0.4")
-        image = create_image(db, name="u-form", os_family=OsFamily.linux, actor="admin")
+        image = create_image(
+            db,
+            name="u-form",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
         deploy_machine(db, machine, image=image, actor="admin")
         db.commit()
         mid = machine.id
@@ -37,7 +44,14 @@ def test_unsupported_event_is_rejected(client):
 
     with session_scope() as db:
         machine = touch_machine(db, mac="02:00:00:00:00:33", uuid=None, client_ip="10.0.0.5")
-        image = create_image(db, name="u-bad-event", os_family=OsFamily.linux, actor="admin")
+        image = create_image(
+            db,
+            name="u-bad-event",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
         deploy_machine(db, machine, image=image, actor="admin")
         db.commit()
         mid = machine.id

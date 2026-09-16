@@ -26,6 +26,10 @@ ENV PYTHONUNBUFFERED=1 \
     PXE_SSL_DIR=/var/lib/pxe/ssl \
     PXE_DATABASE_URL=sqlite:////var/lib/pxe/data/pxe.db
 
+# Pinned official wimboot (BIOS + 64-bit UEFI). Build fails if the checksum does not match.
+ENV WIMBOOT_URL=https://github.com/ipxe/wimboot/releases/download/v2.8.0/wimboot \
+    WIMBOOT_SHA256=74d4bf3d09386ccbbe907d9db59030f8cd8c88f7b4ccb799d386f31def11b3fe
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -37,6 +41,8 @@ RUN apt-get update \
         libsqlite3-0 \
         openssl \
         perl-base \
+        samba \
+        smbclient \
         tftp-hpa \
         bsdutils \
         libblkid1 \
@@ -47,11 +53,15 @@ RUN apt-get update \
         login \
         mount \
         util-linux \
+    && (apt-get install -y --no-install-recommends 7zip || apt-get install -y --no-install-recommends p7zip-full) \
+    && (command -v 7z >/dev/null || ln -sf "$(command -v 7zz || command -v 7za)" /usr/local/bin/7z) \
     && (apt-get install -y --no-install-recommends libssl3t64 || apt-get install -y --no-install-recommends libssl3) \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 app \
     && useradd --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin app \
-    && mkdir -p /var/lib/pxe/tftp /var/lib/pxe/images /var/lib/pxe/data /var/lib/pxe/ssl
+    && useradd --uid 10002 --gid 10001 --system --no-create-home --shell /usr/sbin/nologin pxemedia \
+    && mkdir -p /var/lib/pxe/tftp /var/lib/pxe/images /var/lib/pxe/images/smb /var/lib/pxe/data /var/lib/pxe/ssl \
+        /usr/share/home-lab-pxe /var/log/samba /run/samba
 
 # Best-effort official iPXE binaries. Always leave non-empty TFTP files so a
 # read-only rootfs (CI hardened smoke) can start even when the downloads 404.
@@ -60,22 +70,27 @@ RUN set -e; \
     curl -fsSL -o /var/lib/pxe/tftp/undionly.kpxe https://boot.ipxe.org/undionly.kpxe || true; \
     curl -fsSL -o /var/lib/pxe/tftp/ipxe.efi https://boot.ipxe.org/ipxe.efi || true; \
     curl -fsSL -o /var/lib/pxe/tftp/snponly.efi https://boot.ipxe.org/snponly.efi || true; \
-    for f in undionly.kpxe ipxe.efi snponly.efi wimboot; do \
+    for f in undionly.kpxe ipxe.efi snponly.efi; do \
       if [ ! -s "/var/lib/pxe/tftp/$f" ]; then \
         printf 'ipxe-stub\n' > "/var/lib/pxe/tftp/$f"; \
       fi; \
-    done
+    done; \
+    curl -fsSL -o /usr/share/home-lab-pxe/wimboot "$WIMBOOT_URL"; \
+    echo "$WIMBOOT_SHA256  /usr/share/home-lab-pxe/wimboot" | sha256sum -c -; \
+    cp /usr/share/home-lab-pxe/wimboot /var/lib/pxe/tftp/wimboot
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('pytest') is None else 1)"
 
 COPY VERSION ./VERSION
+COPY config/smb.conf /etc/samba/smb.conf
 COPY src ./src
 COPY scripts ./scripts
 RUN sed -i 's/\r$//' ./scripts/entrypoint.sh ./scripts/run-web.sh ./scripts/pxe_smoke.py \
     && chmod +x ./scripts/entrypoint.sh ./scripts/run-web.sh \
-    && chown -R app:app /app /var/lib/pxe
+    && chown -R app:app /app /var/lib/pxe \
+    && chmod 644 /etc/samba/smb.conf
 
 EXPOSE 8080 8443 67/udp 69/udp
 

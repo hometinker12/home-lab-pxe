@@ -82,6 +82,16 @@ def is_stub(path: Path) -> bool:
         return False
 
 
+def wimboot_available() -> bool:
+    path = tftp_root() / "wimboot"
+    try:
+        if not path.is_file() or is_stub(path) or path.stat().st_size < 1024:
+            return False
+    except OSError:
+        return False
+    return True
+
+
 def _mtime_label(path: Path) -> str:
     try:
         stamp = path.stat().st_mtime

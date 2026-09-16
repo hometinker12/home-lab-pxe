@@ -13,6 +13,8 @@ RELOAD="$DATA_DIR/ssl.reload"
 
 HTTP_PID=""
 HTTPS_PID=""
+EXTRACT_PID=""
+EXTRACT_BACKOFF=1
 
 start_http() {
   uvicorn src.app:create_app --factory --host "$BIND" --port "$HTTP_PORT" --workers 1 &
@@ -49,6 +51,11 @@ start_https() {
   echo "WARN: HTTPS did not become ready on ${HTTPS_PORT}" >&2
 }
 
+start_extract() {
+  python -m src.extract_worker &
+  EXTRACT_PID=$!
+}
+
 stop_pid() {
   pid="$1"
   if [ -n "$pid" ]; then
@@ -58,6 +65,7 @@ stop_pid() {
 }
 
 shutdown() {
+  stop_pid "$EXTRACT_PID"
   stop_pid "$HTTP_PID"
   stop_pid "$HTTPS_PID"
   exit 0
@@ -66,7 +74,7 @@ shutdown() {
 trap shutdown TERM INT
 
 start_http
-# Let HTTP finish init_db before the HTTPS process opens SQLite.
+# Let HTTP finish init_db before the extractor and HTTPS process open SQLite.
 i=0
 while [ "$i" -lt 50 ]; do
   if [ -n "$HTTP_PID" ] && ! kill -0 "$HTTP_PID" 2>/dev/null; then
@@ -79,6 +87,7 @@ while [ "$i" -lt 50 ]; do
   i=$((i + 1))
   sleep 0.1
 done
+start_extract
 start_https
 
 while true; do
@@ -90,8 +99,21 @@ while true; do
   fi
   if [ -n "$HTTP_PID" ] && ! kill -0 "$HTTP_PID" 2>/dev/null; then
     echo "ERROR: HTTP uvicorn exited" >&2
+    stop_pid "$EXTRACT_PID"
     stop_pid "$HTTPS_PID"
     exit 1
+  fi
+  if [ -n "$EXTRACT_PID" ] && ! kill -0 "$EXTRACT_PID" 2>/dev/null; then
+    echo "WARN: extract worker exited; restarting in ${EXTRACT_BACKOFF}s" >&2
+    EXTRACT_PID=""
+    sleep "$EXTRACT_BACKOFF"
+    EXTRACT_BACKOFF=$((EXTRACT_BACKOFF * 2))
+    if [ "$EXTRACT_BACKOFF" -gt 60 ]; then
+      EXTRACT_BACKOFF=60
+    fi
+    start_extract
+  elif [ -n "$EXTRACT_PID" ]; then
+    EXTRACT_BACKOFF=1
   fi
   sleep 1
 done

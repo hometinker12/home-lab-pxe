@@ -67,6 +67,8 @@ jobs:
                       "PXE_DHCP_OPTIONAL=1",
                       "PXE_BIND_INTERFACE=eth0",
                       "PXE_DHCP_MODE=proxy",
+                      "PXE_SMB_USER=pxemedia",
+                      f"PXE_SMB_PASSWORD={secrets.token_urlsafe(24)}",
                   ]
               )
               + "\n",
@@ -139,7 +141,33 @@ jobs:
           curl -kfsS https://127.0.0.1:8443/health
           docker exec pxe-smoke test -f /var/lib/pxe/ssl/tls.crt
           docker exec pxe-smoke test -f /var/lib/pxe/ssl/tls.key
-          python3 scripts/pxe_smoke.py --base-url http://127.0.0.1:8080 --user admin --password smokepass
+          docker exec pxe-smoke bash -lc 'command -v 7z && 7z i >/dev/null'
+          docker exec pxe-smoke pgrep -f src.extract_worker >/dev/null
+          docker exec pxe-smoke testparm -s >/dev/null
+          SMB_PASS=$(awk -F= '/^PXE_SMB_PASSWORD=/{print $2}' ci.env)
+          python3 scripts/pxe_smoke.py --base-url http://127.0.0.1:8080 --user admin --password smokepass --smb-password "$SMB_PASS"
+          docker exec pxe-smoke python -c "from pathlib import Path; p=Path('/var/lib/pxe/tftp/wimboot'); data=p.read_bytes(); assert data.strip()!=b'ipxe-stub' and p.stat().st_size>1024"
+          smb_ok=0
+          for i in $(seq 1 15); do
+            if docker exec pxe-smoke smbclient //127.0.0.1/pxe-media -U "pxemedia%${SMB_PASS}" -c 'ls' >/dev/null; then
+              smb_ok=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$smb_ok" != "1" ]; then
+            echo "authenticated SMB list failed"
+            docker logs pxe-smoke || true
+            exit 1
+          fi
+          if docker exec pxe-smoke smbclient //127.0.0.1/pxe-media -U "pxemedia%${SMB_PASS}" -c 'put /etc/hosts hosts' >/dev/null 2>&1; then
+            echo "SMB write unexpectedly succeeded"
+            exit 1
+          fi
+          if docker exec pxe-smoke smbclient //127.0.0.1/pxe-media -N -c 'ls' >/dev/null 2>&1; then
+            echo "anonymous SMB unexpectedly succeeded"
+            exit 1
+          fi
           echo "PXE HTTP smoke passed (image was not pushed)."
       - name: Container logs (always)
         if: always()
