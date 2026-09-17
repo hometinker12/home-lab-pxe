@@ -40,7 +40,7 @@ High-priority areas for this project include:
 - CSRF protection for browser form posts
 - Secret handling (`SECRET_KEY`, `ENCRYPTION_KEY`, TLS private keys, cloud-init / unattend / Cloudbase-Init payloads, SSH keys, local root/Administrator accounts)
 - Logging that might leak credentials or user-data
-- Boot-policy abuse (forcing a reimage, skipping the unknown-host wait menu)
+- Boot-policy abuse (forcing a reimage, skipping the unknown-host continue-to-disk timeout)
 - Path traversal in image / TFTP / HTTP boot file serving
 - Container hardening (privilege, host network, exposed ports)
 

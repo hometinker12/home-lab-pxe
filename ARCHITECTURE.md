@@ -132,16 +132,15 @@ sequenceDiagram
   PXE-->>FW: proxyDHCP: TFTP iPXE
   FW->>PXE: TFTP iPXE binary
   FW->>PXE: GET /ipxe/{mac}
-  alt unknown / pending / ready / disabled / timeout_error
-    PXE-->>FW: wait menu (chain + sleep)
-    FW->>PXE: poll same URL until operator acts
+  alt unknown / pending unnamed / disabled
+    PXE-->>FW: sleep timeout + exit / sanboot
+    FW->>Disk: next boot device
+  else named / ready / deployed / timeout_error
+    PXE-->>FW: iPXE folder menu (countdown to disk)
   else deploying / staged, Linux
     PXE-->>FW: kernel + initrd + cloud-init URL
   else deploying / staged, Windows
     PXE-->>FW: wimboot + unattend.xml URL
-  else deployed, no staged job
-    PXE-->>FW: exit / sanboot
-    FW->>Disk: boot OS
   end
 ```
 
@@ -151,18 +150,16 @@ sequenceDiagram
 flowchart TD
   REQ["GET /ipxe/{mac}"] --> ID{"MAC or UUID<br/>in inventory?"}
   ID -->|no| REG["Insert pending"]
-  REG --> WAIT["Wait / poll menu"]
+  REG --> DISK["Timeout then next boot device"]
   ID -->|yes| ST{"state"}
-  ST --> pending["pending / ready / disabled / timeout_error"]
-  pending --> WAIT
-  ST --> inst["deploying / staged"]
+  ST --> skip["unnamed pending / disabled"]
+  skip --> DISK
+  ST --> menu["named / ready / deployed / timeout_error"]
+  menu --> FOLDER["iPXE folder menu"]
+  ST --> inst["deploying / staged / imaging"]
   inst --> OS{"os_family"}
   OS --> linux["Linux: kernel + nocloud"]
   OS --> win["Windows: wimboot + unattend"]
-  ST --> dep["deployed"]
-  dep --> JOB{"staged job?"}
-  JOB -->|yes| inst
-  JOB -->|no| LOCAL["exit to local disk"]
 ```
 
 ### 2.2 Linux install
@@ -351,11 +348,11 @@ sequenceDiagram
   participant Op as Operator
 
   M->>PXE: first iPXE check-in
-  PXE-->>M: wait menu
-  Op->>UI: sees pending row
+  PXE-->>M: timeout then next boot device
+  Op->>UI: sees pending row, sets hostname
   Op->>UI: hostname, image, root/Admin password
   UI->>PXE: encrypt local account, state=deploying
-  M->>PXE: wait menu polls /ipxe/{mac}
+  M->>PXE: GET /ipxe/{mac}
   PXE-->>M: install script
   M->>PXE: guest-init + phone_home
   PXE-->>UI: state=deployed
@@ -365,19 +362,23 @@ sequenceDiagram
   PXE-->>M: new image + bumped instance-id
 ```
 
-### 3.6 iPXE wait menu (client screen)
+### 3.6 iPXE folder menu (client screen)
 
-Not the web UI — what the **unknown machine** shows until Deploy.
+Named hosts see folders from the console **Boot menu** page. Unknown and disabled hosts skip it.
 
 ```mermaid
 flowchart TB
-  subgraph menu["iPXE"]
-    T["home-lab-pxe"]
-    S["Unknown machine  MAC aa:bb:cc:11:22:33"]
-    W["Waiting for operator in the web console"]
-    P["Polling every 5s  —  no disk install"]
+  subgraph menu["iPXE named host"]
+    T["Network Installation Options"]
+    C["Continue to next boot device"]
+    W["Windows"]
+    L["Linux"]
+    O["Tools"]
   end
-  T --> S --> W --> P
+  T --> C
+  T --> W
+  T --> L
+  T --> O
 ```
 
 ---
@@ -423,7 +424,7 @@ flowchart TD
   R["HTTP request"] --> K{"path"}
   K --> L["/login  /static"]
   L --> PUB["Public"]
-  K --> A["/machines  /images  /settings  /activity"]
+  K --> A["/machines  /images  /boot-menu  /settings  /activity"]
   A --> S{"valid session + CSRF on POST?"}
   S -->|no| DENY["401 / 403"]
   S -->|yes| OP["Operator actions"]

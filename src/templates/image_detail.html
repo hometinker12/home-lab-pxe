@@ -2,7 +2,7 @@
 {% block title %}{{ image.name }} — Images{% endblock %}
 {% block body %}
 <p class="back"><a href="/images">← Images</a></p>
-<header class="page-header">
+<header class="page-header"{% if extract_busy %} data-extract-busy="{{ image.id }}"{% endif %}>
   <h1>Edit {{ image.name }}</h1>
   <p class="description">{{ image.os_family }} · {{ image.arch }}
     · extract
@@ -14,15 +14,28 @@
   </p>
 </header>
 {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+{% if extract_busy %}<p class="alert alert-warn" role="status">Extraction is still running. Edit is disabled until it finishes.</p>{% endif %}
 {% if image.extract_status == 'failed' and image.extract_error %}<p class="alert alert-error" role="alert">{{ image.extract_error }}</p>{% endif %}
 <section class="card">
   <p class="meta">Leave a file empty to keep the current payload. A new upload replaces that slot. Ubuntu live-server ISO extraction fills kernel/initrd and publishes casper media over NFS unless you set custom kernel paths. Windows extraction publishes Setup media over authenticated SMB; stock ISOs do not include Cloudbase-Init. After a successful NFS or Windows media extract, the uploaded ISO is deleted to save space (re-upload to retry extract).</p>
-  <form method="post" action="/images/{{ image.id }}" enctype="multipart/form-data" class="image-form form">
+  <form method="post" action="/images/{{ image.id }}" enctype="multipart/form-data" class="image-form form"
+        data-folder-linux="{{ folder_defaults.get('linux', '') }}"
+        data-folder-windows="{{ folder_defaults.get('windows', '') }}"
+        data-folder-tool="{{ folder_defaults.get('tool', '') }}">
+    <fieldset {% if extract_busy %}disabled{% endif %}>
     <label>Name <input name="name" value="{{ image.name }}" required></label>
     <label>OS
       <select name="os_family">
         <option value="linux" {% if image.os_family == "linux" %}selected{% endif %}>linux</option>
         <option value="windows" {% if image.os_family == "windows" %}selected{% endif %}>windows</option>
+        <option value="tool" {% if image.os_family == "tool" %}selected{% endif %}>tool</option>
+      </select>
+    </label>
+    <label>Folder
+      <select name="folder_id" required>
+        {% for fid, path in folder_options %}
+        <option value="{{ fid }}" {% if image.folder_id == fid %}selected{% endif %}>{{ path }}</option>
+        {% endfor %}
       </select>
     </label>
     <label>Arch <input name="arch" value="{{ image.arch }}"></label>
@@ -36,7 +49,7 @@
     <label>ISO path <input name="iso_path" value="{{ image.iso_path }}"></label>
     <label>Replace ISO <input type="file" name="iso_file" accept=".iso,.img"></label>
     <label>Extra cmdline <input name="cmdline" value="{{ image.cmdline }}"></label>
-    <details class="advanced-settings" data-os="linux"{% if image.kernel_path or image.initrd_path %} open{% endif %}>
+    <details class="advanced-settings" data-os="linux,tool"{% if image.kernel_path or image.initrd_path %} open{% endif %}>
       <summary>Advanced Settings</summary>
       <div class="advanced-settings-body">
         <label>Kernel path <input name="kernel_path" value="{{ image.kernel_path }}"></label>
@@ -60,11 +73,12 @@
     <div class="btn-row">
       <button type="submit">Save image</button>
     </div>
+    </fieldset>
   </form>
   <hr class="sep">
   <div class="btn-row">
     <form method="post" action="/images/{{ image.id }}/extract"><button type="submit" class="btn-secondary">Retry extract</button></form>
-    <form method="post" action="/images/{{ image.id }}/seed/reset" onsubmit="return confirm('Replace this image seed with the factory starter?');"><button type="submit" class="btn-secondary">Reset seed to factory default</button></form>
+    <form method="post" action="/images/{{ image.id }}/seed/reset" onsubmit="return confirm('Replace this image seed with the factory starter?');"><button type="submit" class="btn-secondary" {% if extract_busy %}disabled{% endif %}>Reset seed to factory default</button></form>
     <form method="post" action="/images/{{ image.id }}/delete" onsubmit="return confirm('Delete this image and its extracted files?');"><button type="submit" class="btn-danger">Delete image</button></form>
   </div>
 </section>

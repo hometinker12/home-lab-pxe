@@ -21,6 +21,7 @@
       <nav aria-label="Main">
         <a href="/machines"{% if request.url.path.startswith("/machines") %} class="current" aria-current="page"{% endif %}>Machines</a>
         <a href="/images"{% if request.url.path.startswith("/images") %} class="current" aria-current="page"{% endif %}>Images</a>
+        <a href="/boot-menu"{% if request.url.path.startswith("/boot-menu") %} class="current" aria-current="page"{% endif %}>Boot menu</a>
         <a href="/files"{% if request.url.path.startswith("/files") %} class="current" aria-current="page"{% endif %}>Files</a>
         <a href="/activity"{% if request.url.path.startswith("/activity") %} class="current" aria-current="page"{% endif %}>Activity</a>
         <a href="/settings"{% if request.url.path.startswith("/settings") %} class="current" aria-current="page"{% endif %}>Settings</a>

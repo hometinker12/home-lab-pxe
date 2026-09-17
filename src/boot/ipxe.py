@@ -63,12 +63,26 @@ def image_not_ready_script(mac_hyphen: str) -> str:
     )
 
 
+def local_disk_lines() -> str:
+    return "exit 1 || sanboot --no-describe --drive 0x80 || exit\n"
+
+
 def local_disk_script() -> str:
-    return (
+    return _header() + "# continue to local disk / next boot device\n" + local_disk_lines()
+
+
+def unknown_local_script(timeout_seconds: int = 5) -> str:
+    delay = max(0, int(timeout_seconds))
+    body = (
         _header()
-        + "# deployed — no staged job; continue to local disk\n"
-        + "exit 1 || sanboot --no-describe --drive 0x80 || exit\n"
+        + "isset ${cls} && cls ||\n"
+        + "echo home-lab-pxe\n"
+        + "echo Unknown or disabled machine ${mac}\n"
+        + "echo Continuing to next boot device. No disk install.\n"
     )
+    if delay:
+        body += f"sleep {delay}\n"
+    return body + local_disk_lines()
 
 
 def _boot_file_url(machine: Machine, payload: BootPayload, slot: str) -> str:
@@ -164,12 +178,34 @@ def windows_install_script(machine: Machine, payload: BootPayload) -> str:
     )
 
 
+def tool_boot_script(payload: BootPayload) -> str:
+    settings = get_settings()
+    base = settings.public_url
+    kernel_ok = bool((payload.kernel_path or "").strip() and (payload.initrd_path or "").strip())
+    iso_ok = bool((payload.iso_path or "").strip())
+    if not kernel_ok and iso_ok:
+        iso = f"{base}/boot-files/{payload.image_id}/iso"
+        return _header() + f"sanboot --no-describe {iso} || sanboot {iso}\n"
+    kernel = f"{base}/boot-files/{payload.image_id}/kernel"
+    initrd = f"{base}/boot-files/{payload.image_id}/initrd"
+    extra = payload.cmdline.strip()
+    script = _header()
+    if extra:
+        script += f"kernel {kernel} {extra}\n"
+    else:
+        script += f"kernel {kernel}\n"
+    script += f"initrd {initrd}\n"
+    script += "boot\n"
+    return script
+
+
 def render_script(
     kind: ScriptKind,
     *,
     mac_hyphen: str,
     machine: Machine | None = None,
     payload: BootPayload | None = None,
+    unknown_timeout_seconds: int = 5,
 ) -> str:
     if kind == ScriptKind.wait:
         return wait_script(mac_hyphen)
@@ -177,6 +213,8 @@ def render_script(
         return image_not_ready_script(mac_hyphen)
     if kind == ScriptKind.local:
         return local_disk_script()
+    if kind == ScriptKind.unknown_local:
+        return unknown_local_script(unknown_timeout_seconds)
     if kind == ScriptKind.install_linux and machine is not None and payload is not None:
         return linux_install_script(machine, payload)
     if kind == ScriptKind.install_windows and machine is not None and payload is not None:

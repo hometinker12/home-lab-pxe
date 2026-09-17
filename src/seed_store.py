@@ -181,6 +181,9 @@ def remove_machine_seed_tree(machine_id: int) -> None:
 
 
 def ensure_image_seed(image_id: int, os_family: OsFamily | str) -> None:
+    family = os_family.value if isinstance(os_family, OsFamily) else os_family
+    if family == OsFamily.tool.value:
+        return
     relative = image_seed_relative(image_id, os_family)
     try:
         dest = resolve_under(get_settings().image_root, relative)

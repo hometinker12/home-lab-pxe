@@ -6,8 +6,16 @@
     }
     const family = select.value;
     form.querySelectorAll("[data-os]").forEach((el) => {
-      el.hidden = el.getAttribute("data-os") !== family;
+      const allowed = (el.getAttribute("data-os") || "").split(",").map((part) => part.trim());
+      el.hidden = !allowed.includes(family);
     });
+    const folder = form.querySelector("[name='folder_id']");
+    if (folder && !folder.dataset.userPicked) {
+      const mapped = form.getAttribute(`data-folder-${family}`);
+      if (mapped && [...folder.options].some((opt) => opt.value === mapped)) {
+        folder.value = mapped;
+      }
+    }
   }
 
   function syncDhcpForm(form) {
@@ -27,6 +35,12 @@
       return;
     }
     select.addEventListener("change", () => syncImageForm(form));
+    const folder = form.querySelector("[name='folder_id']");
+    if (folder) {
+      folder.addEventListener("change", () => {
+        folder.dataset.userPicked = "1";
+      });
+    }
     syncImageForm(form);
     form.addEventListener("submit", (event) => {
       const iso = form.querySelector("input[name='iso_file']");
@@ -133,12 +147,79 @@
     xhr.send(new FormData(form));
   }
 
-  const extractCells = [...document.querySelectorAll(".extract-status[data-status]")];
-  const extractBusy = extractCells.some((el) => {
-    const status = el.getAttribute("data-status");
+  function extractInProgress(status) {
     return status === "queued" || status === "extracting";
-  });
-  if (extractBusy && !document.querySelector("form.image-form textarea")) {
+  }
+
+  function renderExtractCell(cell, status, error) {
+    cell.setAttribute("data-status", status);
+    cell.replaceChildren();
+    cell.removeAttribute("title");
+    let badge = null;
+    if (status === "queued" || status === "extracting" || status === "ready" || status === "failed") {
+      badge = document.createElement("span");
+      badge.className =
+        status === "queued"
+          ? "badge badge-pending"
+          : status === "extracting"
+            ? "badge badge-deploying"
+            : status === "ready"
+              ? "badge badge-deployed"
+              : "badge badge-disabled";
+      badge.textContent = status;
+      cell.append(badge);
+    } else {
+      cell.textContent = "—";
+    }
+    if (status === "failed" && error) {
+      if (badge) {
+        badge.title = error;
+      }
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = error;
+      cell.append(meta);
+      cell.title = error;
+    }
+  }
+
+  function setImageEditControl(row, imageId, busy) {
+    const current = row.querySelector("[data-image-edit]");
+    if (!current) {
+      return;
+    }
+    if (busy) {
+      if (current.tagName === "BUTTON") {
+        current.disabled = true;
+        current.title = "Wait until extraction finishes";
+        return;
+      }
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn-ghost btn-sm";
+      btn.disabled = true;
+      btn.setAttribute("data-image-edit", "");
+      btn.title = "Wait until extraction finishes";
+      btn.textContent = "Edit";
+      current.replaceWith(btn);
+      return;
+    }
+    if (current.tagName === "A") {
+      current.removeAttribute("title");
+      return;
+    }
+    const link = document.createElement("a");
+    link.className = "btn-ghost btn-sm";
+    link.href = `/images/${imageId}`;
+    link.setAttribute("data-image-edit", "");
+    link.textContent = "Edit";
+    current.replaceWith(link);
+  }
+
+  const extractCells = [...document.querySelectorAll(".extract-status[data-status]")];
+  const extractBusy = extractCells.some((el) => extractInProgress(el.getAttribute("data-status")));
+  const imageRows = document.querySelector("[data-image-id]");
+  if (extractBusy && imageRows) {
     const timer = window.setInterval(async () => {
       try {
         const response = await fetch("/api/images", { headers: { Accept: "application/json" } });
@@ -157,28 +238,37 @@
             return;
           }
           const status = img.extract_status || "idle";
-          cell.setAttribute("data-status", status);
-          if (status === "queued" || status === "extracting") {
+          if (extractInProgress(status)) {
             stillBusy = true;
           }
-          const label =
-            status === "queued"
-              ? "queued"
-              : status === "extracting"
-                ? "extracting"
-                : status === "ready"
-                  ? "ready"
-                  : status === "failed"
-                    ? "failed"
-                    : "—";
-          cell.textContent = label;
-          if (status === "failed" && img.extract_error) {
-            cell.title = img.extract_error;
-          }
+          renderExtractCell(cell, status, img.extract_error || "");
+          setImageEditControl(row, img.id, extractInProgress(status));
         });
         if (!stillBusy) {
           window.clearInterval(timer);
         }
+      } catch {
+        /* keep polling */
+      }
+    }, 5000);
+  }
+
+  const extractBusyDetail = document.querySelector("[data-extract-busy]");
+  if (extractBusyDetail) {
+    const imageId = Number(extractBusyDetail.getAttribute("data-extract-busy"));
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await fetch("/api/images", { headers: { Accept: "application/json" } });
+        if (!response.ok) {
+          return;
+        }
+        const images = await response.json();
+        const img = images.find((row) => Number(row.id) === imageId);
+        if (!img || extractInProgress(img.extract_status || "idle")) {
+          return;
+        }
+        window.clearInterval(timer);
+        window.location.reload();
       } catch {
         /* keep polling */
       }
@@ -314,8 +404,24 @@
         event.preventDefault();
         const dlg = document.getElementById(btn.getAttribute("data-open-dialog"));
         if (dlg && typeof dlg.showModal === "function") {
+          const action = btn.getAttribute("data-move-action");
+          if (action) {
+            const form = dlg.querySelector("form");
+            if (form) {
+              form.setAttribute("action", action);
+            }
+            const select = dlg.querySelector("[name='folder_id']");
+            const current = btn.getAttribute("data-move-folder");
+            if (select && current) {
+              select.value = current;
+            }
+            const label = dlg.querySelector("[data-move-image-name]");
+            if (label) {
+              label.textContent = btn.getAttribute("data-move-name") || "";
+            }
+          }
           dlg.showModal();
-          const focus = dlg.querySelector("[autofocus], input:not([type=hidden])");
+          const focus = dlg.querySelector("[autofocus], select, input:not([type=hidden])");
           if (focus) {
             focus.focus();
           }

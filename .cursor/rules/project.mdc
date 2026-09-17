@@ -5,14 +5,15 @@ alwaysApply: true
 
 # home-lab-pxe
 
-Docker-packaged PXE/iPXE server with a web console. It discovers machines on the LAN, holds **unknown** systems in a wait menu until an operator acts, and lets **deployed** systems fall through to local disk. Linux installs use full cloud-init. Windows Server uses unattend.xml plus Cloudbase-Init. Staged console changes apply on the **next PXE boot** as a new image, not as in-place config management. Linux root and Windows local Administrator usernames/passwords are Fernet-encrypted at rest.
+Docker-packaged PXE/iPXE server with a web console. It discovers machines on the LAN. **Unknown** and **disabled** systems continue to the next boot device after a timeout. Named hosts see a folder-based iPXE menu (Windows / Linux / Tools) with a countdown to local disk; picking an OS image starts that install. Linux installs use full cloud-init. Windows Server uses unattend.xml plus Cloudbase-Init. Staged console changes apply on the **next PXE boot** as a new image, not as in-place config management. Linux root and Windows local Administrator usernames/passwords are Fernet-encrypted at rest.
 
 ## Invariants
 
 - Machine identity is MAC-primary, SMBIOS UUID secondary.
-- Unknown MAC → wait/poll menu. Never auto-install.
-- Deploying (image assigned) → Imaging (installer started) → Deployed (phone-home). Imaging past the Settings timeout (default 15 minutes) → Timeout Error (wait menu; operator Redeploy). Disabled is operator-only.
-- Deployed + no staged job → immediate local-disk boot (no menu).
+- Unknown MAC → timeout then next boot device. Never auto-install.
+- Disabled → same as unknown (no folder menu).
+- Deploying (image assigned) → Imaging (installer started) → Deployed (phone-home). Imaging past the Settings timeout (default 15 minutes) → Timeout Error (folder menu; operator Redeploy or client pick).
+- Named / ready / deployed with no in-progress install → iPXE folder menu; default continue-to-disk countdown.
 - Deployed + staged job → next PXE serves the new image + guest-init (cloud-init or Cloudbase-Init).
 - Cloud-init, unattend.xml, Cloudbase-Init user-data, SSH keys, and local-account passwords are secrets — never log or echo them.
 - `ENCRYPTION_KEY` required in production; local-account username+password ciphertext only in SQLite.

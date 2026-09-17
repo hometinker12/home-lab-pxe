@@ -36,8 +36,12 @@ def test_create_and_edit_image_metadata(client):
     assert created.headers["location"] == "/images/1"
     listing = client.get("/images")
     assert "ubuntu-edit" in listing.text
+    assert 'href="/images/1"' in listing.text
     assert "Edit" in listing.text
     assert "Delete" in listing.text
+    assert 'data-open-dialog="add-image"' in listing.text
+    assert 'id="add-image"' in listing.text
+    assert '<section class="card">' not in listing.text
     detail = client.get("/images/1")
     assert detail.status_code == 200
     assert "ubuntu/vmlinuz" in detail.text
@@ -94,9 +98,12 @@ def test_iso_upload_queues_extract(client, tmp_path):
     assert api[0]["iso_path"] == "uploads/1/image.iso"
     assert api[0]["extract_status"] == "queued"
     listing = client.get("/images")
-    assert 'data-os="linux"' in listing.text
+    assert 'data-os="linux,tool"' in listing.text
     assert 'data-os="windows"' in listing.text
     assert "iso_file" in listing.text
+    assert "data-image-edit" in listing.text
+    assert 'href="/images/1"' not in listing.text
+    assert "Wait until extraction finishes" in listing.text
     from src.db import session_scope
 
     with session_scope() as db:
@@ -248,12 +255,50 @@ def test_failed_extract_keeps_iso(client, tmp_path):
 def test_image_form_hides_os_specific_fields(client):
     login(client)
     page = client.get("/images")
+    assert 'data-open-dialog="add-image"' in page.text
+    assert 'id="add-image"' in page.text
+    assert '<section class="card">' not in page.text
     assert "boot_wim_file" in page.text
     assert 'data-os="windows"' in page.text
     assert "iso_file" in page.text
     assert "Advanced Settings" in page.text
     assert "kernel_path" in page.text
     assert page.text.find('name="iso_file"') < page.text.find("Advanced Settings")
+
+
+def test_edit_blocked_while_extracting(client, tmp_path):
+    login(client)
+    client.post(
+        "/images",
+        data={"name": "busy-iso", "os_family": "linux", "arch": "x86_64"},
+        files={"iso_file": ("ubuntu.iso", b"iso-bytes", "application/octet-stream")},
+        follow_redirects=False,
+    )
+    listing = client.get("/images")
+    assert 'href="/images/1"' not in listing.text
+    assert "Wait until extraction finishes" in listing.text
+    detail = client.get("/images/1")
+    assert detail.status_code == 200
+    assert "Edit is disabled until it finishes" in detail.text
+    blocked = client.post(
+        "/images/1",
+        data={"name": "busy-iso", "os_family": "linux", "arch": "x86_64", "kernel_path": "ubuntu/vmlinuz"},
+    )
+    assert blocked.status_code == 200
+    assert "extraction finishes" in blocked.text.lower()
+    from src.db import session_scope
+
+    with session_scope() as db:
+        run_one_job(1, 1, runner=_LinuxRunner())
+        db.commit()
+    listing = client.get("/images")
+    assert 'href="/images/1"' in listing.text
+    saved = client.post(
+        "/images/1",
+        data={"name": "busy-iso", "os_family": "linux", "arch": "x86_64", "kernel_path": "ubuntu/vmlinuz"},
+        follow_redirects=False,
+    )
+    assert saved.status_code in {302, 303}
 
 
 def test_image_upload_rejects_unsafe_filename(client):
@@ -265,6 +310,7 @@ def test_image_upload_rejects_unsafe_filename(client):
     )
     assert response.status_code == 200
     assert "simple relative name" in response.text
+    assert 'id="add-image" open' in response.text
 
 
 def test_duplicate_image_name_is_rejected(client):
@@ -281,6 +327,7 @@ def test_duplicate_image_name_is_rejected(client):
     )
     assert second.status_code == 200
     assert "already exists" in second.text
+    assert 'id="add-image" open' in second.text
 
 
 def test_iso_range_request(client, tmp_path):
@@ -339,6 +386,7 @@ def test_delete_image_blocked_during_install(client):
     blocked = client.post(f"/images/{image_id}/delete")
     assert blocked.status_code == 200
     assert "installing" in blocked.text.lower() or "deploying" in blocked.text.lower()
+    assert 'id="add-image" open' not in blocked.text
     names = [img["name"] for img in client.get("/api/images").json()]
     assert "in-use" in names
 

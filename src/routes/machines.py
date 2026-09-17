@@ -74,6 +74,8 @@ def _machine_or_404(db: Session, machine_id: int):
 def _image_options(images):
     rows = []
     for img in images:
+        if img.os_family == OsFamily.tool.value:
+            continue
         blocked = image_deploy_blocked(img)
         rows.append(
             {
