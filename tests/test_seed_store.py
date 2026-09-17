@@ -40,6 +40,17 @@ def test_complete_linux_user_data_skips_non_autoinstall():
     assert complete_linux_user_data(text) == text
 
 
+def test_complete_linux_user_data_keeps_seed_comments():
+    from src.seed_render import complete_linux_user_data
+
+    token = "pxe-smoke-token-keep"
+    filled = complete_linux_user_data(
+        f"#cloud-config\n# {token}\nautoinstall:\n  version: 1\n  ssh:\n    install-server: true\n"
+    )
+    assert token in filled
+    assert "locale:" in filled
+
+
 def test_seed_path_confinement(tmp_path, monkeypatch):
     monkeypatch.setenv("PXE_IMAGE_ROOT", str(tmp_path))
     clear_settings_cache()

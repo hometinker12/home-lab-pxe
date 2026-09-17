@@ -162,6 +162,36 @@ AUTOINSTALL_UNATTENDED = {
 }
 
 
+def _full_line_comments(text: str) -> list[str]:
+    comments: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") and stripped != "#cloud-config":
+            comments.append(stripped)
+    return comments
+
+
+def _with_cloud_config_and_comments(dumped: str, comments: list[str]) -> str:
+    body = dumped.lstrip("\n")
+    if not body.lstrip().startswith("#cloud-config"):
+        body = "#cloud-config\n" + body
+    if comments:
+        lines = body.splitlines()
+        out: list[str] = []
+        inserted = False
+        for line in lines:
+            out.append(line)
+            if not inserted and line.strip() == "#cloud-config":
+                out.extend(comments)
+                inserted = True
+        if not inserted:
+            out = ["#cloud-config", *comments, *out]
+        body = "\n".join(out) + "\n"
+    elif not body.endswith("\n"):
+        body += "\n"
+    return body
+
+
 def complete_linux_user_data(rendered: str) -> str:
     """Fill missing Subiquity autoinstall keys so NFS installs stay non-interactive."""
     try:
@@ -173,17 +203,21 @@ def complete_linux_user_data(rendered: str) -> str:
     auto = parsed.get("autoinstall")
     if not isinstance(auto, dict):
         return rendered
+    changed = False
     for key, value in AUTOINSTALL_UNATTENDED.items():
         if key not in auto:
             auto[key] = value
+            changed = True
         elif key == "apt" and isinstance(value, dict) and isinstance(auto.get("apt"), dict):
             for apt_key, apt_val in value.items():
-                auto["apt"].setdefault(apt_key, apt_val)
+                if apt_key not in auto["apt"]:
+                    auto["apt"][apt_key] = apt_val
+                    changed = True
+    if not changed:
+        return rendered if rendered.endswith("\n") else rendered + "\n"
     parsed["autoinstall"] = auto
     dumped = yaml.safe_dump(parsed, default_flow_style=False, sort_keys=False, allow_unicode=True)
-    if not dumped.lstrip().startswith("#cloud-config"):
-        dumped = "#cloud-config\n" + dumped
-    return dumped if dumped.endswith("\n") else dumped + "\n"
+    return _with_cloud_config_and_comments(dumped, _full_line_comments(rendered))
 
 
 def dummy_values() -> dict[str, Any]:
