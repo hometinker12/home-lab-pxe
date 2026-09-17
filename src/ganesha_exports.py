@@ -24,7 +24,9 @@ EXPORT {{
     Protocols = 3;
     Transports = TCP;
     SecType = none, sys;
-    Squash = None;
+    Squash = All;
+    Anonymous_Uid = 65534;
+    Anonymous_Gid = 65534;
     Disable_ACL = true;
     CLIENT {{
         Clients = *;
@@ -32,7 +34,9 @@ EXPORT {{
         Protocols = 3;
         Transports = TCP;
         SecType = none, sys;
-        Squash = None;
+        Squash = All;
+        Anonymous_Uid = 65534;
+        Anonymous_Gid = 65534;
     }}
     FSAL {{
         Name = VFS;

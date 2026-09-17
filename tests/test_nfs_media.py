@@ -34,7 +34,8 @@ def test_ganesha_conf_includes_generation_exports():
     text = (Path(__file__).resolve().parents[1] / "config" / "ganesha.conf").read_text(encoding="utf-8")
     assert "%include /var/run/ganesha/pxe-generations.conf" in text
     assert "SecType = none, sys" in text
-    assert "Squash = None" in text
+    assert "Squash = All" in text
+    assert "Anonymous_Uid = 65534" in text
 
 
 def test_export_id_stable_per_generation():
@@ -53,6 +54,8 @@ def test_render_generation_exports_paths(tmp_path: Path):
     assert "Export_Id = 3013" in text
     assert "Clients = *" in text
     assert "Protocols = 3" in text
+    assert "Squash = All" in text
+    assert "Anonymous_Uid = 65534" in text
 
 
 def test_sync_generation_exports_writes_once(tmp_path: Path):

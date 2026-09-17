@@ -442,6 +442,7 @@ def main() -> None:
         )
         expect(conf_proc.returncode == 0, "ganesha generations conf missing")
         expect(f'Path = "/var/lib/pxe/images/nfs/{nfs_image_id}/1"' in (conf_proc.stdout or ""), "generation export Path missing")
+        expect("Squash = All" in (conf_proc.stdout or "") and "Anonymous_Uid = 65534" in (conf_proc.stdout or ""), "generation export must squash to nobody")
         expect(",vers=" not in nfs_text and "mountport=" not in nfs_text, "nfsroot must not swallow mount options")
         expect("iso-url=" not in nfs_text and "ramdisk_size" not in nfs_text, "nfs install should not wget ISO")
         expect("nfs-smoke-secret" not in nfs_text, "password leaked into nfs iPXE")
