@@ -101,10 +101,62 @@ def delete_seed(root: Path, relative: str) -> None:
     path.unlink(missing_ok=True)
 
 
+def prune_install_seeds(machine_id: int, *, keep_instance_id: str = "") -> None:
+    """Keep at most the current deploy snapshot; drop leftover instance directories."""
+    relative = f"install-seeds/{int(machine_id)}"
+    try:
+        base = resolve_under(get_settings().data_dir, relative)
+    except UnsafePathError:
+        return
+    if not base.is_dir():
+        return
+    keep = (keep_instance_id or "").strip()
+    for child in list(base.iterdir()):
+        if keep and child.name == keep:
+            continue
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            child.unlink(missing_ok=True)
+    if keep:
+        return
+    try:
+        next(base.iterdir())
+    except StopIteration:
+        base.rmdir()
+    except OSError:
+        return
+
+
 def write_image_seed(image_id: int, os_family: OsFamily | str, body: str) -> str:
     if not body.strip():
         raise SeedError("Image seed file cannot be empty")
     return write_seed(get_settings().image_root, image_seed_relative(image_id, os_family), body)
+
+
+def default_seed_text(image_id: int, os_family: OsFamily | str) -> str:
+    """Image template, or factory starter if the image file is empty."""
+    text = read_image_seed(image_id, os_family)
+    if text.strip():
+        return text
+    return factory_seed_text(os_family)
+
+
+def copy_image_seed_to_machine(
+    machine_id: int,
+    image_id: int,
+    os_family: OsFamily | str,
+    *,
+    overwrite: bool = False,
+) -> bool:
+    """Copy the image (or factory) seed onto the machine. Returns True if a write happened."""
+    if not overwrite and read_machine_seed(machine_id, os_family).strip():
+        return False
+    text = default_seed_text(image_id, os_family)
+    if not text.strip():
+        raise SeedError("Default seed file cannot be empty")
+    write_machine_seed(machine_id, os_family, text)
+    return True
 
 
 def write_machine_seed(machine_id: int, os_family: OsFamily | str, body: str) -> str:

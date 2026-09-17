@@ -176,6 +176,7 @@ def test_files_favorites_and_image_volume(client, tmp_path):
     assert "NFS extracts" in page.text
     assert "SMB media" in page.text
     assert "Machine seeds" in page.text
+    assert "Install snapshots" in page.text
     assert 'href="/files?root=images&amp;dir=nfs"' in page.text or 'href="/files?root=images&dir=nfs"' in page.text
     nfs = client.get("/files?root=images&dir=nfs")
     assert nfs.status_code == 200

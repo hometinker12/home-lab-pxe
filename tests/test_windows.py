@@ -63,6 +63,7 @@ def test_windows_startnet_uses_generated_share(client):
         mid = machine.id
     assert r"\pxe-media" in body
     assert r"1\3\setup.exe" in body
+    assert "event=imaging" in body
     assert "WinSecret!" not in body
     assert "&" not in body.split("net use", 1)[-1].splitlines()[0]
     gated = client.get(f"/windows/{mid}/startnet.cmd")

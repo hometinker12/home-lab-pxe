@@ -92,6 +92,9 @@ def render_startnet(db: Session, machine: Machine) -> str:
         "@echo off",
         "wpeinit",
     ]
+    if machine.id:
+        imaging = f"{settings.public_url.rstrip('/')}/api/machines/{int(machine.id)}/events?event=imaging"
+        lines.append(f'curl.exe -s -o NUL -X POST "{imaging}"')
     if host and user and password:
         share = f"\\\\{host}\\pxe-media"
         lines.extend(

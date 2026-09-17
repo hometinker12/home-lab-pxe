@@ -1,4 +1,4 @@
-"""Render Linux nocloud-net payloads. Inject vault credentials at serve time."""
+"""Render Linux nocloud payloads. Inject vault credentials at serve time."""
 
 from __future__ import annotations
 
@@ -21,8 +21,10 @@ def render_vendor_data() -> str:
 
 def render_user_data_legacy(db: Session, machine: Machine) -> str:
     overlay = load_overlay(machine.guest_overlay)
+    from ..dhcp_runtime import default_timezone
+
     hostname = (machine.hostname or overlay.get("hostname") or f"pxe-{machine.id}").strip()
-    timezone = str(overlay.get("timezone") or "UTC")
+    timezone = str(overlay.get("timezone") or "").strip() or default_timezone(db)
     packages = overlay.get("packages") or []
     if not isinstance(packages, list):
         packages = []

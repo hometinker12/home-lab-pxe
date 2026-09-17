@@ -79,7 +79,7 @@ One image, one Compose service for v1 (dnsmasq + uvicorn via `scripts/entrypoint
 | `proxy` (default) | proxyDHCP / `dhcp-range=...,proxy` — existing router/Windows DHCP stays authoritative |
 | `authoritative` | dnsmasq owns the range (`PXE_DHCP_RANGE`, router, DNS) |
 
-First-boot defaults come from env. After that, **Settings** in the console is the source of truth (SQLite). **PXE**, **DHCP**, and **TFTP** are separate collapsed sections. PXE shows the Docker **host** LAN IPv4 (`PXE_HOST_LAN_IPV4` in `.env`) plus bind interface, extra allowlisted dnsmasq lines, and copy-paste DHCP options 60/66/67 for an existing LAN DHCP server. DHCP and TFTP each have their own enable toggle. **Files** in the header browses the TFTP, Images, and Data volumes (list/upload/download/delete; paths stay inside those roots). Saving writes `dnsmasq-pxe.conf` plus `dhcp.enabled` / `tftp.enabled`; `scripts/entrypoint.sh` starts, stops, or reloads dnsmasq when either service is on. Extra option lines are allowlisted (`dhcp-option`, `dhcp-host`, …); `dhcp-script` and `conf-file` are rejected.
+First-boot defaults come from env. After that, **Settings** in the console is the source of truth (SQLite). **PXE**, **DHCP**, **TFTP**, and **Machines** are separate collapsed sections. PXE shows the Docker **host** LAN IPv4 (`PXE_HOST_LAN_IPV4` in `.env`) plus bind interface, extra allowlisted dnsmasq lines, and copy-paste DHCP options 60/66/67 for an existing LAN DHCP server. DHCP and TFTP each have their own enable toggle. Machines holds the imaging timeout (default 15 minutes; `PXE_IMAGING_TIMEOUT_MINUTES` seeds the first row) and the default IANA timezone for new machines (`PXE_DEFAULT_TIMEZONE`, else UTC). **Files** in the header browses the TFTP, Images, and Data volumes (list/upload/download/delete; paths stay inside those roots). Saving PXE/DHCP/TFTP writes `dnsmasq-pxe.conf` plus `dhcp.enabled` / `tftp.enabled`; `scripts/entrypoint.sh` starts, stops, or reloads dnsmasq when either service is on. Extra option lines are allowlisted (`dhcp-option`, `dhcp-host`, …); `dhcp-script` and `conf-file` are rejected.
 
 ## 5. Machine identity and lifecycle
 
@@ -90,6 +90,8 @@ First-boot defaults come from env. After that, **Settings** in the console is th
 | `pending` | Wait/poll menu | First DHCP/iPXE seen for an unknown MAC, or operator added the MAC in the console |
 | `ready` | Wait menu | Operator named it / tagged it; no deploy yet |
 | `deploying` | Installer + guest init | Operator clicked Deploy |
+| `imaging` | Same as deploying | Installer early-command / WinPE startnet |
+| `timeout_error` | Wait menu; no guest-init | Imaging longer than Settings timeout (default 15 minutes) |
 | `deployed` | Immediate local disk | Installer reported success, or operator marked deployed |
 | `staged` | Same as `deploying` on next PXE | Operator saved image/guest-init changes |
 | `disabled` | Wait or refuse; no install | Operator quarantined the MAC |
@@ -103,15 +105,15 @@ Unknown → `pending` is automatic. Every other transition is an operator action
 `GET /ipxe/{mac}` returns a `#!ipxe` script. Decision order:
 
 1. Unknown → insert `pending`, serve wait menu (`chain`/`sleep` back to the same URL).
-2. `pending` / `ready` / `disabled` → keep waiting.
-3. `deploying` or `staged`:
-   - **Linux:** kernel + initrd plus `ds=nocloud-net;s=${PXE_PUBLIC_URL}/cloud-init/{machine_id}/`.
+2. `pending` / `ready` / `disabled` / `timeout_error` → keep waiting.
+3. `deploying`, `staged`, or `imaging`:
+   - **Linux:** kernel + initrd plus `autoinstall`, `cloud-config-url=` to `/cloud-init/{machine_id}/user-data` on NFS, and `ds=nocloud;s=${PXE_PUBLIC_URL}/cloud-init/{machine_id}/`.
    - **Windows:** iPXE `wimboot` (or equivalent) into WinPE / Setup, with `unattend.xml` from `${PXE_PUBLIC_URL}/windows/{machine_id}/unattend.xml`.
 4. `deployed` and no staged job → `exit` to local disk (or `sanboot` fallback). No interactive prompt.
 
 The wait menu auto-refreshes every few seconds so a Deploy click is picked up **without** a second BIOS PXE cycle.
 
-Installer success: Linux cloud-init `phone_home` or a Windows Setup/Cloudbase-Init callback to mark `deployed`. Failure leaves the machine in `deploying` and the next PXE retries.
+Installer progress: Linux autoinstall `early-commands` (and WinPE `startnet.cmd`) POST `?event=imaging`. Success: late-command / specialize `phone_home` marks `deployed`. If Imaging lasts longer than the Settings timeout, the machine becomes `timeout_error` (wait menu). Failure otherwise leaves `deploying` or `imaging` and the next PXE retries.
 
 ## 7. Images and guest initialization
 
@@ -119,9 +121,9 @@ Installer success: Linux cloud-init `phone_home` or a Windows Setup/Cloudbase-In
 
 Operator-imported artifacts under `PXE_IMAGE_ROOT` (not git). The console can **upload** kernel/initrd/`boot.wim`/`install.wim`/ISO files or register relative paths already on the volume, and **edit** existing image records (metadata, replacement uploads, and the image seed file). Linux image forms hide WIM fields; Windows forms hide kernel/initrd.
 
-A registered ISO is saved immediately. A dedicated extractor process unpacks Ubuntu live-server `casper/` + `.disk/` onto a read-only NFS tree, or a full Windows Server media tree onto SMB. Image status is `idle | queued | extracting | ready | failed`. Managed Ubuntu installs use kernel/initrd plus `netboot=nfs nfsroot=host:/export/{id}/{rev}` (one Ganesha Path per extract directory; rpcbind on TCP/UDP 111) when casper squashfs is present; HTTP `iso-url=` / `url=` remains the fallback. Managed Windows installs boot WinPE via `wimboot` and run Setup from an authenticated read-only SMB share. ISO-only `sanboot` remains the fallback when there is no kernel/WIM pair and extraction did not fail.
+A registered ISO is saved immediately. A dedicated extractor process unpacks Ubuntu live-server `casper/` + `.disk/` + `dists/` + `pool/` onto a read-only NFS tree, or a full Windows Server media tree onto SMB. Image status is `idle | queued | extracting | ready | failed`. Managed Ubuntu installs use kernel/initrd plus `netboot=nfs nfsroot=host:/export/{id}/{rev}` (one Ganesha Path per extract directory; rpcbind on TCP/UDP 111) when casper squashfs is present; HTTP `iso-url=` / `url=` remains the fallback. Subiquity autoinstall includes locale, keyboard, storage, source, and apt so the guest does not prompt. Managed Windows installs boot WinPE via `wimboot` and run Setup from an authenticated read-only SMB share. ISO-only `sanboot` remains the fallback when there is no kernel/WIM pair and extraction did not fail.
 
-Each Linux image has a cloud-init **user-data** file; each Windows image has **unattend.xml**. A machine may store its own file of the same kind; a non-empty machine file replaces the image file (no YAML/XML merge). Vault credentials are substituted at serve time through allowlisted `{{placeholders}}`.
+Each Linux image has a cloud-init **user-data** file; each Windows image has **unattend.xml**. A machine may store its own file of the same kind. Deploy copies the image template onto the machine if that file is empty; **Copy Default** on the machine page overwrites it with the latest image file. A non-empty machine file replaces the image file (no YAML/XML merge). Vault credentials are substituted at serve time through allowlisted `{{placeholders}}`.
 
 - Ubuntu live-server kernel/initrd + autoinstall (first Linux distro)
 - Windows Server install WIM + WinPE `boot.wim` (first Windows target: Server 2022 or 2025)
@@ -131,7 +133,7 @@ Each image record: name, `os_family`, architecture (`x86_64` / `aarch64`), kerne
 
 ### 7.2 Linux — cloud-init
 
-Per machine, HTTP nocloud-net:
+Per machine, HTTP nocloud (`ds=nocloud;s=` plus `cloud-config-url=` to `user-data` on NFS casper):
 
 - `GET /cloud-init/{machine_id}/user-data`
 - `GET /cloud-init/{machine_id}/meta-data`
@@ -198,8 +200,8 @@ Both **username and password** are Fernet-encrypted at rest. Optional lab-wide d
 - **Machines:** last seen, MAC, UUID, IP, state, OS family, assigned image; actions Deploy, Stage reimage, Mark deployed, Disable
 - **New / pending** highlight so unknown hardware is obvious
 - **Images:** import metadata + paths (file upload can be later); Linux vs Windows
-- **Machine detail:** guest-init editor (cloud-init or Cloudbase-Init), local account username + password rotate, staged vs applied, recent boot events
-- **Settings:** HTTPS certificate (self-signed on first start, or upload PEM cert + key), optional default Linux root and Windows Administrator credentials (encrypted)
+- **Machine detail:** hostname and guest-init (IANA timezone dropdown, packages, SSH keys, cloud-init or unattend) share one form; Deploy saves then starts the install. Local account username + password rotate, staged vs applied, recent boot events
+- **Settings:** HTTPS certificate (self-signed on first start, or upload PEM cert + key), optional default Linux root and Windows Administrator credentials (encrypted), imaging timeout, default timezone for new machines
 - **Activity log:** who deployed what, redacted
 
 ## 9. Data model (sketch)

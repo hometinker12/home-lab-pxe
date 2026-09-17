@@ -17,9 +17,26 @@ class MachineState(StrEnum):
     pending = "pending"
     ready = "ready"
     deploying = "deploying"
+    imaging = "imaging"
+    timeout_error = "timeout_error"
     deployed = "deployed"
     staged = "staged"
     disabled = "disabled"
+
+
+def state_label(state: str) -> str:
+    """Operator-facing badge text. Staged reimages show as Deploying until imaging starts."""
+    labels = {
+        MachineState.pending.value: "Pending",
+        MachineState.ready.value: "Ready",
+        MachineState.deploying.value: "Deploying",
+        MachineState.imaging.value: "Imaging",
+        MachineState.timeout_error.value: "Timeout Error",
+        MachineState.deployed.value: "Deployed",
+        MachineState.staged.value: "Deploying",
+        MachineState.disabled.value: "Disabled",
+    }
+    return labels.get(state, state)
 
 
 class OsFamily(StrEnum):
@@ -77,6 +94,7 @@ class Machine(SQLModel, table=True):
     assigned_image_id: int | None = Field(default=None, foreign_key="image.id")
     instance_id: str = Field(default_factory=lambda: uuid4().hex)
     guest_overlay: str = "{}"
+    imaging_started_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -144,4 +162,6 @@ class DhcpRuntime(SQLModel, table=True):
     dhcp_router: str = ""
     dhcp_dns: str = ""
     extra_options: str = ""
+    imaging_timeout_minutes: int = 15
+    default_timezone: str = "UTC"
     updated_at: datetime = Field(default_factory=utcnow)

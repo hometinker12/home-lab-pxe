@@ -11,6 +11,7 @@ Docker-packaged PXE/iPXE server with a web console. It discovers machines on the
 
 - Machine identity is MAC-primary, SMBIOS UUID secondary.
 - Unknown MAC → wait/poll menu. Never auto-install.
+- Deploying (image assigned) → Imaging (installer started) → Deployed (phone-home). Imaging past the Settings timeout (default 15 minutes) → Timeout Error (wait menu; operator Redeploy). Disabled is operator-only.
 - Deployed + no staged job → immediate local-disk boot (no menu).
 - Deployed + staged job → next PXE serves the new image + guest-init (cloud-init or Cloudbase-Init).
 - Cloud-init, unattend.xml, Cloudbase-Init user-data, SSH keys, and local-account passwords are secrets — never log or echo them.

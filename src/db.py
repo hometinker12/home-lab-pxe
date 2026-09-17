@@ -95,6 +95,12 @@ def _migrate_schema() -> None:
             _add_column_if_missing(conn, "image", "wim_index", "wim_index INTEGER DEFAULT 1")
         if "dhcpruntime" in tables:
             _add_column_if_missing(conn, "dhcpruntime", "tftp_enabled", "tftp_enabled BOOLEAN DEFAULT 1")
+            _add_column_if_missing(
+                conn, "dhcpruntime", "imaging_timeout_minutes", "imaging_timeout_minutes INTEGER DEFAULT 15"
+            )
+            _add_column_if_missing(conn, "dhcpruntime", "default_timezone", "default_timezone VARCHAR DEFAULT 'UTC'")
+        if "machine" in tables:
+            _add_column_if_missing(conn, "machine", "imaging_started_at", "imaging_started_at DATETIME")
 
 
 def _seed_admin() -> None:

@@ -79,9 +79,16 @@ def test_staged_serves_linux_install(client):
         kind = decide_script(db, machine)
         assert kind == ScriptKind.install_linux
     response = client.get("/ipxe/02-00-00-00-00-03")
-    assert "ds=nocloud-net" in response.text
+    assert "ds=nocloud" in response.text
+    assert "nocloud-net" not in response.text
     assert r"\;s=" in response.text
     assert ";s=" not in response.text.replace(r"\;s=", "")
+    kernel_line = next(line for line in response.text.splitlines() if line.startswith("kernel "))
+    assert kernel_line.split()[1].startswith("--name=")
+    assert "autoinstall" in kernel_line.split()
+    assert kernel_line.split()[3] == "autoinstall"
+    assert kernel_line.endswith(" ---") or " ---" in kernel_line
+    assert "imgargs vmlinuz " in response.text
     assert response.text.endswith("boot\n") or "boot\n" in response.text
 
 
@@ -122,6 +129,7 @@ def test_windows_install_script_has_unattend_url_not_password(client):
     assert startnet.status_code == 200
     assert r"\pxe-media" in startnet.text
     assert "SuperSecret" not in startnet.text
+    assert "event=imaging" in startnet.text
     api = client.get(f"/api/machines/{mid}").json()
     assert "SuperSecret" not in str(api)
     assert api["account_password_set"] is True
@@ -150,6 +158,67 @@ def test_extracting_image_waits_without_attempt(client):
     assert "not ready" in response.text.lower()
     assert "kernel" not in response.text
     assert "sanboot" not in response.text
+
+
+def test_imaging_still_serves_linux_install(client):
+    client.get("/ipxe/02-00-00-00-00-09")
+    login(client)
+    from src.db import session_scope
+    from src.inventory.service import find_by_mac
+    from src.models import MachineState
+
+    with session_scope() as db:
+        image = create_image(
+            db,
+            name="ubuntu-imaging",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
+        machine = find_by_mac(db, "02:00:00:00:00:09")
+        assert machine is not None
+        deploy_machine(db, machine, image=image, actor="admin")
+        machine.state = MachineState.imaging.value
+        db.add(machine)
+        db.commit()
+    response = client.get("/ipxe/02-00-00-00-00-09")
+    assert "kernel" in response.text
+    assert "autoinstall" in response.text
+    assert "Waiting" not in response.text
+
+
+def test_imaging_timeout_serves_wait_menu(client):
+    client.get("/ipxe/02-00-00-00-00-10")
+    login(client)
+    from datetime import UTC, datetime, timedelta
+
+    from src.db import session_scope
+    from src.inventory.service import find_by_mac
+    from src.models import MachineState
+
+    with session_scope() as db:
+        image = create_image(
+            db,
+            name="ubuntu-timeout",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
+        machine = find_by_mac(db, "02:00:00:00:00:10")
+        assert machine is not None
+        deploy_machine(db, machine, image=image, actor="admin")
+        machine.state = MachineState.imaging.value
+        machine.imaging_started_at = datetime.now(UTC) - timedelta(minutes=16)
+        db.add(machine)
+        db.commit()
+        kind = decide_script(db, machine)
+        assert kind == ScriptKind.install_linux
+    response = client.get("/ipxe/02-00-00-00-00-10")
+    assert "Waiting for operator" in response.text
+    assert "kernel" not in response.text
+    assert client.get("/api/machines").json()[0]["state"] == "timeout_error"
 
 
 def test_linux_kernel_iso_uses_url_and_autoinstall(client, tmp_path):
@@ -187,9 +256,16 @@ def test_linux_kernel_iso_uses_url_and_autoinstall(client, tmp_path):
     assert "root=/dev/ram0" in text
     assert "ramdisk_size=1500000" in text
     assert "autoinstall" in text
+    assert "cloud-config-url=/dev/null" in text
     assert "sanboot" not in text
     assert r"\;s=" in text
     assert ";s=" not in text.replace(r"\;s=", "")
+    assert "ds=nocloud" in text
+    assert "nocloud-net" not in text
+    kernel_line = next(line for line in text.splitlines() if line.startswith("kernel "))
+    assert kernel_line.split()[3] == "autoinstall"
+    assert kernel_line.rstrip().endswith("---")
+    assert "reboot=force" in text
 
 
 def test_linux_nfs_casper_skips_iso_url(client):
@@ -222,8 +298,19 @@ def test_linux_nfs_casper_skips_iso_url(client):
     assert "iso-url=" not in text
     assert "ramdisk_size" not in text
     assert "boot=casper" in text
+    assert "noprompt" in text
+    assert "quickreboot" in text
+    assert "reboot=force" in text
     assert "secret" not in text.lower()
     assert r"\;s=" in text
+    assert "cloud-config-url=${seed-url}user-data" in text
+    assert "cloud-config-url=/dev/null" not in text
+    assert "ds=nocloud" in text
+    assert "nocloud-net" not in text
+    kernel_line = next(line for line in text.splitlines() if line.startswith("kernel "))
+    assert kernel_line.split()[3] == "autoinstall"
+    assert kernel_line.rstrip().endswith("---")
+    assert "imgargs vmlinuz " in text
 
 
 def test_linux_iso_image_uses_sanboot(client):

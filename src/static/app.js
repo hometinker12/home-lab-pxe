@@ -307,4 +307,35 @@
       });
     });
   }
+
+  function wireDialogs() {
+    document.querySelectorAll("[data-open-dialog]").forEach((btn) => {
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        const dlg = document.getElementById(btn.getAttribute("data-open-dialog"));
+        if (dlg && typeof dlg.showModal === "function") {
+          dlg.showModal();
+          const focus = dlg.querySelector("[autofocus], input:not([type=hidden])");
+          if (focus) {
+            focus.focus();
+          }
+        }
+      });
+    });
+    document.querySelectorAll("dialog.modal").forEach((dlg) => {
+      dlg.querySelectorAll("[data-close-dialog]").forEach((btn) => {
+        btn.addEventListener("click", () => dlg.close());
+      });
+      dlg.addEventListener("click", (event) => {
+        if (event.target === dlg) {
+          dlg.close();
+        }
+      });
+      if (dlg.hasAttribute("open") && typeof dlg.showModal === "function") {
+        dlg.close();
+        dlg.showModal();
+      }
+    });
+  }
+  wireDialogs();
 })();

@@ -41,6 +41,46 @@ def test_attempt_pins_paths_across_image_edit(client):
         assert get_open_attempt(db, machine) is None
 
 
+def test_redeploy_prunes_old_install_seeds(client):
+    login(client)
+    from src.db import session_scope
+    from src.models import Image, Machine
+    from src.settings import get_settings
+
+    with session_scope() as db:
+        image = create_image(
+            db,
+            name="seed-gc",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
+        machine = register_machine(db, mac="02:00:00:00:00:43", actor="admin")
+        deploy_machine(db, machine, image=image, actor="admin")
+        db.commit()
+        mid = int(machine.id)
+        first = machine.instance_id
+        image_id = int(image.id)
+    first_dir = get_settings().data_dir / "install-seeds" / str(mid) / first
+    assert (first_dir / "user-data").is_file()
+    leftover = get_settings().data_dir / "install-seeds" / str(mid) / "deadbeefcafebabe"
+    leftover.mkdir(parents=True)
+    (leftover / "user-data").write_text("# stale\n", encoding="utf-8")
+    with session_scope() as db:
+        machine = db.get(Machine, mid)
+        image = db.get(Image, image_id)
+        assert machine is not None and image is not None
+        mark_deployed(db, machine, actor="admin")
+        deploy_machine(db, machine, image=image, actor="admin")
+        db.commit()
+        second = machine.instance_id
+    assert first != second
+    assert not first_dir.exists()
+    assert not leftover.exists()
+    assert (get_settings().data_dir / "install-seeds" / str(mid) / second / "user-data").is_file()
+
+
 def test_gc_keeps_open_revision(client, tmp_path):
     login(client)
     from src.db import session_scope

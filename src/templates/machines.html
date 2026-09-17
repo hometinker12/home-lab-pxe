@@ -2,10 +2,12 @@
 {% block title %}Machines — home-lab-pxe{% endblock %}
 {% block body %}
 <header class="page-header">
-  <h1>Machines</h1>
+  <div class="page-header-row">
+    <h1>Machines</h1>
+    <button type="button" class="btn-ghost btn-sm" data-open-dialog="add-machine">Add machine</button>
+  </div>
   <p class="description">Every host that PXE-boots checks in here. Unknown hosts wait for operator approval; deployed hosts boot from local disk unless you stage a reimage.</p>
 </header>
-{% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 {% if pending %}
 <section class="alert alert-warn">
   <strong>{{ pending|length }} waiting for operator</strong>
@@ -13,7 +15,20 @@
     {% for m in pending %}
     <li>
       <a href="/machines/{{ m.id }}"><code>{{ m.mac }}</code></a>
-      <span class="meta">{{ m.last_ip }} · {{ m.state }} · last {{ m.last_seen_at }}</span>
+      <span class="meta">{{ m.last_ip }} · {{ state_label(m.state) }} · last {{ m.last_seen_at }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% if timeouts %}
+<section class="alert alert-error">
+  <strong>{{ timeouts|length }} imaging timeout</strong>
+  <ul>
+    {% for m in timeouts %}
+    <li>
+      <a href="/machines/{{ m.id }}"><code>{{ m.mac }}</code></a>
+      <span class="meta">{{ m.hostname or "(unnamed)" }} · last {{ m.last_seen_at }}</span>
     </li>
     {% endfor %}
   </ul>
@@ -22,37 +37,39 @@
 <div class="table-wrap">
   <table>
     <thead>
-      <tr><th>Host</th><th>MAC</th><th>State</th><th>Image</th><th>IP</th><th></th></tr>
+      <tr><th>Host</th><th>MAC</th><th>State</th><th>Image</th><th>IP</th><th class="col-actions"><a class="btn-ghost btn-sm" href="/machines">Refresh</a></th></tr>
     </thead>
     <tbody>
       {% for m in machines %}
       <tr class="state-{{ m.state }}">
         <td><a href="/machines/{{ m.id }}">{{ m.hostname or "(unnamed)" }}</a></td>
         <td><code>{{ m.mac }}</code></td>
-        <td><span class="badge badge-{{ m.state }}">{{ m.state }}</span></td>
+        <td><span class="badge badge-{{ m.state }}">{{ state_label(m.state) }}</span></td>
         <td>{% if m.assigned_image_id and images.get(m.assigned_image_id) %}{{ images[m.assigned_image_id].name }}{% else %}—{% endif %}</td>
         <td>{{ m.last_ip or "—" }}</td>
-        <td>
+        <td class="col-actions">
           <form method="post" action="/machines/{{ m.id }}/delete" class="inline-form" onsubmit="return confirm('Delete this machine from inventory? The next PXE boot with this MAC will register as unknown.');">
             <button type="submit" class="btn-danger btn-sm">Delete</button>
           </form>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="empty">No machines yet. Add a MAC below or PXE-boot a host to register it.</td></tr>
+      <tr><td colspan="6" class="empty">No machines yet. Use Add machine or PXE-boot a host to register it.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
-<section class="card">
-  <h2>Add machine</h2>
-  <p class="meta">Register a MAC before it PXE-boots. Unknown MACs still appear here after their first iPXE check-in.</p>
-  <form method="post" action="/machines" class="row-form">
-    <label>MAC address <input name="mac" required placeholder="de:ad:be:ef:00:01" autocomplete="off"></label>
-    <label>Hostname (optional) <input name="hostname" placeholder="lab-node-01"></label>
-    <div class="btn-row">
+<dialog class="modal" id="add-machine"{% if error %} open{% endif %}>
+  <form method="post" action="/machines" class="form">
+    <h2>Add machine</h2>
+    <p class="meta">Register a MAC before it PXE-boots. Unknown MACs still appear here after their first iPXE check-in.</p>
+    {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+    <label>MAC address <input name="mac" required placeholder="de:ad:be:ef:00:01" autocomplete="off" value="{{ add_mac or '' }}" autofocus></label>
+    <label>Hostname (optional) <input name="hostname" placeholder="lab-node-01" value="{{ add_hostname or '' }}"></label>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" data-close-dialog>Cancel</button>
       <button type="submit">Add machine</button>
     </div>
   </form>
-</section>
+</dialog>
 {% endblock %}

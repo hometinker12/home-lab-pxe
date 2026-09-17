@@ -84,12 +84,16 @@ def test_linux_extract_publishes_casper_media(tmp_path, monkeypatch):
             ("casper/initrd", 4, False),
             ("casper/filesystem.squashfs", 8, False),
             (".disk/casper-uuid-generic", 4, False),
+            ("dists/resolute/Release", 4, False),
+            ("pool/main/a/hello.deb", 4, False),
         ],
         {
             "casper/vmlinuz": b"kern",
             "casper/initrd": b"ird",
             "casper/filesystem.squashfs": b"squashok",
             ".disk/casper-uuid-generic": b"uuid",
+            "dists/resolute/Release": b"rel",
+            "pool/main/a/hello.deb": b"deb",
         },
     )
     result = extract_linux_payloads(iso, dest, image_root=tmp_path, runner=runner)
@@ -97,6 +101,8 @@ def test_linux_extract_publishes_casper_media(tmp_path, monkeypatch):
     assert (dest / "kernel").read_bytes() == b"kern"
     assert (dest / "casper" / "filesystem.squashfs").read_bytes() == b"squashok"
     assert (dest / ".disk" / "casper-uuid-generic").read_bytes() == b"uuid"
+    assert (dest / "dists" / "resolute" / "Release").read_bytes() == b"rel"
+    assert (dest / "pool" / "main" / "a" / "hello.deb").read_bytes() == b"deb"
 
 
 def test_windows_extract_returns_media(tmp_path, monkeypatch):

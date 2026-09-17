@@ -6,7 +6,7 @@ from ..boot.payload import BootPayload
 from ..boot.policy import decide_script
 from ..db import session_scope
 from ..inventory.mac import InvalidMacError, mac_hyphen, normalize_mac
-from ..inventory.service import get_image, get_open_attempt, record_boot_event, touch_machine
+from ..inventory.service import expire_stale_imaging, get_image, get_open_attempt, record_boot_event, touch_machine
 from ..settings import get_settings
 from ..web import client_ip
 
@@ -34,6 +34,7 @@ def ipxe_script(
     client = ip or client_ip(request)
     with session_scope() as db:
         machine = touch_machine(db, mac=mac_n, uuid=uuid, client_ip=client)
+        expire_stale_imaging(db)
         kind = decide_script(db, machine)
         image = get_image(db, machine.assigned_image_id)
         attempt = get_open_attempt(db, machine)

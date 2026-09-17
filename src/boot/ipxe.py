@@ -22,6 +22,20 @@ def _has_token(cmdline: str, prefix: str) -> bool:
     return any(token.lower().startswith(needle) for token in _tokens(cmdline))
 
 
+def _without_prefix(cmdline: str, prefix: str) -> str:
+    needle = prefix.lower()
+    return " ".join(token for token in _tokens(cmdline) if not token.lower().startswith(needle))
+
+
+def _linux_kernel_args(extra: str, defaults: list[str]) -> str:
+    """Subiquity only skips the disk-wipe prompt if `autoinstall` is a bare /proc/cmdline token."""
+    extra = _without_prefix(extra, "autoinstall")
+    extra_tokens = [token for token in _tokens(extra) if token != "---"]
+    nocloud = r"ds=nocloud\;s=${seed-url}"
+    parts = ["autoinstall", *extra_tokens, *[part for part in defaults if part], nocloud, "autoinstall", "---"]
+    return " ".join(parts)
+
+
 def wait_script(mac_hyphen: str) -> str:
     base = get_settings().public_url
     url = f"{base}/ipxe/{mac_hyphen}"
@@ -80,6 +94,7 @@ def linux_install_script(machine: Machine, payload: BootPayload) -> str:
     nfsroot = advertised_nfsroot(payload.media_relative, host=settings.nfs_host, export=settings.nfs_export)
     defaults: list[str] = []
     if nfsroot:
+        extra = _without_prefix(extra, "cloud-config-url=")
         if not _has_token(extra, "boot="):
             defaults.append("boot=casper")
         if not _has_token(extra, "netboot="):
@@ -90,10 +105,11 @@ def linux_install_script(machine: Machine, payload: BootPayload) -> str:
             defaults.append(f"NFSOPTS={CASPER_NFSOPTS}")
         if not _has_token(extra, "ip="):
             defaults.append("ip=dhcp")
-        if not _has_token(extra, "autoinstall"):
-            defaults.append("autoinstall")
-        if not _has_token(extra, "cloud-config-url="):
-            defaults.append("cloud-config-url=/dev/null")
+        if not _has_token(extra, "noprompt"):
+            defaults.append("noprompt")
+        if not _has_token(extra, "quickreboot"):
+            defaults.append("quickreboot")
+        defaults.append("cloud-config-url=${seed-url}user-data")
     elif iso_ok:
         iso_url = _boot_file_url(machine, payload, "iso")
         if not _has_token(extra, "root="):
@@ -106,14 +122,22 @@ def linux_install_script(machine: Machine, payload: BootPayload) -> str:
             defaults.append(f"iso-url={iso_url}")
         if not _has_token(extra, "url="):
             defaults.append(f"url={iso_url}")
-        if not _has_token(extra, "autoinstall"):
-            defaults.append("autoinstall")
         if not _has_token(extra, "cloud-config-url="):
             defaults.append("cloud-config-url=/dev/null")
-    args = " ".join([part for part in (*_tokens(extra), *defaults) if part])
-    nocloud = r"ds=nocloud-net\;s=${seed-url}"
-    cmdline = f"{args} {nocloud}".strip() if args else nocloud
-    return _header() + f"set seed-url {seed}\n" + f"kernel {kernel} {cmdline}\n" + f"initrd {initrd}\n" + "boot\n"
+    else:
+        extra = _without_prefix(extra, "cloud-config-url=")
+        defaults.append("cloud-config-url=${seed-url}user-data")
+    if not _has_token(extra, "reboot=") and not any(str(part).startswith("reboot=") for part in defaults):
+        defaults.append("reboot=force")
+    cmdline = _linux_kernel_args(extra, defaults)
+    return (
+        _header()
+        + f"set seed-url {seed}\n"
+        + f"kernel --name=vmlinuz {kernel} {cmdline}\n"
+        + f"initrd {initrd}\n"
+        + f"imgargs vmlinuz {cmdline}\n"
+        + "boot\n"
+    )
 
 
 def windows_install_script(machine: Machine, payload: BootPayload) -> str:

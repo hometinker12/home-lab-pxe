@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 
 from .db import get_engine, init_db, session_scope
 from .ganesha_exports import request_export_reload
+from .inventory.service import expire_stale_imaging
 from .iso_extract import ArchiveRunner, ExtractError, extract_linux_payloads, extract_windows_media
 from .models import ExtractStatus, Image, InstallAttempt, OsFamily
 from .nfs_media import casper_has_squashfs, linux_http_generation, nfs_generation
@@ -178,12 +179,8 @@ def _publish_linux_tree(staging: Path, image_id: int, revision: int, media_relat
         if nfs_pub.exists():
             shutil.rmtree(nfs_pub)
         nfs_pub.mkdir(parents=True)
-        casper = staging / "casper"
-        disk = staging / ".disk"
-        if casper.exists():
-            shutil.move(str(casper), str(nfs_pub / "casper"))
-        if disk.exists():
-            shutil.move(str(disk), str(nfs_pub / ".disk"))
+        for child in list(staging.iterdir()):
+            shutil.move(str(child), str(nfs_pub / child.name))
         _world_readable(nfs_pub)
         shutil.rmtree(staging, ignore_errors=True)
         return extracts_pub, nfs_generation(image_id, revision)
@@ -323,6 +320,18 @@ def nfs_tree_has_squashfs(image: Image) -> bool:
     return casper_has_squashfs(root)
 
 
+def nfs_tree_has_apt_repo(image: Image) -> bool:
+    if image.id is None:
+        return False
+    revision = int(image.extract_revision or 0)
+    if revision < 1:
+        return False
+    dists = get_settings().image_root / "nfs" / str(int(image.id)) / str(revision) / "dists"
+    if not dists.is_dir():
+        return False
+    return any((child / "Release").is_file() for child in dists.iterdir() if child.is_dir())
+
+
 def linux_needs_nfs_backfill(image: Image) -> bool:
     if image.os_family != OsFamily.linux.value:
         return False
@@ -332,7 +341,7 @@ def linux_needs_nfs_backfill(image: Image) -> bool:
         return False
     generation = (image.extract_generation or "").replace("\\", "/").strip()
     if generation.startswith("nfs/"):
-        return not nfs_tree_has_squashfs(image)
+        return not nfs_tree_has_squashfs(image) or not nfs_tree_has_apt_repo(image)
     if generation.startswith("linux/"):
         return False
     return True
@@ -376,6 +385,12 @@ def main() -> None:
     while True:
         job = claim_next_job()
         if job is None:
+            try:
+                with session_scope() as db:
+                    expire_stale_imaging(db)
+                    db.commit()
+            except Exception:
+                LOGGER.exception("imaging timeout expire failed")
             time.sleep(1)
             continue
         image_id, revision = job

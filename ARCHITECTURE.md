@@ -132,7 +132,7 @@ sequenceDiagram
   PXE-->>FW: proxyDHCP: TFTP iPXE
   FW->>PXE: TFTP iPXE binary
   FW->>PXE: GET /ipxe/{mac}
-  alt unknown / pending / ready / disabled
+  alt unknown / pending / ready / disabled / timeout_error
     PXE-->>FW: wait menu (chain + sleep)
     FW->>PXE: poll same URL until operator acts
   else deploying / staged, Linux
@@ -153,11 +153,11 @@ flowchart TD
   ID -->|no| REG["Insert pending"]
   REG --> WAIT["Wait / poll menu"]
   ID -->|yes| ST{"state"}
-  ST --> pending["pending / ready / disabled"]
+  ST --> pending["pending / ready / disabled / timeout_error"]
   pending --> WAIT
   ST --> inst["deploying / staged"]
   inst --> OS{"os_family"}
-  OS --> linux["Linux: kernel + nocloud-net"]
+  OS --> linux["Linux: kernel + nocloud"]
   OS --> win["Windows: wimboot + unattend"]
   ST --> dep["deployed"]
   dep --> JOB{"staged job?"}
@@ -176,7 +176,7 @@ sequenceDiagram
   participant OS as Installer + cloud-init
 
   IPXE->>API: GET /ipxe/{mac}
-  API-->>IPXE: kernel cmdline ds=nocloud-net
+  API-->>IPXE: kernel cmdline ds=nocloud
   IPXE->>API: GET kernel / initrd
   OS->>API: GET /cloud-init/{id}/meta-data
   OS->>API: GET /cloud-init/{id}/user-data
@@ -215,16 +215,22 @@ stateDiagram-v2
   pending --> ready: operator names / tags
   pending --> deploying: Deploy
   ready --> deploying: Deploy
+  deploying --> imaging: installer early-command
+  staged --> imaging: installer early-command
+  imaging --> deployed: installer phone_home
+  imaging --> timeout_error: Settings timeout
+  timeout_error --> deploying: Deploy
   deploying --> deployed: installer callback
   deployed --> staged: console save / reimage
-  staged --> deploying: next PXE
   pending --> disabled: quarantine
   ready --> disabled: quarantine
   deployed --> disabled: quarantine
+  imaging --> disabled: quarantine
+  timeout_error --> disabled: quarantine
   disabled --> ready: operator enables
 ```
 
-Identity: **MAC primary**, SMBIOS UUID secondary. A known UUID with a new MAC (NIC swap) attaches the MAC and keeps the record.
+Identity: **MAC primary**, SMBIOS UUID secondary. A known UUID with a new MAC (NIC swap) attaches the MAC and keeps the record. **Timeout Error** is wait-only (no guest-init); the operator Deploys again. The timer is Settings → Machines (default 15 minutes). New machines inherit the Settings default IANA timezone.
 
 ---
 
@@ -277,9 +283,9 @@ flowchart TB
     end
     subgraph grid["Inventory"]
       H["Host     State      OS        Image           IP"]
-      R1["web1     deployed   linux     ubuntu-24.04    192.168.1.21"]
-      R2["lab-dc   staged     windows   ws2022          192.168.1.22"]
-      R3["build    deploying  linux     ubuntu-24.04    192.168.1.23"]
+      R1["web1     Deployed   linux     ubuntu-24.04    192.168.1.21"]
+      R2["lab-dc   Deploying  windows   ws2022          192.168.1.22"]
+      R3["build    Imaging    linux     ubuntu-24.04    192.168.1.23"]
     end
   end
   pendingBox --> grid
@@ -575,7 +581,7 @@ flowchart LR
 | Module | Responsibility |
 |--------|----------------|
 | `src/boot/` | Policy + `#!ipxe` |
-| `src/cloudinit/` | Linux nocloud-net |
+| `src/cloudinit/` | Linux nocloud |
 | `src/windows/` | `unattend.xml` + Cloudbase-Init |
 | `src/inventory/` | Machines, states, `LocalAccount` |
 | `src/security.py` | Fernet, hashing, cookie flags |

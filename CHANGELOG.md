@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-17
+
+### Changed
+
+- Ubuntu live-server autoinstall now fills locale, keyboard, network, storage, source, and apt so Subiquity does not prompt. NFS extracts also include `dists/` and `pool/` so `file:/cdrom` apt has a Release file; re-upload the ISO to refresh an existing casper-only extract.
+- NFS casper boots fetch autoinstall from HTTP `cloud-config-url=${seed-url}user-data` instead of `/dev/null`, and use `ds=nocloud` so Subiquity actually consumes the seed. Redeploy keeps only the current `data/install-seeds/{machine}/{instance}` snapshot.
+- Linux iPXE now puts the bare `autoinstall` token first on the kernel command line (and again before `---`) so Subiquity does not stop at “Continue with autoinstall?”.
+- Machine console status is **Deploying** (image assigned), **Imaging** (installer early-command / WinPE start), **Deployed** (phone-home), **Timeout Error** (imaging past the Settings timeout), or **Disabled** (operator). Ubuntu autoinstall `early-commands` and WinPE `startnet.cmd` POST `?event=imaging` like the existing phone-home wget.
+- Ubuntu autoinstall Netplan catch-all NICs (`en*` / `eth*`) now set `optional: true` so first boot does not stall in `cloud-init-network.service`.
+- Ubuntu autoinstall drops invalid root `timezone`, adds a Subiquity `identity` block, and keeps `{{placeholders}}` unquoted because the console fills them before the guest sees the file.
+- Default Ubuntu user-data now interpolates `{{ssh_keys}}` / `{{packages}}`, leaves ISO apt sources intact for offline NFS installs, omits a pinned `ubuntu-server-minimal` source id, and treats imaging/phone-home wget failures as non-fatal. Subiquity `identity.username` of `root` is remapped to `ubuntu` (root password still applied via cloud-init). LVM uses `sizing-policy: all` on the largest disk.
+- Add machine is a popup next to the Machines heading instead of a form on the inventory list.
+- The Machines inventory table has a **Refresh** control in the header so you can reload status without leaving the page.
+- Ubuntu autoinstall force-reboots after phone-home (`sysrq` + casper `noprompt`/`quickreboot`/`reboot=force`) so NFS installs do not hang on a blank cursor waiting to unmount the live media.
+
+### Added
+
+- Settings → Machines imaging timeout (default 15 minutes, 0 disables). A machine that stays **Imaging** that long moves to **Timeout Error**, drops guest-init, and returns to the wait menu until you Deploy again.
+- Deploy copies the image cloud-init / unattend template into the machine Guest init file when that file is empty. **Copy Default** next to Machine user-data pulls the latest image template.
+- Deploy on a machine saves hostname, timezone, packages, SSH keys, and the seed file from the same form before starting the install, so you do not have to Save first.
+- Settings → Machines default IANA timezone (first-boot `PXE_DEFAULT_TIMEZONE`, else UTC). New and discovered machines inherit it; the machine timezone field is a dropdown.
+
 ## [0.2.0] - 2026-09-17
 
 ### Changed

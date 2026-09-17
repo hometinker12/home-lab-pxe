@@ -3,7 +3,7 @@
 {% block body %}
 <header class="page-header">
   <h1>Settings</h1>
-  <p class="description">Network boot services (PXE, DHCP, TFTP), HTTPS for the console, and lab default local accounts.</p>
+  <p class="description">Network boot services (PXE, DHCP, TFTP), imaging timeout, HTTPS for the console, and lab default local accounts.</p>
 </header>
 {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 {% if notice %}<p class="alert alert-ok" role="status">{{ notice }}</p>{% endif %}
@@ -174,6 +174,27 @@
       <dt>Export</dt>
       <dd><code>{{ nfs_export }}</code></dd>
     </dl>
+  </div>
+</details>
+<details class="card" {% if open_section == "machines" %}open{% endif %}>
+  <summary>Machines</summary>
+  <div class="card-body">
+    <p class="meta">If a machine stays <strong>Imaging</strong> longer than this, it moves to <strong>Timeout Error</strong> and the wait menu. Set 0 to disable the timer. New and discovered machines inherit the default timezone until you change it on the machine.</p>
+    <form method="post" action="/settings/machines" class="form">
+      <label>Imaging timeout (minutes)
+        <input type="number" name="imaging_timeout_minutes" min="0" max="1440" step="1" value="{{ dhcp.imaging_timeout_minutes if dhcp.imaging_timeout_minutes is not none else 15 }}" required>
+      </label>
+      <label>Default timezone
+        <select name="default_timezone" required>
+          {% for tz in timezones %}
+          <option value="{{ tz }}" {% if tz == selected_timezone %}selected{% endif %}>{{ tz }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="btn-row">
+        <button type="submit">Save</button>
+      </div>
+    </form>
   </div>
 </details>
 <details class="card" {% if open_section == "accounts" %}open{% endif %}>

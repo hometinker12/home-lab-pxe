@@ -1,21 +1,76 @@
 #cloud-config
 autoinstall:
   version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  refresh-installer:
+    update: false
+  source:
+    search_drivers: false
+  network:
+    version: 2
+    ethernets:
+      zz-all-en:
+        match:
+          name: "en*"
+        dhcp4: true
+        optional: true
+      zz-all-eth:
+        match:
+          name: "eth*"
+        dhcp4: true
+        optional: true
+  apt:
+    preserve_sources_list: false
+    geoip: false
+    fallback: offline-install
+    mirror-selection:
+      primary:
+        - uri: http://archive.ubuntu.com/ubuntu
+          arches: [amd64, i386]
+        - uri: http://ports.ubuntu.com/ubuntu-ports
+          arches: [arm64, armhf, ppc64el, riscv64, s390x]
+  storage:
+    layout:
+      name: lvm
+      sizing-policy: all
+      match:
+        size: largest
+  identity:
+    hostname: {{hostname}}
+    username: {{username}}
+    password: {{password_hash}}
   ssh:
     install-server: true
     allow-pw: true
-    authorized-keys: []
+    authorized-keys:
+      {{ssh_keys}}
+  packages:
+    {{packages}}
   user-data:
     hostname: {{hostname}}
     manage_etc_hosts: true
     timezone: {{timezone}}
     disable_root: false
     ssh_pwauth: true
+    users:
+      - name: {{username}}
+        lock_passwd: false
+        sudo: "ALL=(ALL) NOPASSWD:ALL"
+        shell: /bin/bash
+        ssh_authorized_keys:
+          {{ssh_keys}}
     chpasswd:
       expire: false
       users:
         - name: {{username}}
           password: {{password_hash}}
           type: hash
+  shutdown: reboot
+  updates: security
+  early-commands:
+    - wget -q --tries=3 --timeout=10 --post-data= -O /dev/null {{imaging_url}} || true
   late-commands:
-    - [wget, -q, --post-data=, -O, /dev/null, {{phone_home_url}}]
+    - wget -q --tries=3 --timeout=10 --post-data= -O /dev/null {{phone_home_url}} || true
+    - sh -c 'sleep 1; echo 1 > /proc/sys/kernel/sysrq; echo s > /proc/sysrq-trigger; echo u > /proc/sysrq-trigger; echo b > /proc/sysrq-trigger'

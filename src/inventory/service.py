@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from sqlmodel import Session, col, select
@@ -24,9 +24,11 @@ from ..models import (
 from ..security import decrypt_value, encrypt_value
 from ..seed_store import (
     SeedError,
+    copy_image_seed_to_machine,
     delete_seed,
     ensure_image_seed,
     factory_seed_text,
+    prune_install_seeds,
     snapshot_seed_relative,
     write_seed,
 )
@@ -35,12 +37,20 @@ from .mac import normalize_mac, normalize_uuid
 
 LAB_DEFAULT_MACHINE_ID = 0
 
-INSTALL_STATES = frozenset({MachineState.deploying.value, MachineState.staged.value})
+INSTALL_STATES = frozenset(
+    {
+        MachineState.deploying.value,
+        MachineState.staged.value,
+        MachineState.imaging.value,
+    }
+)
+EDIT_LOCKED_STATES = frozenset({MachineState.deploying.value, MachineState.imaging.value})
 WAIT_STATES = frozenset(
     {
         MachineState.pending.value,
         MachineState.ready.value,
         MachineState.disabled.value,
+        MachineState.timeout_error.value,
     }
 )
 EXTRACT_BLOCKING = frozenset({ExtractStatus.queued.value, ExtractStatus.extracting.value, ExtractStatus.failed.value})
@@ -51,8 +61,23 @@ def guest_init_allowed(machine: Machine) -> bool:
     return machine.state in INSTALL_STATES
 
 
+def edit_locked(machine: Machine) -> bool:
+    """Block console edits while PXE install or disk imaging is running."""
+    return machine.state in EDIT_LOCKED_STATES
+
+
 def now() -> datetime:
     return datetime.now(UTC)
+
+
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _clear_imaging_clock(machine: Machine) -> None:
+    machine.imaging_started_at = None
 
 
 def load_overlay(raw: str | None) -> dict:
@@ -65,6 +90,16 @@ def load_overlay(raw: str | None) -> dict:
 
 def dump_overlay(data: dict) -> str:
     return json.dumps(data, separators=(",", ":"), sort_keys=True)
+
+
+def apply_lab_timezone(db: Session, machine: Machine) -> None:
+    overlay = load_overlay(machine.guest_overlay)
+    if str(overlay.get("timezone") or "").strip():
+        return
+    from ..dhcp_runtime import default_timezone
+
+    overlay["timezone"] = default_timezone(db)
+    machine.guest_overlay = dump_overlay(overlay)
 
 
 def record_activity(db: Session, *, actor: str, action: str, detail: str = "") -> None:
@@ -106,6 +141,7 @@ def get_machine(db: Session, machine_id: int) -> Machine | None:
 
 
 def get_machine_for_guest_init(db: Session, machine_id: int) -> Machine | None:
+    expire_stale_imaging(db)
     machine = get_machine(db, machine_id)
     if machine is None or not guest_init_allowed(machine):
         return None
@@ -195,6 +231,7 @@ def create_install_attempt(db: Session, machine: Machine, image: Image) -> Insta
         write_seed(get_settings().data_dir, relative, text)
     except SeedError as exc:
         raise ValueError(str(exc)) from exc
+    prune_install_seeds(int(machine.id), keep_instance_id=machine.instance_id)
     media = (image.extract_generation or "").strip()
     attempt = InstallAttempt(
         machine_id=int(machine.id),
@@ -242,6 +279,7 @@ def touch_machine(
         machine = Machine(
             mac=mac_n, uuid=uuid_n, state=MachineState.pending.value, last_ip=client_ip, last_seen_at=now()
         )
+        apply_lab_timezone(db, machine)
         db.add(machine)
         db.flush()
         record_activity(db, actor="system", action="machine.discovered", detail=mac_n)
@@ -273,6 +311,7 @@ def register_machine(db: Session, *, mac: str, hostname: str = "", actor: str) -
         last_seen_at=now(),
     )
     apply_hostname(machine, hostname)
+    apply_lab_timezone(db, machine)
     db.add(machine)
     db.flush()
     record_activity(db, actor=actor, action="machine.register", detail=mac_n)
@@ -344,7 +383,10 @@ def deploy_machine(db: Session, machine: Machine, *, image: Image, actor: str) -
     assert_image_deployable(image)
     machine.assigned_image_id = image.id
     machine.state = MachineState.deploying.value
+    _clear_imaging_clock(machine)
     bump_instance_id(machine)
+    if machine.id is not None:
+        copy_image_seed_to_machine(int(machine.id), int(image.id), image.os_family, overwrite=False)
     db.add(machine)
     create_install_attempt(db, machine, image)
     record_activity(db, actor=actor, action="machine.deploy", detail=f"image={image.name}")
@@ -360,8 +402,50 @@ def mark_ready(db: Session, machine: Machine, *, hostname: str, actor: str) -> M
     return machine
 
 
+def mark_imaging(db: Session, machine: Machine, *, actor: str = "installer") -> Machine:
+    """Installer early-command: disk imaging has started."""
+    if machine.state != MachineState.imaging.value:
+        machine.state = MachineState.imaging.value
+        machine.imaging_started_at = now()
+        db.add(machine)
+        record_activity(db, actor=actor, action="machine.imaging", detail=machine.mac)
+    return machine
+
+
+def mark_timeout_error(db: Session, machine: Machine, *, actor: str = "timeout") -> Machine:
+    machine.state = MachineState.timeout_error.value
+    _clear_imaging_clock(machine)
+    close_open_attempts(db, machine)
+    db.add(machine)
+    record_activity(db, actor=actor, action="machine.timeout", detail=machine.mac)
+    return machine
+
+
+def expire_stale_imaging(db: Session) -> int:
+    """Move Imaging machines past the Settings timeout into Timeout Error. 0 minutes disables."""
+    from ..dhcp_runtime import imaging_timeout_minutes
+
+    minutes = imaging_timeout_minutes(db)
+    if minutes <= 0:
+        return 0
+    cutoff = now() - timedelta(minutes=minutes)
+    expired = 0
+    rows = db.exec(select(Machine).where(Machine.state == MachineState.imaging.value)).all()
+    for machine in rows:
+        started = machine.imaging_started_at
+        if started is None:
+            machine.imaging_started_at = now()
+            db.add(machine)
+            continue
+        if _aware(started) <= cutoff:
+            mark_timeout_error(db, machine, actor="timeout")
+            expired += 1
+    return expired
+
+
 def mark_deployed(db: Session, machine: Machine, *, actor: str = "installer") -> Machine:
     machine.state = MachineState.deployed.value
+    _clear_imaging_clock(machine)
     open_jobs = db.exec(
         select(StagedJob).where(StagedJob.machine_id == machine.id, StagedJob.applied_at == None)  # noqa: E711
     ).all()
@@ -382,6 +466,7 @@ def mark_deployed(db: Session, machine: Machine, *, actor: str = "installer") ->
             image_ids.add(int(attempt.image_id))
         if attempt.seed_snapshot_path:
             delete_seed(get_settings().data_dir, attempt.seed_snapshot_path)
+    prune_install_seeds(int(machine.id))
     db.add(machine)
     record_activity(db, actor=actor, action="machine.deployed", detail=machine.mac)
     from ..extract_worker import gc_extract_generations
@@ -395,6 +480,7 @@ def mark_deployed(db: Session, machine: Machine, *, actor: str = "installer") ->
 
 def disable_machine(db: Session, machine: Machine, *, actor: str, disabled: bool) -> Machine:
     machine.state = MachineState.disabled.value if disabled else MachineState.ready.value
+    _clear_imaging_clock(machine)
     if disabled:
         close_open_attempts(db, machine)
     db.add(machine)
@@ -414,7 +500,10 @@ def stage_machine(
     if overlay is not None:
         machine.guest_overlay = dump_overlay(overlay)
     machine.state = MachineState.staged.value
+    _clear_imaging_clock(machine)
     bump_instance_id(machine)
+    if machine.id is not None:
+        copy_image_seed_to_machine(int(machine.id), int(target.id), target.os_family, overwrite=False)
     db.add(
         StagedJob(
             machine_id=int(machine.id),
