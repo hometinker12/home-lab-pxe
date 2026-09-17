@@ -2,11 +2,13 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-17
+
 ### Changed
 
 - Compose publishes UDP 67 (DHCP), 69 (TFTP), and 4011 (proxyDHCP) alongside HTTP/HTTPS. dnsmasq uses `tftp-single-port` so TFTP transfers work through Docker port mapping.
 - TFTP now includes a generated `boot.ipxe` chain script. Settings lists it as the DHCP filename for clients that already run iPXE (Proxmox/SeaBIOS); those clients cannot execute `ipxe.efi`.
-- Ubuntu live-server ISO import extracts `casper/` and `.disk/` onto a read-only NFS export and boots with `netboot=nfs nfsroot=host:/export` so the guest does not wget the ISO into RAM. Casper's `nfsmount` looks up mountd via rpcbind on port 111 (Compose publishes TCP/UDP 111, 2049, and 20048). Only the export root is mounted: Ganesha denies subdirectory MNT, and Linux `nfsmount` of a nested export Path returns EPERM. Each generation's casper files are hardlinked at the export root. HTTP `iso-url=` / `url=` remains the fallback when squashfs is missing. The uploaded ISO is deleted after a successful NFS or Windows media extract.
+- Ubuntu live-server ISO import extracts `casper/` and `.disk/` under `images/nfs/{id}/{rev}` and boots with `netboot=nfs nfsroot=host:/export/{id}/{rev}` so the guest does not wget the ISO into RAM. After each extract, Ganesha publishes that directory as its own NFSv3 Path (casper mounts the export root where `casper/` lives). Casper's `nfsmount` looks up mountd via rpcbind on port 111 (Compose publishes TCP/UDP 111, 2049, and 20048). HTTP `iso-url=` / `url=` remains the fallback when squashfs is missing. The uploaded ISO is deleted after a successful NFS or Windows media extract.
 - Machine hostname lives under Actions (below the image selector). Saving guest-init on an existing host now persists the hostname on the machine record, not only in the overlay JSON.
 - Files favorites jump to iPXE boot files, image uploads, NFS extracts, SMB media, and machine seeds. The browser can open the TFTP, Images, and Data volumes (paths stay confined to those roots). A single click opens a folder; the System iPXE file list is removed from the sidebar.
 

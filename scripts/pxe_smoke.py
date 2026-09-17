@@ -95,9 +95,6 @@ def seed_nfs_generation(container: str, image_id: int) -> None:
         "casper.mkdir(parents=True, exist_ok=True)\n"
         "(dest / '.disk').mkdir(exist_ok=True)\n"
         "(casper / 'filesystem.squashfs').write_bytes(b'sqsh')\n"
-        "from src.nfs_media import publish_nfs_export_root\n"
-        "from src.settings import get_settings\n"
-        "publish_nfs_export_root(get_settings().image_root, f'nfs/{iid}/1')\n"
     )
     proc = subprocess.run(
         ["docker", "exec", container, "python", "-c", code],
@@ -106,6 +103,13 @@ def seed_nfs_generation(container: str, image_id: int) -> None:
     )
     detail = (proc.stderr or proc.stdout or "").strip()
     expect(proc.returncode == 0, f"seed nfs generation failed rc={proc.returncode} {detail}")
+    proc = subprocess.run(
+        ["docker", "exec", container, "python", "./scripts/sync_ganesha_exports.py", "--reload"],
+        capture_output=True,
+        text=True,
+    )
+    detail = (proc.stderr or proc.stdout or "").strip()
+    expect(proc.returncode == 0, f"sync ganesha exports failed rc={proc.returncode} {detail}")
 
 
 def main() -> None:
@@ -428,16 +432,16 @@ def main() -> None:
         status, _, body = c.request("GET", f"/ipxe/{nfs_mac}")
         nfs_text = body.decode()
         expect("netboot=nfs" in nfs_text and "boot=casper" in nfs_text, "expected nfs casper iPXE")
-        expect(f"nfsroot=" in nfs_text and "/var/lib/pxe/images/nfs" in nfs_text, "expected nfs export root")
-        expect(f"/var/lib/pxe/images/nfs/{nfs_image_id}/1" not in nfs_text, "nfsroot must be export root not generation")
-        expect("live-media-path=" not in nfs_text, "export-root casper/ should use default live-media-path")
+        expect(f"nfsroot=" in nfs_text and f"/var/lib/pxe/images/nfs/{nfs_image_id}/1" in nfs_text, "expected generation nfsroot")
+        expect("live-media-path=" not in nfs_text, "generation nfsroot should use default casper/")
         expect("NFSOPTS=vers=3,tcp,port=2049" in nfs_text, "expected casper NFSOPTS")
-        ls_proc = subprocess.run(
-            ["docker", "exec", args.container.strip(), "test", "-f", "/var/lib/pxe/images/nfs/casper/filesystem.squashfs"],
+        conf_proc = subprocess.run(
+            ["docker", "exec", args.container.strip(), "cat", "/var/run/ganesha/pxe-generations.conf"],
             capture_output=True,
             text=True,
         )
-        expect(ls_proc.returncode == 0, "casper squashfs missing at NFS export root")
+        expect(conf_proc.returncode == 0, "ganesha generations conf missing")
+        expect(f'Path = "/var/lib/pxe/images/nfs/{nfs_image_id}/1"' in (conf_proc.stdout or ""), "generation export Path missing")
         expect(",vers=" not in nfs_text and "mountport=" not in nfs_text, "nfsroot must not swallow mount options")
         expect("iso-url=" not in nfs_text and "ramdisk_size" not in nfs_text, "nfs install should not wget ISO")
         expect("nfs-smoke-secret" not in nfs_text, "password leaked into nfs iPXE")

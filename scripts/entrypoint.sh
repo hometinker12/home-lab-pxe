@@ -228,6 +228,9 @@ start_nfs() {
     echo "WARN: ganesha.nfsd not installed" >&2
     return 0
   fi
+  mkdir -p /var/run/ganesha || true
+  : >/var/run/ganesha/pxe-generations.conf
+  python ./scripts/sync_ganesha_exports.py || echo "WARN: nfs generation export sync failed" >&2
   if ganesha.nfsd -f /etc/ganesha/ganesha.conf -L /var/log/ganesha/ganesha.log; then
     echo "ganesha.nfsd started"
   else
@@ -240,6 +243,7 @@ start_nfs || true
   trap '' HUP
   while true; do
     if command -v ganesha.nfsd >/dev/null 2>&1; then
+      python ./scripts/sync_ganesha_exports.py --reload >/dev/null 2>&1 || true
       if ! pgrep -f ganesha.nfsd >/dev/null 2>&1; then
         start_nfs || true
       fi

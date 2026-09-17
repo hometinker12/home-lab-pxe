@@ -214,9 +214,8 @@ def test_linux_nfs_casper_skips_iso_url(client):
         db.commit()
     text = client.get("/ipxe/02-00-00-00-00-08").text
     assert "netboot=nfs" in text
-    assert "nfsroot=pxe.test:/var/lib/pxe/images/nfs" in text
+    assert "nfsroot=pxe.test:/var/lib/pxe/images/nfs/1/1" in text
     assert "live-media-path=" not in text
-    assert "nfs/1/1" not in text
     assert "NFSOPTS=vers=3,tcp,port=2049" in text
     assert ",vers=" not in text
     assert "mountport=" not in text

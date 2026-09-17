@@ -30,6 +30,8 @@ services:
       - CHOWN
       - FOWNER
       - DAC_OVERRIDE
+      - DAC_READ_SEARCH
+      - SETFCAP
     security_opt:
       - no-new-privileges:true
     extra_hosts:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..models import Machine
-from ..nfs_media import CASPER_NFSOPTS, advertised_nfsroot, publish_nfs_export_root
+from ..nfs_media import CASPER_NFSOPTS, advertised_nfsroot
 from ..settings import get_settings
 from .payload import BootPayload
 from .policy import ScriptKind
@@ -78,11 +78,6 @@ def linux_install_script(machine: Machine, payload: BootPayload) -> str:
     initrd = _boot_file_url(machine, payload, "initrd")
     extra = payload.cmdline.strip()
     nfsroot = advertised_nfsroot(payload.media_relative, host=settings.nfs_host, export=settings.nfs_export)
-    if nfsroot:
-        try:
-            publish_nfs_export_root(settings.image_root, payload.media_relative)
-        except OSError:
-            pass
     defaults: list[str] = []
     if nfsroot:
         if not _has_token(extra, "boot="):

@@ -167,7 +167,7 @@
 <details class="card" {% if open_section == "nfs" %}open{% endif %}>
   <summary>Ubuntu installation media (NFS)</summary>
   <div class="card-body">
-    <p class="meta">Ubuntu live-server casper media is exported read-only over NFS (userspace). Clients boot with <code>netboot=nfs</code> and mount <code>PXE_NFS_EXPORT</code>; the extracted generation's <code>casper/</code> is hardlinked at that export root. Compose publishes TCP/UDP 111, 2049, and 20048. Linux <code>network_mode: host</code> is the supported LAN path. If the VM is on another VLAN, allow those ports to this host.</p>
+    <p class="meta">Ubuntu live-server casper media is exported read-only over NFS (userspace). Each ISO extract under <code>images/nfs/{id}/{rev}</code> gets its own Ganesha export; clients boot with <code>netboot=nfs</code> and mount that directory (where <code>casper/</code> lives). Compose publishes TCP/UDP 111, 2049, and 20048. Linux <code>network_mode: host</code> is the supported LAN path. If the VM is on another VLAN, allow those ports to this host.</p>
     <dl class="hints">
       <dt>NFS host</dt>
       <dd><code>{{ nfs_host }}</code></dd>

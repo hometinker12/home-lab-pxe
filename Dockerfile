@@ -7,7 +7,7 @@
 
 FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
-ARG VERSION=0.1.1
+ARG VERSION=0.2.0
 
 LABEL org.opencontainers.image.title="home-lab-pxe" \
       org.opencontainers.image.description="Docker PXE/iPXE server with web console, cloud-init, and Cloudbase-Init" \
@@ -91,8 +91,8 @@ COPY config/smb.conf /etc/samba/smb.conf
 COPY config/ganesha.conf /etc/ganesha/ganesha.conf
 COPY src ./src
 COPY scripts ./scripts
-RUN sed -i 's/\r$//' ./scripts/entrypoint.sh ./scripts/run-web.sh ./scripts/pxe_smoke.py \
-    && chmod +x ./scripts/entrypoint.sh ./scripts/run-web.sh \
+RUN sed -i 's/\r$//' ./scripts/entrypoint.sh ./scripts/run-web.sh ./scripts/pxe_smoke.py ./scripts/sync_ganesha_exports.py \
+    && chmod +x ./scripts/entrypoint.sh ./scripts/run-web.sh ./scripts/sync_ganesha_exports.py \
     && chown -R app:app /app /var/lib/pxe \
     && chmod 644 /etc/samba/smb.conf /etc/ganesha/ganesha.conf
 
