@@ -68,7 +68,7 @@ flowchart LR
   end
   E --> D["dnsmasq<br/>caps: NET_ADMIN, NET_RAW<br/>ports 67 / 69"]
   E --> SMB["smbd pxe-media<br/>TCP 445, not published on Docker Desktop"]
-  E --> NFS["ganesha.nfsd casper export<br/>TCP/UDP 2049, 20048"]
+  E --> NFS["ganesha.nfsd casper export<br/>TCP/UDP 111, 2049, 20048"]
   E --> pid1
   H --> F["FastAPI app"]
   S --> F
@@ -322,7 +322,7 @@ flowchart LR
     Wimg["ws2022         windows  x86_64   boot.wim + install.wim"]
   end
   subgraph files["Files"]
-    Browser["TFTP volume browser"]
+    Browser["TFTP / Images / Data volume browser"]
   end
   subgraph settings["Settings"]
     Pxe["PXE  public URL  bind  extra options  next-server hints"]

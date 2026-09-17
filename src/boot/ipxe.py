@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..models import Machine
-from ..nfs_media import advertised_nfsroot
+from ..nfs_media import CASPER_NFSOPTS, advertised_nfsroot, publish_nfs_export_root
 from ..settings import get_settings
 from .payload import BootPayload
 from .policy import ScriptKind
@@ -78,6 +78,11 @@ def linux_install_script(machine: Machine, payload: BootPayload) -> str:
     initrd = _boot_file_url(machine, payload, "initrd")
     extra = payload.cmdline.strip()
     nfsroot = advertised_nfsroot(payload.media_relative, host=settings.nfs_host, export=settings.nfs_export)
+    if nfsroot:
+        try:
+            publish_nfs_export_root(settings.image_root, payload.media_relative)
+        except OSError:
+            pass
     defaults: list[str] = []
     if nfsroot:
         if not _has_token(extra, "boot="):
@@ -85,7 +90,9 @@ def linux_install_script(machine: Machine, payload: BootPayload) -> str:
         if not _has_token(extra, "netboot="):
             defaults.append("netboot=nfs")
         if not _has_token(extra, "nfsroot="):
-            defaults.append(f"nfsroot={nfsroot},vers=3,nolock,tcp,port=2049,mountport=20048")
+            defaults.append(f"nfsroot={nfsroot}")
+        if not _has_token(extra, "NFSOPTS="):
+            defaults.append(f"NFSOPTS={CASPER_NFSOPTS}")
         if not _has_token(extra, "ip="):
             defaults.append("ip=dhcp")
         if not _has_token(extra, "autoinstall"):

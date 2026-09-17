@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 from .db import get_engine, init_db, session_scope
 from .iso_extract import ArchiveRunner, ExtractError, extract_linux_payloads, extract_windows_media
 from .models import ExtractStatus, Image, InstallAttempt, OsFamily
-from .nfs_media import casper_has_squashfs, linux_http_generation, nfs_generation
+from .nfs_media import casper_has_squashfs, linux_http_generation, nfs_generation, publish_nfs_export_root
 from .paths import UnsafePathError, resolve_under
 from .seed_store import ensure_image_seed
 from .settings import get_settings
@@ -184,6 +184,7 @@ def _publish_linux_tree(staging: Path, image_id: int, revision: int, media_relat
         if disk.exists():
             shutil.move(str(disk), str(nfs_pub / ".disk"))
         _world_readable(nfs_pub)
+        publish_nfs_export_root(root, nfs_generation(image_id, revision))
         shutil.rmtree(staging, ignore_errors=True)
         return extracts_pub, nfs_generation(image_id, revision)
     shutil.rmtree(staging, ignore_errors=True)

@@ -95,7 +95,7 @@
 <details class="card" {% if open_section == "tftp" %}open{% endif %}>
   <summary>TFTP</summary>
   <div class="card-body">
-    <p class="meta">First-stage iPXE binaries are served from the TFTP volume over TFTP (and also over HTTP at <code>/tftp/</code>). Browse and replace those files under <a href="/files">Files</a>. Disable TFTP if another server on the LAN already hosts them.</p>
+    <p class="meta">First-stage iPXE binaries are served from the TFTP volume over TFTP (and also over HTTP at <code>/tftp/</code>). Browse iPXE files, image extracts, and machine seeds under <a href="/files">Files</a>. Disable TFTP if another server on the LAN already hosts the iPXE binaries.</p>
     <p>TFTP root: <code>{{ settings.tftp_root }}</code></p>
     <form method="post" action="/settings/tftp" class="form">
       <label class="check">
@@ -167,7 +167,7 @@
 <details class="card" {% if open_section == "nfs" %}open{% endif %}>
   <summary>Ubuntu installation media (NFS)</summary>
   <div class="card-body">
-    <p class="meta">Ubuntu live-server casper media is exported read-only over NFS (userspace). Clients boot with <code>netboot=nfs</code> so the installer does not wget the ISO into RAM. Linux <code>network_mode: host</code> is the supported LAN path; Compose also publishes TCP/UDP 2049 and 20048 for Docker NAT (iPXE passes <code>port=2049,mountport=20048</code> so host rpcbind/111 is not required).</p>
+    <p class="meta">Ubuntu live-server casper media is exported read-only over NFS (userspace). Clients mount <code>PXE_NFS_EXPORT</code>; the extracted generation's <code>casper/</code> is hardlinked at that export root. Compose publishes TCP/UDP 111, 2049, and 20048. Linux <code>network_mode: host</code> is the supported LAN path. If the VM is on another VLAN, allow those ports to this host.</p>
     <dl class="hints">
       <dt>NFS host</dt>
       <dd><code>{{ nfs_host }}</code></dd>

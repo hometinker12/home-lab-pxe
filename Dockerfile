@@ -96,7 +96,7 @@ RUN sed -i 's/\r$//' ./scripts/entrypoint.sh ./scripts/run-web.sh ./scripts/pxe_
     && chown -R app:app /app /var/lib/pxe \
     && chmod 644 /etc/samba/smb.conf /etc/ganesha/ganesha.conf
 
-EXPOSE 8080 8443 67/udp 69/udp 2049/tcp 2049/udp 20048/tcp 20048/udp
+EXPOSE 8080 8443 67/udp 69/udp 111/tcp 111/udp 2049/tcp 2049/udp 20048/tcp 20048/udp
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
