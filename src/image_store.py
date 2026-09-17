@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 from pathlib import Path
 
 from starlette.datastructures import UploadFile
@@ -55,10 +57,11 @@ def save_upload_file(upload: UploadFile, relative: str) -> str:
     except UnsafePathError as exc:
         raise UploadError("Upload path is not allowed") from exc
     dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
     limit = settings.max_upload_bytes
     written = 0
     try:
-        with dest.open("wb") as handle:
+        with tmp.open("wb") as handle:
             while True:
                 chunk = upload.file.read(1024 * 1024)
                 if not chunk:
@@ -67,12 +70,17 @@ def save_upload_file(upload: UploadFile, relative: str) -> str:
                 if written > limit:
                     raise UploadError("Upload exceeds PXE_MAX_UPLOAD_BYTES")
                 handle.write(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if written == 0:
+            raise UploadError("Uploaded file was empty")
+        os.replace(tmp, dest)
     except UploadError:
-        dest.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
         raise
-    if written == 0:
-        dest.unlink(missing_ok=True)
-        raise UploadError("Uploaded file was empty")
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
     return relative.replace("\\", "/")
 
 
@@ -81,3 +89,16 @@ def has_upload(upload: UploadFile | None) -> bool:
         return False
     name = (upload.filename or "").strip()
     return bool(name)
+
+
+def remove_image_tree(image_id: int) -> None:
+    root = get_settings().image_root
+    for relative in (f"uploads/{int(image_id)}", f"smb/{int(image_id)}", f"nfs/{int(image_id)}"):
+        try:
+            path = resolve_under(root, relative)
+        except UnsafePathError:
+            continue
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        elif path.is_file():
+            path.unlink(missing_ok=True)

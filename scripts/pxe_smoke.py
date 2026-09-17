@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -37,6 +40,32 @@ class Client:
         except urllib.error.HTTPError as exc:
             return exc.code, dict(exc.headers), exc.read()
 
+    def multipart(self, path: str, fields: dict[str, str], files: dict[str, tuple[str, bytes, str]]):
+        boundary = f"pxesmoke{int(time.time())}"
+        chunks: list[bytes] = []
+        for name, value in fields.items():
+            chunks.append(
+                (
+                    f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+                ).encode()
+            )
+        for name, (filename, content, ctype) in files.items():
+            chunks.append(
+                (
+                    f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; "
+                    f"filename=\"{filename}\"\r\nContent-Type: {ctype}\r\n\r\n"
+                ).encode()
+                + content
+                + b"\r\n"
+            )
+        chunks.append(f"--{boundary}--\r\n".encode())
+        return self.request(
+            "POST",
+            path,
+            data=b"".join(chunks),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+
 
 def fail(message: str) -> None:
     print(f"SMOKE FAIL: {message}", file=sys.stderr)
@@ -48,13 +77,62 @@ def expect(cond: bool, message: str) -> None:
         fail(message)
 
 
+def folder_ids_from_tree(body: bytes) -> dict[str, int]:
+    found: dict[str, int] = {}
+    for match in re.finditer(
+        rb'href="/boot-menu\?folder=(\d+)" class="boot-tree-name[^"]*">([^<]+)',
+        body,
+    ):
+        found[match.group(2).decode().strip()] = int(match.group(1))
+    return found
+
+
+def seed_nfs_generation(container: str, image_id: int) -> None:
+    iid = int(image_id)
+    code = (
+        "from src.db import session_scope\n"
+        "from src.models import Image\n"
+        f"iid = {iid}\n"
+        "with session_scope() as db:\n"
+        "    img = db.get(Image, iid)\n"
+        "    if img is None:\n"
+        "        raise SystemExit('missing image')\n"
+        "    img.extract_generation = f'nfs/{iid}/1'\n"
+        "    db.add(img)\n"
+        "    db.commit()\n"
+        "from pathlib import Path\n"
+        f"dest = Path('/var/lib/pxe/images/nfs/{iid}/1')\n"
+        "casper = dest / 'casper'\n"
+        "casper.mkdir(parents=True, exist_ok=True)\n"
+        "(dest / '.disk').mkdir(exist_ok=True)\n"
+        "(casper / 'filesystem.squashfs').write_bytes(b'sqsh')\n"
+    )
+    proc = subprocess.run(
+        ["docker", "exec", container, "python", "-c", code],
+        capture_output=True,
+        text=True,
+    )
+    detail = (proc.stderr or proc.stdout or "").strip()
+    expect(proc.returncode == 0, f"seed nfs generation failed rc={proc.returncode} {detail}")
+    proc = subprocess.run(
+        ["docker", "exec", container, "python", "./scripts/sync_ganesha_exports.py", "--reload"],
+        capture_output=True,
+        text=True,
+    )
+    detail = (proc.stderr or proc.stdout or "").strip()
+    expect(proc.returncode == 0, f"sync ganesha exports failed rc={proc.returncode} {detail}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--user", default="admin")
     parser.add_argument("--password", default="smokepass")
+    parser.add_argument("--smb-password", default="")
+    parser.add_argument("--container", default="", help="docker container name for NFS generation seed")
     args = parser.parse_args()
     c = Client(args.base_url)
+    smb_secret = (args.smb_password or "").strip()
 
     status, _, body = c.request("GET", "/health")
     expect(status == 200, f"/health {status}")
@@ -81,12 +159,43 @@ def main() -> None:
     status, _, body = c.request("GET", f"/ipxe/{mac}")
     text = body.decode()
     expect(status == 200 and text.startswith("#!ipxe"), f"/ipxe pending {status}")
-    expect("Waiting for operator" in text, "expected wait menu")
-    expect("sleep" in text, "wait menu should poll")
+    expect("Continuing to next boot device" in text, "expected unknown disk continue")
+    expect("exit" in text, "unknown iPXE should exit to next device")
+    expect("choose" not in text, "unknown host must not see the folder menu")
+    expect("sleep" in text, "unknown continue should honor timeout")
     expect("smokepass" not in text, "password leaked into iPXE")
+    expect(not smb_secret or smb_secret not in text, "SMB password leaked into pending iPXE")
 
     status, _, _ = c.request("POST", "/login", form={"username": args.user, "password": args.password})
     expect(status in {200, 303, 302}, f"login {status}")
+
+    status, _, body = c.request("GET", "/machines")
+    expect(status == 200 and b"data-open-dialog=\"add-machine\"" in body, "machines Add machine control")
+    expect(b'id="add-machine"' in body, "add machine overlay dialog")
+    expect(b'<section class="card">' not in body, "add machine form should not be an on-page card")
+    expect(b">Refresh<" in body and b'href="/machines"' in body, "machines list refresh control")
+    expect(b'href="/boot-menu"' in body, "boot menu nav link")
+
+    status, _, body = c.request("GET", "/boot-menu")
+    expect(status == 200 and b"Windows" in body and b"Linux" in body and b"Tools" in body, "boot menu default folders")
+    expect(b"unknown_timeout_seconds" in body, "unknown/disabled timeout field")
+    expect(b'id="edit-folder"' in body, "folder editor overlay")
+    expect(b'data-open-dialog="edit-folder"' in body, "edit folder control")
+    expect(b'id="move-image"' in body, "move image overlay")
+    expect(b">Move up<" not in body, "folder editor should not list Move up")
+    folder_ids = folder_ids_from_tree(body)
+    expect("Linux" in folder_ids and "Windows" in folder_ids, "default folder ids missing from tree")
+    linux_folder_id = folder_ids["Linux"]
+    status, _, _ = c.request(
+        "POST",
+        "/boot-menu/folders",
+        form={"name": "SmokeNested", "parent_id": str(linux_folder_id)},
+    )
+    expect(status in {200, 303, 302}, f"nested folder {status}")
+    status, _, body = c.request("GET", "/boot-menu")
+    folder_ids = folder_ids_from_tree(body)
+    expect("SmokeNested" in folder_ids, "nested folder missing from tree")
+    nested_folder_id = folder_ids["SmokeNested"]
 
     status, _, body = c.request("GET", "/settings")
     expect(status == 200 and b"DHCP" in body, "settings DHCP form")
@@ -94,12 +203,21 @@ def main() -> None:
     expect(b'data-dhcp-mode="authoritative"' in body, "authoritative DHCP fields grouped")
     expect(b"<details" in body, "settings sections should be collapsible")
     expect(b"TFTP" in body, "settings TFTP form")
+    expect(b'href="/files"' in body, "files nav link")
     expect(b"HTTPS" in body, "settings HTTPS form")
     expect(b"self-signed" in body, "first-boot TLS certificate")
     expect(b"BEGIN PRIVATE" not in body, "TLS private key leaked into settings")
-    expect(b"Next-server" in body, "external DHCP hints")
+    expect(b"Option 60 (PXEClient)" in body, "external DHCP option 60 hint")
+    expect(b"Option 66 (Next Server)" in body, "external DHCP option 66 hint")
+    expect(b"Option 67 (Boot File Name)" in body, "external DHCP option 67 hint")
     expect(b"Host LAN IPv4" in body, "settings host LAN address")
     expect(b"/boot.ipxe" in body, "settings advertised PXE URL")
+    expect(b"Already iPXE" in body, "settings already-iPXE TFTP filename hint")
+    expect(b"Ubuntu installation media (NFS)" in body, "settings NFS casper export")
+    expect(b"netboot=nfs" in body, "settings NFS netboot hint")
+    expect(b"Imaging timeout" in body, "settings imaging timeout")
+    expect(b'name="imaging_timeout_minutes"' in body, "imaging timeout field")
+    expect(b'name="default_timezone"' in body, "settings default timezone")
     expect(b"This page" not in body, "settings should not show request host")
     expect(b"Docker Desktop gateway" not in body, "settings should not show Docker gateway")
     status, _, _ = c.request(
@@ -134,7 +252,82 @@ def main() -> None:
     expect(status in {200, 303, 302}, f"dhcp enable {status}")
     status, _, _ = c.request("POST", "/settings/tftp", form={"tftp_enabled": "1"})
     expect(status in {200, 303, 302}, f"tftp enable {status}")
+    status, _, _ = c.request(
+        "POST", "/settings/machines", form={"imaging_timeout_minutes": "15", "default_timezone": "UTC"}
+    )
+    expect(status in {200, 303, 302}, f"imaging timeout save {status}")
+    status, _, body = c.request("GET", "/settings")
+    expect(b'name="default_timezone"' in body and b'value="UTC" selected' in body, "default timezone did not persist")
+    status, _, body = c.request("GET", "/files")
+    expect(status == 200 and b'class="fm"' in body, "TFTP file manager page")
+    expect(b"iPXE boot files" in body and b"NFS extracts" in body, "files favorites missing boot/extract shortcuts")
+    expect(b"SMB media" in body and b"Machine seeds" in body, "files favorites missing SMB/seeds shortcuts")
+    expect(b"Install snapshots" in body, "files favorites missing install snapshots")
+    status, _, body = c.request("GET", "/files?root=images&dir=nfs")
+    expect(status == 200 and b"images:/nfs" in body, "files NFS extract folder")
+    status, _, body = c.request("GET", "/files/download?path=undionly.kpxe")
+    expect(status == 200 and len(body) > 0, "authenticated tftp download")
+    status, _, body = c.request("GET", "/tftp/wimboot")
+    expect(status == 200 and len(body) > 1024 and body.strip() != b"ipxe-stub", "http wimboot must be real")
 
+    status, _, body = c.request("GET", "/api/machines")
+    pending_linux = next(m for m in json.loads(body) if m.get("mac") == "de:ad:be:ef:00:01")
+    pmid = pending_linux["id"]
+    status, _, body = c.request("GET", f"/windows/{pmid}/startnet.cmd")
+    expect(status == 404, "pending must not receive startnet")
+    expect(b"pxe-media" not in body, "pending startnet leaked media")
+    status, _, _ = c.request("GET", f"/install-files/{pmid}/kernel")
+    expect(status == 404, "pending must not receive install-files")
+
+    status, _, body = c.request("GET", "/images")
+    expect(status == 200 and b"Advanced Settings" in body, "images missing Advanced Settings")
+    expect(b'name="kernel_path"' in body, "kernel path missing from advanced settings")
+    expect(b"data-open-dialog=\"add-image\"" in body, "images Add image control")
+    expect(b'id="add-image"' in body, "add image overlay dialog")
+    expect(b'<section class="card">' not in body, "add image form should not be an on-page card")
+
+    dummy_iso = f"smoke-extract-{int(time.time())}"
+    status, _, _ = c.multipart(
+        "/images",
+        {"name": dummy_iso, "os_family": "linux", "arch": "x86_64"},
+        {"iso_file": ("dummy.iso", b"not-an-iso", "application/octet-stream")},
+    )
+    expect(status in {200, 303, 302}, f"dummy iso create {status}")
+    dummy_row = None
+    for _ in range(60):
+        status, _, body = c.request("GET", "/api/images")
+        dummy_row = next((img for img in json.loads(body) if img.get("name") == dummy_iso), None)
+        if dummy_row and dummy_row.get("extract_status") in {"failed", "ready", "idle"}:
+            break
+        time.sleep(1)
+    expect(dummy_row is not None, "dummy iso image missing")
+    expect(dummy_row.get("extract_status") == "failed", f"dummy iso extract {dummy_row}")
+    status, _, body = c.request("GET", "/images")
+    expect(b"Delete" in body, "image delete control missing")
+    err = dummy_row.get("extract_error") or ""
+    expect("/var/lib" not in err and "C:\\" not in err, "extract_error leaked a host path")
+    status, _, body = c.request(
+        "POST",
+        f"/machines/{pmid}/deploy",
+        form={"image_id": str(dummy_row["id"]), "username": "root", "password": "iso-extract-secret"},
+    )
+    expect(status == 200 and b"not ready" in body.lower(), "failed extract must block deploy")
+    status, _, body = c.request("POST", f"/images/{dummy_row['id']}/extract")
+    expect(status in {200, 303, 302}, f"retry extract {status}")
+    status, _, body = c.request("POST", f"/images/{dummy_row['id']}/seed/reset")
+    expect(status in {200, 303, 302}, f"reset seed {status}")
+    dummy_id = dummy_row["id"]
+    status, _, _ = c.request("POST", f"/images/{dummy_id}/delete")
+    expect(status in {200, 303, 302}, f"delete dummy iso {status}")
+    status, _, body = c.request("GET", "/api/images")
+    expect(all(img.get("id") != dummy_id for img in json.loads(body)), "deleted dummy iso still listed")
+
+    status, _, _ = c.request(
+        "POST",
+        "/settings/machines",
+        form={"imaging_timeout_minutes": "15", "default_timezone": "America/Los_Angeles"},
+    )
+    expect(status in {200, 303, 302}, f"default timezone save {status}")
     status, _, _ = c.request(
         "POST",
         "/machines",
@@ -143,12 +336,29 @@ def main() -> None:
     expect(status in {200, 303, 302}, f"add machine {status}")
     status, _, body = c.request("GET", "/api/machines")
     expect(any(m.get("mac") == "aa:bb:cc:dd:ee:0f" for m in json.loads(body)), "manually added MAC missing")
+    added = next(m for m in json.loads(body) if m.get("mac") == "aa:bb:cc:dd:ee:0f")
+    status, _, body = c.request("GET", f"/machines/{added['id']}")
+    expect(status == 200 and b"Delete" in body, "machine delete control missing")
+    expect(b'name="hostname"' in body and b'id="machine-save"' in body, "hostname field missing from actions")
+    expect(b'name="timezone"' in body and b"<select" in body, "timezone should be a dropdown")
+    expect(b'form="machine-save"' in body and b'name="packages"' in body, "guest-init fields missing from save form")
+    expect(b'formaction="/machines/' in body and b"/deploy" in body, "deploy should post the save form")
+    expect(b'value="America/Los_Angeles" selected' in body, "new machine should inherit settings timezone")
+    status, _, _ = c.request("POST", f"/machines/{added['id']}/delete")
+    expect(status in {200, 303, 302}, f"delete added machine {status}")
+    status, _, body = c.request("GET", "/api/machines")
+    expect(all(m.get("id") != added["id"] for m in json.loads(body)), "deleted machine still listed")
+    status, _, _ = c.request(
+        "POST", "/settings/machines", form={"imaging_timeout_minutes": "15", "default_timezone": "UTC"}
+    )
+    expect(status in {200, 303, 302}, f"restore default timezone {status}")
 
+    ubuntu_name = f"smoke-ubuntu-{int(time.time())}"
     status, _, body = c.request(
         "POST",
         "/images",
         form={
-            "name": f"smoke-ubuntu-{int(time.time())}",
+            "name": ubuntu_name,
             "os_family": "linux",
             "arch": "x86_64",
             "kernel_path": "ubuntu/vmlinuz",
@@ -159,16 +369,95 @@ def main() -> None:
 
     status, _, body = c.request("GET", "/api/images")
     expect(status == 200, f"/api/images after create {status}")
-    linux_images = [img for img in json.loads(body) if img["os_family"] == "linux"]
-    expect(linux_images, "linux image missing after create")
-    linux_image_id = linux_images[-1]["id"]
+    linux_image = next((img for img in json.loads(body) if img.get("name") == ubuntu_name), None)
+    expect(linux_image is not None, "linux image missing after create")
+    linux_image_id = linux_image["id"]
+    expect("extract_status" in linux_image, "extract_status missing from /api/images")
+
+    pick_mac = "de-ad-be-ef-00-10"
+    status, _, body = c.request("GET", f"/ipxe/{pick_mac}")
+    expect("Continuing to next boot device" in body.decode(), "pick MAC should start unknown")
+    status, _, body = c.request("GET", f"/ipxe/{pick_mac}/boot/{linux_image_id}")
+    unknown_boot = body.decode()
+    expect("kernel" not in unknown_boot, "unknown must not install from /boot/image")
+    expect("Continuing to next boot device" in unknown_boot, "unknown /boot/image should continue to disk")
+    status, _, body = c.request("GET", f"/ipxe/{pick_mac}/menu/{nested_folder_id}")
+    unknown_menu = body.decode()
+    expect("choose" not in unknown_menu, "unknown must not see nested folder menu")
+    expect("Continuing to next boot device" in unknown_menu, "unknown /menu/folder should continue to disk")
+    status, _, body = c.request("GET", "/api/machines")
+    pick = next(m for m in json.loads(body) if m.get("mac") == "de:ad:be:ef:00:10")
+    pick_id = pick["id"]
+    status, _, _ = c.request(
+        "POST",
+        f"/machines/{pick_id}/save",
+        form={"hostname": "smoke-menu", "timezone": "UTC"},
+    )
+    expect(status in {200, 303, 302}, f"name pick host {status}")
+    status, _, body = c.request("GET", f"/ipxe/{pick_mac}")
+    named_menu = body.decode()
+    expect("menu " in named_menu and "choose" in named_menu, "named host should see folder menu")
+    expect("kernel" not in named_menu, "named folder menu should not start an install")
+    expect(f"/menu/{linux_folder_id}" in named_menu, "root menu should chain to Linux folder")
+    status, _, body = c.request("GET", f"/ipxe/{pick_mac}/menu/{nested_folder_id}")
+    nested_menu = body.decode()
+    expect("menu " in nested_menu and "Back" in nested_menu, "nested folder menu missing")
+    expect("choose" in nested_menu, "nested folder menu missing choose")
+    expect("SmokeNested" in nested_menu, "nested folder title missing")
+    expect(f"/menu/{linux_folder_id}" in nested_menu, "nested Back should chain to parent folder")
+    tool_name = f"smoke-tool-{int(time.time())}"
+    status, _, _ = c.request(
+        "POST",
+        "/images",
+        form={
+            "name": tool_name,
+            "os_family": "tool",
+            "arch": "x86_64",
+            "kernel_path": "tools/memtest",
+            "initrd_path": "tools/initrd",
+        },
+    )
+    expect(status in {200, 303, 302}, f"create tool image {status}")
+    status, _, body = c.request("GET", "/api/images")
+    tool_image = next((img for img in json.loads(body) if img.get("name") == tool_name), None)
+    expect(tool_image is not None, "tool image missing after create")
+    status, _, body = c.request("GET", f"/ipxe/{pick_mac}/boot/{tool_image['id']}")
+    tool_boot = body.decode()
+    expect("kernel" in tool_boot, "tool boot missing kernel")
+    expect("autoinstall" not in tool_boot, "tool boot must not autoinstall")
+    status, _, body = c.request("GET", f"/api/machines/{pick_id}")
+    expect(json.loads(body).get("state") != "deploying", "tool boot must not change lifecycle")
+    status, _, body = c.request("GET", f"/ipxe/{pick_mac}/boot/{linux_image_id}")
+    client_boot = body.decode()
+    expect("kernel" in client_boot and "autoinstall" in client_boot, "client OS pick should start linux install")
+    status, _, body = c.request("GET", f"/api/machines/{pick_id}")
+    expect(json.loads(body).get("state") == "deploying", "client OS pick should deploy")
+    dis_mac = "de-ad-be-ef-00-11"
+    status, _, _ = c.request("GET", f"/ipxe/{dis_mac}")
+    status, _, body = c.request("GET", "/api/machines")
+    disabled = next(m for m in json.loads(body) if m.get("mac") == "de:ad:be:ef:00:11")
+    status, _, _ = c.request(
+        "POST",
+        f"/machines/{disabled['id']}/save",
+        form={"hostname": "smoke-disabled", "timezone": "UTC"},
+    )
+    expect(status in {200, 303, 302}, f"name disabled host {status}")
+    status, _, _ = c.request("POST", f"/machines/{disabled['id']}/disable")
+    expect(status in {200, 303, 302}, f"disable host {status}")
+    status, _, body = c.request("GET", f"/ipxe/{dis_mac}")
+    disabled_text = body.decode()
+    expect("Continuing to next boot device" in disabled_text, "disabled host should continue to disk")
+    expect("choose" not in disabled_text, "disabled host must not see the folder menu")
+    status, _, body = c.request("GET", f"/ipxe/{dis_mac}/boot/{linux_image_id}")
+    expect("kernel" not in body.decode(), "disabled host must not install from /boot/image")
+
     status, _, body = c.request("GET", f"/images/{linux_image_id}")
     expect(status == 200 and b"Save image" in body, "image edit page")
     status, _, _ = c.request(
         "POST",
         f"/images/{linux_image_id}",
         form={
-            "name": linux_images[-1]["name"],
+            "name": ubuntu_name,
             "os_family": "linux",
             "arch": "x86_64",
             "kernel_path": "ubuntu/vmlinuz",
@@ -179,7 +468,46 @@ def main() -> None:
     expect(status in {200, 303, 302}, f"edit image {status}")
     status, _, body = c.request("GET", f"/images/{linux_image_id}")
     expect(b"smoke-edit" in body, "edited cmdline missing")
-    expect(b'data-os="linux"' in body, "linux image fields")
+    token = f"pxe-smoke-token-{int(time.time())}"
+    seed = (
+        "#cloud-config\n"
+        f"# {token}\n"
+        "autoinstall:\n"
+        "  version: 1\n"
+        "  ssh:\n"
+        "    install-server: true\n"
+        "    allow-pw: true\n"
+        "    authorized-keys: []\n"
+        "  user-data:\n"
+        "    hostname: {{hostname}}\n"
+        "    manage_etc_hosts: true\n"
+        "    timezone: {{timezone}}\n"
+        "    disable_root: false\n"
+        "    ssh_pwauth: true\n"
+        "    chpasswd:\n"
+        "      expire: false\n"
+        "      users:\n"
+        "        - name: {{username}}\n"
+        "          password: {{password_hash}}\n"
+        "          type: hash\n"
+        "  late-commands:\n"
+        "    - [wget, -q, --post-data=, -O, /dev/null, {{phone_home_url}}]\n"
+    )
+    status, _, _ = c.request(
+        "POST",
+        f"/images/{linux_image_id}",
+        form={
+            "name": ubuntu_name,
+            "os_family": "linux",
+            "arch": "x86_64",
+            "kernel_path": "ubuntu/vmlinuz",
+            "initrd_path": "ubuntu/initrd",
+            "cmdline": "smoke-edit",
+            "user_data": seed,
+        },
+    )
+    expect(status in {200, 303, 302}, f"edit image seed {status}")
+    expect(b'data-os="linux,tool"' in body or b'data-os="linux"' in body, "linux image fields")
     expect(b'data-os="windows"' in body, "windows image fields")
 
     iso_name = f"smoke-iso-{int(time.time())}"
@@ -200,7 +528,7 @@ def main() -> None:
 
     iso_mac = "de-ad-be-ef-00-aa"
     status, _, body = c.request("GET", f"/ipxe/{iso_mac}")
-    expect("Waiting for operator" in body.decode(), "iso MAC should wait first")
+    expect("Continuing to next boot device" in body.decode(), "iso MAC should continue to disk first")
     status, _, body = c.request("GET", "/api/machines")
     iso_machine = next(m for m in json.loads(body) if m["mac"] == "de:ad:be:ef:00:aa")
     status, _, _ = c.request(
@@ -214,6 +542,64 @@ def main() -> None:
     expect("sanboot" in iso_text and "/boot-files/" in iso_text, "expected iso sanboot iPXE")
     expect("kernel" not in iso_text, "iso-only install should not chain kernel")
     expect("iso-smoke-secret" not in iso_text, "password leaked into iso iPXE")
+
+    if os.environ.get("CI") == "true" and not args.container.strip():
+        fail("NFS iPXE smoke requires --container in CI")
+    if args.container.strip():
+        nfs_name = f"smoke-nfs-{int(time.time())}"
+        status, _, _ = c.request(
+            "POST",
+            "/images",
+            form={
+                "name": nfs_name,
+                "os_family": "linux",
+                "arch": "x86_64",
+                "kernel_path": "ubuntu/vmlinuz",
+                "initrd_path": "ubuntu/initrd",
+            },
+        )
+        expect(status in {200, 303, 302}, f"create nfs image {status}")
+        status, _, body = c.request("GET", "/api/images")
+        nfs_image = next((img for img in json.loads(body) if img.get("name") == nfs_name), None)
+        expect(nfs_image is not None, "nfs linux image missing after create")
+        nfs_image_id = int(nfs_image["id"])
+        seed_nfs_generation(args.container.strip(), nfs_image_id)
+        nfs_mac = "de-ad-be-ef-00-cc"
+        status, _, body = c.request("GET", f"/ipxe/{nfs_mac}")
+        expect("Continuing to next boot device" in body.decode(), "nfs MAC should continue to disk first")
+        status, _, body = c.request("GET", "/api/machines")
+        nfs_machine = next(m for m in json.loads(body) if m["mac"] == "de:ad:be:ef:00:cc")
+        status, _, _ = c.request(
+            "POST",
+            f"/machines/{nfs_machine['id']}/deploy",
+            form={"image_id": str(nfs_image_id), "username": "root", "password": "nfs-smoke-secret"},
+        )
+        expect(status in {200, 303, 302}, f"nfs deploy {status}")
+        status, _, body = c.request("GET", f"/ipxe/{nfs_mac}")
+        nfs_text = body.decode()
+        expect("netboot=nfs" in nfs_text and "boot=casper" in nfs_text, "expected nfs casper iPXE")
+        expect("noprompt" in nfs_text and "quickreboot" in nfs_text, "casper must skip media-eject wait")
+        expect("reboot=force" in nfs_text, "installer kernel must force reboot")
+        expect(f"nfsroot=" in nfs_text and f"/var/lib/pxe/images/nfs/{nfs_image_id}/1" in nfs_text, "expected generation nfsroot")
+        expect("live-media-path=" not in nfs_text, "generation nfsroot should use default casper/")
+        expect("NFSOPTS=vers=3,tcp,port=2049" in nfs_text, "expected casper NFSOPTS")
+        expect("cloud-config-url=${seed-url}user-data" in nfs_text, "NFS casper must fetch HTTP user-data")
+        expect("cloud-config-url=/dev/null" not in nfs_text, "NFS /dev/null blanks autoinstall")
+        nfs_kernel = next(line for line in nfs_text.splitlines() if line.startswith("kernel "))
+        expect(nfs_kernel.split()[3] == "autoinstall", "NFS autoinstall must be the first kernel arg")
+        expect(nfs_kernel.rstrip().endswith("---"), "NFS kernel cmdline must end with ---")
+        expect("imgargs vmlinuz " in nfs_text, "NFS iPXE imgargs must carry autoinstall")
+        conf_proc = subprocess.run(
+            ["docker", "exec", args.container.strip(), "cat", "/var/run/ganesha/pxe-generations.conf"],
+            capture_output=True,
+            text=True,
+        )
+        expect(conf_proc.returncode == 0, "ganesha generations conf missing")
+        expect(f'Path = "/var/lib/pxe/images/nfs/{nfs_image_id}/1"' in (conf_proc.stdout or ""), "generation export Path missing")
+        expect("Squash = All" in (conf_proc.stdout or "") and "Anonymous_Uid = 65534" in (conf_proc.stdout or ""), "generation export must squash to nobody")
+        expect(",vers=" not in nfs_text and "mountport=" not in nfs_text, "nfsroot must not swallow mount options")
+        expect("iso-url=" not in nfs_text and "ramdisk_size" not in nfs_text, "nfs install should not wget ISO")
+        expect("nfs-smoke-secret" not in nfs_text, "password leaked into nfs iPXE")
 
     status, _, body = c.request("GET", "/api/machines")
     expect(status == 200, f"/api/machines {status} {body[:200]!r}")
@@ -229,25 +615,66 @@ def main() -> None:
     status, _, _ = c.request(
         "POST",
         f"/machines/{mid}/deploy",
-        form={"image_id": str(linux_image_id), "username": "root", "password": "root-smoke-secret"},
+        form={
+            "image_id": str(linux_image_id),
+            "hostname": "smoke-linux",
+            "timezone": "America/New_York",
+            "username": "root",
+            "password": "root-smoke-secret",
+        },
     )
     expect(status in {200, 303, 302}, f"deploy {status}")
+    status, _, body = c.request("GET", f"/api/machines/{mid}")
+    expect(json.loads(body).get("hostname") == "smoke-linux", "deploy should persist hostname without a prior save")
+    status, _, body = c.request("GET", f"/machines/{mid}")
+    expect(b">Deploying<" in body, "console should show Deploying after assign")
+    expect(b"Copy Default" in body, "machine guest-init Copy Default")
+    expect(token.encode() in body, "deploy should copy image seed into machine user-data")
+    expect(b'value="America/New_York" selected' in body, "deploy should persist timezone without a prior save")
 
     status, _, body = c.request("GET", f"/ipxe/{mac}")
     text = body.decode()
-    expect("kernel" in text and "nocloud-net" in text, "expected linux install iPXE")
+    expect("kernel" in text and "ds=nocloud" in text, "expected linux install iPXE")
+    expect("nocloud-net" not in text, "deprecated nocloud-net datasource")
+    expect(r"\;s=" in text or "seed-url" in text, "nocloud semicolon must be escaped")
+    expect("cloud-config-url=${seed-url}user-data" in text, "linux kernel boot must fetch HTTP user-data")
+    kline = next(line for line in text.splitlines() if line.startswith("kernel "))
+    expect(kline.split()[3] == "autoinstall", "autoinstall must be the first kernel arg")
+    expect(kline.rstrip().endswith("---"), "kernel cmdline must end with ---")
+    expect("imgargs vmlinuz " in text, "iPXE imgargs must carry autoinstall")
     expect("root-smoke-secret" not in text, "password leaked into install iPXE")
+    expect(not smb_secret or smb_secret not in text, "SMB password leaked into linux iPXE")
+    expect(token not in text, "user-data token leaked into iPXE")
 
     status, _, body = c.request("GET", f"/cloud-init/{mid}/user-data")
     expect(status == 200, f"user-data {status}")
     user_data = body.decode()
-    expect("root:root-smoke-secret" in user_data, "cloud-init missing injected root")
+    expect(token in user_data, "cloud-init missing image seed token")
+    expect("root" in user_data, "cloud-init missing vault user")
+    expect("root-smoke-secret" not in user_data, "plaintext password leaked into user-data")
+    expect("$6$" in user_data, "cloud-init missing password_hash")
+    expect("event=imaging" in user_data, "autoinstall early-commands must ping imaging")
+    expect("optional: true" in user_data, "netplan catch-all NICs must be optional")
+    expect("\n  identity:" in user_data, "autoinstall must include identity")
+    expect("\n  timezone:" not in user_data, "timezone must not be an autoinstall root key")
+    expect("America/New_York" in user_data, "deploy timezone missing from rendered user-data")
+    expect("sysrq-trigger" in user_data, "autoinstall must force reboot after phone-home")
     expect("instance-id" in c.request("GET", f"/cloud-init/{mid}/meta-data")[2].decode(), "meta-data")
 
     status, _, body = c.request("GET", f"/api/machines/{mid}")
     detail = json.loads(body)
     expect("root-smoke-secret" not in json.dumps(detail), "password in JSON")
     expect(detail.get("account_password_set") is True, "password_set flag")
+
+    status, _, body = c.request("POST", f"/api/machines/{mid}/events?event=imaging")
+    expect(status == 200, f"imaging {status} {body!r}")
+    expect(json.loads(body).get("state") == "imaging", "early-command should set imaging")
+    status, _, body = c.request("GET", f"/machines/{mid}")
+    expect(b">Imaging<" in body, "console should show Imaging")
+    status, _, body = c.request("GET", f"/cloud-init/{mid}/user-data")
+    expect(status == 200, "imaging must keep serving user-data")
+    status, _, body = c.request("GET", f"/ipxe/{mac}")
+    expect("kernel" in body.decode() and "Waiting" not in body.decode(), "imaging must keep serving install iPXE")
 
     status, _, body = c.request(
         "POST",
@@ -258,12 +685,29 @@ def main() -> None:
     expect(status == 200, f"phone_home {status} {body!r}")
 
     status, _, body = c.request("GET", f"/ipxe/{mac}")
-    expect("exit" in body.decode() and "Waiting" not in body.decode(), "deployed should skip menu")
+    deployed_text = body.decode()
+    expect("menu " in deployed_text and "choose" in deployed_text, "deployed named host should show folder menu")
+    expect("Continue to next boot device" in deployed_text, "deployed menu missing continue item")
+    expect("kernel" not in deployed_text, "deployed menu should not start an install")
     status, _, body = c.request("GET", f"/cloud-init/{mid}/user-data")
     expect(status == 404, "deployed must not keep serving user-data")
+    status, _, body = c.request("GET", f"/machines/{mid}")
+    expect(status == 200 and b">Deployed<" in body, "console should show Deployed after phone-home")
+    expect(b'id="machine-save"' in body and b'name="hostname"' in body, "hostname field missing from machine actions")
+    expect(b'name="timezone"' in body, "timezone dropdown missing after deploy")
+    status, _, _ = c.request(
+        "POST",
+        f"/machines/{mid}/save",
+        form={"hostname": "smoke-linux-named", "timezone": "UTC"},
+    )
+    expect(status in {200, 303, 302}, f"deployed hostname save {status}")
+    status, _, body = c.request("GET", f"/api/machines/{mid}")
+    expect(json.loads(body).get("hostname") == "smoke-linux-named", "deployed hostname did not persist")
 
     status, _, _ = c.request("POST", f"/machines/{mid}/stage", form={})
     expect(status in {200, 303, 302}, f"stage {status}")
+    status, _, body = c.request("GET", f"/machines/{mid}")
+    expect(b">Deploying<" in body, "staged reimage should show Deploying")
     status, _, body = c.request("GET", f"/ipxe/{mac}")
     expect("kernel" in body.decode(), "staged should install again")
 
@@ -277,7 +721,7 @@ def main() -> None:
 
     win_mac = "de-ad-be-ef-00-02"
     status, _, body = c.request("GET", f"/ipxe/{win_mac}")
-    expect("Waiting for operator" in body.decode(), "windows MAC should wait first")
+    expect("Continuing to next boot device" in body.decode(), "windows MAC should continue to disk first")
 
     status, _, _ = c.request(
         "POST",
@@ -308,13 +752,35 @@ def main() -> None:
     status, _, body = c.request("GET", f"/ipxe/{win_mac}")
     text = body.decode()
     expect("unattend.xml" in text and "wimboot" in text, "expected windows install iPXE")
+    expect("winpeshl.ini" in text and "startnet.cmd" in text, "windows script missing WinPE startup files")
+    expect("install.wim" not in text, "install.wim must not be an iPXE initrd")
     expect("Win-smoke-secret" not in text, "password leaked into windows iPXE")
+    expect(not smb_secret or smb_secret not in text, "SMB password leaked into windows iPXE")
 
     status, _, body = c.request("GET", f"/windows/{win_machine['id']}/unattend.xml")
     expect(status == 200 and b"Win-smoke-secret" in body, "unattend missing Administrator password")
+    expect(b"windowsPE" in body, "unattend missing windowsPE")
+    status, _, body = c.request("GET", f"/windows/{win_machine['id']}/startnet.cmd")
+    expect(status == 200 and b"pxe-media" in body, "startnet missing SMB share")
+    expect(b"event=imaging" in body, "WinPE startnet must ping imaging")
+    expect(b"Win-smoke-secret" not in body, "windows local password leaked into startnet")
+    if smb_secret:
+        expect(smb_secret.encode() in body, "startnet missing SMB password")
     status, _, body = c.request("GET", f"/cloudbase-init/{win_machine['id']}/user-data")
     expect(status == 200 and b"Win-smoke-secret" in body, "cloudbase-init missing password")
     expect(b"phone_home" in body, "cloudbase-init missing phone_home")
+
+    wid = win_machine["id"]
+    status, _, body = c.request("POST", f"/api/machines/{wid}/events?event=imaging")
+    expect(status == 200 and json.loads(body).get("state") == "imaging", "windows imaging callback")
+    status, _, body = c.request("GET", f"/windows/{wid}/unattend.xml")
+    expect(status == 200, "windows unattend while imaging")
+    status, _, body = c.request("GET", f"/windows/{wid}/startnet.cmd")
+    expect(status == 200, "windows startnet while imaging")
+    status, _, body = c.request("GET", f"/cloudbase-init/{wid}/user-data")
+    expect(status == 200, "cloudbase-init while imaging")
+    status, _, body = c.request("GET", f"/ipxe/{win_mac}")
+    expect("wimboot" in body.decode(), "windows iPXE while imaging")
 
     print("SMOKE PASS")
 

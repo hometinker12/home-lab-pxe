@@ -1,36 +1,85 @@
 {% extends "base.html" %}
 {% block title %}{{ image.name }} — Images{% endblock %}
 {% block body %}
-<p><a href="/images">← Images</a></p>
-<h1>Edit {{ image.name }}</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<p class="back"><a href="/images">← Images</a></p>
+<header class="page-header"{% if extract_busy %} data-extract-busy="{{ image.id }}"{% endif %}>
+  <h1>Edit {{ image.name }}</h1>
+  <p class="description">{{ image.os_family }} · {{ image.arch }}
+    · extract
+    {% if image.extract_status == 'queued' %}<span class="badge badge-pending">queued</span>
+    {% elif image.extract_status == 'extracting' %}<span class="badge badge-deploying">extracting</span>
+    {% elif image.extract_status == 'ready' %}<span class="badge badge-deployed">ready</span>
+    {% elif image.extract_status == 'failed' %}<span class="badge badge-disabled">failed</span>
+    {% else %}idle{% endif %}
+  </p>
+</header>
+{% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+{% if extract_busy %}<p class="alert alert-warn" role="status">Extraction is still running. Edit is disabled until it finishes.</p>{% endif %}
+{% if image.extract_status == 'failed' and image.extract_error %}<p class="alert alert-error" role="alert">{{ image.extract_error }}</p>{% endif %}
 <section class="card">
-  <p class="meta">Leave a file empty to keep the current payload. A new upload replaces that slot. Paths are relative to the image volume. Linux kernel/initrd fields hide when Windows is selected, and WIM fields hide when Linux is selected.</p>
-  <form method="post" action="/images/{{ image.id }}" enctype="multipart/form-data" class="image-form">
+  <p class="meta">Leave a file empty to keep the current payload. A new upload replaces that slot. Ubuntu live-server ISO extraction fills kernel/initrd and publishes casper media over NFS unless you set custom kernel paths. Windows extraction publishes Setup media over authenticated SMB; stock ISOs do not include Cloudbase-Init. After a successful NFS or Windows media extract, the uploaded ISO is deleted to save space (re-upload to retry extract).</p>
+  <form method="post" action="/images/{{ image.id }}" enctype="multipart/form-data" class="image-form form"
+        data-folder-linux="{{ folder_defaults.get('linux', '') }}"
+        data-folder-windows="{{ folder_defaults.get('windows', '') }}"
+        data-folder-tool="{{ folder_defaults.get('tool', '') }}">
+    <fieldset {% if extract_busy %}disabled{% endif %}>
     <label>Name <input name="name" value="{{ image.name }}" required></label>
     <label>OS
       <select name="os_family">
         <option value="linux" {% if image.os_family == "linux" %}selected{% endif %}>linux</option>
         <option value="windows" {% if image.os_family == "windows" %}selected{% endif %}>windows</option>
+        <option value="tool" {% if image.os_family == "tool" %}selected{% endif %}>tool</option>
+      </select>
+    </label>
+    <label>Folder
+      <select name="folder_id" required>
+        {% for fid, path in folder_options %}
+        <option value="{{ fid }}" {% if image.folder_id == fid %}selected{% endif %}>{{ path }}</option>
+        {% endfor %}
       </select>
     </label>
     <label>Arch <input name="arch" value="{{ image.arch }}"></label>
-    <div data-os="linux">
-      <label>Kernel path <input name="kernel_path" value="{{ image.kernel_path }}"></label>
-      <label>Replace kernel <input type="file" name="kernel_file"></label>
-      <label>Initrd path <input name="initrd_path" value="{{ image.initrd_path }}"></label>
-      <label>Replace initrd <input type="file" name="initrd_file"></label>
-    </div>
     <div data-os="windows">
       <label>boot.wim path <input name="boot_wim_path" value="{{ image.boot_wim_path }}"></label>
       <label>Replace boot.wim <input type="file" name="boot_wim_file"></label>
       <label>install.wim path <input name="install_wim_path" value="{{ image.install_wim_path }}"></label>
       <label>Replace install.wim <input type="file" name="install_wim_file"></label>
+      <label>WIM index <input name="wim_index" type="number" min="1" value="{{ image.wim_index or 1 }}"></label>
     </div>
     <label>ISO path <input name="iso_path" value="{{ image.iso_path }}"></label>
     <label>Replace ISO <input type="file" name="iso_file" accept=".iso,.img"></label>
     <label>Extra cmdline <input name="cmdline" value="{{ image.cmdline }}"></label>
-    <button type="submit">Save image</button>
+    <details class="advanced-settings" data-os="linux,tool"{% if image.kernel_path or image.initrd_path %} open{% endif %}>
+      <summary>Advanced Settings</summary>
+      <div class="advanced-settings-body">
+        <label>Kernel path <input name="kernel_path" value="{{ image.kernel_path }}"></label>
+        <label>Replace kernel <input type="file" name="kernel_file"></label>
+        <label>Initrd path <input name="initrd_path" value="{{ image.initrd_path }}"></label>
+        <label>Replace initrd <input type="file" name="initrd_file"></label>
+      </div>
+    </details>
+    <div data-os="linux">
+      <label>cloud-init user-data
+        <textarea name="user_data" rows="24" class="seed-editor">{{ seed_text }}</textarea>
+      </label>
+      <p class="meta">Placeholders: {{ placeholder_help }}. This editor is the image template. Deploy copies it onto a machine if that machine file is empty; Copy Default on the machine page pulls the latest. On Deploy a snapshot is pinned under Files → Install snapshots; the installer fetches the filled file from HTTP <code>/cloud-init/&lt;machine-id&gt;/user-data</code>, not that snapshot. Image files cannot be saved empty — reset to factory instead.</p>
+    </div>
+    <div data-os="windows">
+      <label>unattend.xml
+        <textarea name="unattend_xml" rows="24" class="seed-editor">{{ seed_text }}</textarea>
+      </label>
+      <p class="meta">Placeholders: <code>{{ placeholder_help }}</code>. Use <code>{{ '{{password}}' }}</code> for the local Administrator. Stock ISO Setup does not install Cloudbase-Init.</p>
+    </div>
+    <div class="btn-row">
+      <button type="submit">Save image</button>
+    </div>
+    </fieldset>
   </form>
+  <hr class="sep">
+  <div class="btn-row">
+    <form method="post" action="/images/{{ image.id }}/extract"><button type="submit" class="btn-secondary">Retry extract</button></form>
+    <form method="post" action="/images/{{ image.id }}/seed/reset" onsubmit="return confirm('Replace this image seed with the factory starter?');"><button type="submit" class="btn-secondary" {% if extract_busy %}disabled{% endif %}>Reset seed to factory default</button></form>
+    <form method="post" action="/images/{{ image.id }}/delete" onsubmit="return confirm('Delete this image and its extracted files?');"><button type="submit" class="btn-danger">Delete image</button></form>
+  </div>
 </section>
 {% endblock %}

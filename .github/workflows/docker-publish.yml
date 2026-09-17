@@ -89,6 +89,7 @@ jobs:
           IMAGE_TAG="home-lab-pxe:smoke-${GITHUB_SHA}"
           ENC_KEY="$(python3 -c 'import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
           SESSION_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          SMB_PASS="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
 
           cleanup() {
             docker logs "$CONTAINER_NAME" 2>/dev/null || true
@@ -110,11 +111,21 @@ jobs:
             --cap-add CHOWN \
             --cap-add FOWNER \
             --cap-add DAC_OVERRIDE \
+            --cap-add DAC_READ_SEARCH \
+            --cap-add SETFCAP \
             --security-opt no-new-privileges:true \
             --tmpfs /tmp:size=64M,mode=1777 \
             --tmpfs /var/lib/pxe/data:size=64M,uid=10001,gid=10001,mode=1777 \
             --tmpfs /var/lib/pxe/images:size=16M,uid=10001,gid=10001,mode=1755 \
             --tmpfs /var/lib/pxe/ssl:size=1M,uid=10001,gid=10001,mode=1777 \
+            --tmpfs /run/samba:size=8M,mode=1777 \
+            --tmpfs /run/rpcbind:size=1M,mode=1777 \
+            --tmpfs /run/dbus:size=8M,mode=1777 \
+            --tmpfs /var/run/ganesha:size=8M,mode=1777 \
+            --tmpfs /var/log/ganesha:size=8M,mode=1777 \
+            --tmpfs /var/lib/nfs:size=8M,mode=1777 \
+            --tmpfs /var/log/samba:size=8M,mode=1777 \
+            --tmpfs /var/lib/samba:size=16M,mode=1777 \
             -p 127.0.0.1:8080:8080 \
             -p 127.0.0.1:8443:8443 \
             -e "ENCRYPTION_KEY=$ENC_KEY" \
@@ -128,6 +139,8 @@ jobs:
             -e "PXE_DHCP_OPTIONAL=1" \
             -e "PXE_BIND_INTERFACE=eth0" \
             -e "PXE_DHCP_MODE=proxy" \
+            -e "PXE_SMB_USER=pxemedia" \
+            -e "PXE_SMB_PASSWORD=$SMB_PASS" \
             "$IMAGE_TAG"
 
           ready=0
@@ -174,7 +187,33 @@ jobs:
           python3 scripts/pxe_smoke.py \
             --base-url http://127.0.0.1:8080 \
             --user admin \
-            --password container-smoke-password
+            --password container-smoke-password \
+            --smb-password "$SMB_PASS" \
+            --container "$CONTAINER_NAME"
+          docker exec "$CONTAINER_NAME" bash -lc 'command -v 7z && 7z i >/dev/null'
+          docker exec "$CONTAINER_NAME" pgrep -f src.extract_worker >/dev/null
+          docker exec "$CONTAINER_NAME" testparm -s >/dev/null
+          docker exec "$CONTAINER_NAME" pgrep -f ganesha.nfsd >/dev/null
+          smb_ok=0
+          for i in $(seq 1 15); do
+            if docker exec "$CONTAINER_NAME" smbclient //127.0.0.1/pxe-media -U "pxemedia%${SMB_PASS}" -c 'ls' >/dev/null; then
+              smb_ok=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$smb_ok" != "1" ]; then
+            echo "authenticated SMB list failed"
+            exit 1
+          fi
+          if docker exec "$CONTAINER_NAME" smbclient //127.0.0.1/pxe-media -U "pxemedia%${SMB_PASS}" -c 'put /etc/hosts hosts' >/dev/null 2>&1; then
+            echo "SMB write unexpectedly succeeded"
+            exit 1
+          fi
+          if docker exec "$CONTAINER_NAME" smbclient //127.0.0.1/pxe-media -N -c 'ls' >/dev/null 2>&1; then
+            echo "anonymous SMB unexpectedly succeeded"
+            exit 1
+          fi
           curl -k --fail --silent --show-error https://127.0.0.1:8443/health
           docker exec "$CONTAINER_NAME" test -f /var/lib/pxe/ssl/tls.crt
           docker exec "$CONTAINER_NAME" test -f /var/lib/pxe/ssl/tls.key

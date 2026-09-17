@@ -17,19 +17,45 @@ class MachineState(StrEnum):
     pending = "pending"
     ready = "ready"
     deploying = "deploying"
+    imaging = "imaging"
+    timeout_error = "timeout_error"
     deployed = "deployed"
     staged = "staged"
     disabled = "disabled"
 
 
+def state_label(state: str) -> str:
+    """Operator-facing badge text. Staged reimages show as Deploying until imaging starts."""
+    labels = {
+        MachineState.pending.value: "Pending",
+        MachineState.ready.value: "Ready",
+        MachineState.deploying.value: "Deploying",
+        MachineState.imaging.value: "Imaging",
+        MachineState.timeout_error.value: "Timeout Error",
+        MachineState.deployed.value: "Deployed",
+        MachineState.staged.value: "Deploying",
+        MachineState.disabled.value: "Disabled",
+    }
+    return labels.get(state, state)
+
+
 class OsFamily(StrEnum):
     linux = "linux"
     windows = "windows"
+    tool = "tool"
 
 
 class AccountKind(StrEnum):
     linux_root = "linux_root"
     windows_administrator = "windows_administrator"
+
+
+class ExtractStatus(StrEnum):
+    idle = "idle"
+    queued = "queued"
+    extracting = "extracting"
+    ready = "ready"
+    failed = "failed"
 
 
 class User(SQLModel, table=True):
@@ -38,6 +64,22 @@ class User(SQLModel, table=True):
     hashed_password: str
     disabled: bool = False
     session_version: int = 0
+
+
+class BootMenuFolder(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    parent_id: int | None = Field(default=None, foreign_key="bootmenufolder.id")
+    name: str = Field(index=True)
+    sort_order: int = 0
+
+
+class BootMenuSettings(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    title: str = "Network Installation Options"
+    continue_label: str = "Continue to next boot device"
+    unknown_timeout_seconds: int = 5
+    menu_timeout_seconds: int = 10
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 class Image(SQLModel, table=True):
@@ -51,6 +93,13 @@ class Image(SQLModel, table=True):
     install_wim_path: str = ""
     iso_path: str = ""
     cmdline: str = ""
+    extract_status: str = ExtractStatus.idle.value
+    extract_error: str = ""
+    extract_revision: int = 0
+    extract_generation: str = ""
+    wim_index: int = 1
+    folder_id: int | None = Field(default=None, foreign_key="bootmenufolder.id")
+    sort_order: int = 0
 
 
 class Machine(SQLModel, table=True):
@@ -64,6 +113,7 @@ class Machine(SQLModel, table=True):
     assigned_image_id: int | None = Field(default=None, foreign_key="image.id")
     instance_id: str = Field(default_factory=lambda: uuid4().hex)
     guest_overlay: str = "{}"
+    imaging_started_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -83,6 +133,26 @@ class StagedJob(SQLModel, table=True):
     created_by: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     applied_at: datetime | None = None
+
+
+class InstallAttempt(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    machine_id: int = Field(foreign_key="machine.id", index=True)
+    instance_id: str = Field(index=True)
+    image_id: int | None = Field(default=None, foreign_key="image.id")
+    os_family: str = ""
+    extract_revision: int = 0
+    kernel_path: str = ""
+    initrd_path: str = ""
+    boot_wim_path: str = ""
+    install_wim_path: str = ""
+    iso_path: str = ""
+    cmdline: str = ""
+    wim_index: int = 1
+    media_relative: str = ""
+    seed_snapshot_path: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    completed_at: datetime | None = None
 
 
 class BootEvent(SQLModel, table=True):
@@ -111,4 +181,6 @@ class DhcpRuntime(SQLModel, table=True):
     dhcp_router: str = ""
     dhcp_dns: str = ""
     extra_options: str = ""
+    imaging_timeout_minutes: int = 15
+    default_timezone: str = "UTC"
     updated_at: datetime = Field(default_factory=utcnow)

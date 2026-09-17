@@ -1,20 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Activity — home-lab-pxe{% endblock %}
 {% block body %}
-<h1>Activity</h1>
-<table>
-  <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
-  <tbody>
-    {% for e in entries %}
-    <tr>
-      <td>{{ e.at }}</td>
-      <td>{{ e.actor }}</td>
-      <td>{{ e.action }}</td>
-      <td>{{ e.detail }}</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="4">No events.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+<header class="page-header">
+  <h1>Activity</h1>
+  <p class="description">Audit trail of operator actions in the console, newest first.</p>
+</header>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
+    <tbody>
+      {% for e in entries %}
+      <tr>
+        <td>{{ e.at }}</td>
+        <td>{{ e.actor }}</td>
+        <td>{{ e.action }}</td>
+        <td>{{ e.detail }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="empty">No events recorded yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endblock %}

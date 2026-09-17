@@ -6,8 +6,8 @@ Initial architecture and implementation plan for a Docker-packaged PXE boot serv
 
 Run one Compose stack on a Linux home-lab host. Clients that network-boot:
 
-1. **Unknown systems** stay on an iPXE wait menu until an operator assigns an image and deploys from the web UI. Nothing auto-installs.
-2. **Already deployed systems** do not sit in a menu. They check in over iPXE and immediately continue to local disk (about 1–2 seconds).
+1. **Unknown systems** continue to the next boot device after a short timeout. Nothing auto-installs until the host is named in the console (or a named host picks an image from the folder menu).
+2. **Named / ready / deployed systems** see an iPXE folder menu with a countdown to local disk. A staged reimage still hijacks the next PXE boot.
 3. **Staged console changes** (new image, hostname, users, packages) apply on the **next PXE boot** as a fresh install — not as an in-place SSH/WinRM/config-management push.
 
 Guest initialization in v1:
@@ -65,7 +65,7 @@ Same general shape as other hometinker12 services so Cursor rules stay familiar:
 
 One image, one Compose service for v1 (dnsmasq + uvicorn via `scripts/entrypoint.sh`).
 
-- **`network_mode: host`** on Linux (DHCP broadcasts do not traverse a user-defined bridge).
+- **`network_mode: host`** on Linux (DHCP broadcasts do not traverse a user-defined bridge). Default Compose still publishes UDP 67/69/4011 plus HTTP/HTTPS for Docker Desktop; dnsmasq `tftp-single-port` keeps TFTP on 69 through NAT.
 - Capabilities: `NET_ADMIN`, `NET_RAW`, and bind to 67/69 — **not** `privileged: true` unless a later milestone proves it is required.
 - Volumes: `/var/lib/pxe/data` (SQLite), `/var/lib/pxe/images` (operator-imported payloads), `/var/lib/pxe/tftp` (iPXE binaries), `/var/lib/pxe/ssl` (TLS cert + key).
 - Web process runs as non-root after dnsmasq is started; document the split if a single PID 1 supervisor is cleaner.
@@ -79,7 +79,7 @@ One image, one Compose service for v1 (dnsmasq + uvicorn via `scripts/entrypoint
 | `proxy` (default) | proxyDHCP / `dhcp-range=...,proxy` — existing router/Windows DHCP stays authoritative |
 | `authoritative` | dnsmasq owns the range (`PXE_DHCP_RANGE`, router, DNS) |
 
-First-boot defaults come from env. After that, **Settings** in the console is the source of truth (SQLite). **PXE**, **DHCP**, and **TFTP** are separate collapsed sections. PXE shows the Docker **host** LAN IPv4 (`PXE_HOST_LAN_IPV4`, from `python scripts/host_lan_ipv4.py --write`) plus bind interface, extra allowlisted dnsmasq lines, and copy-paste values for an existing LAN DHCP server. DHCP and TFTP each have their own enable toggle. Saving writes `dnsmasq-pxe.conf` plus `dhcp.enabled` / `tftp.enabled`; `scripts/entrypoint.sh` starts, stops, or reloads dnsmasq when either service is on. Extra option lines are allowlisted (`dhcp-option`, `dhcp-host`, …); `dhcp-script` and `conf-file` are rejected.
+First-boot defaults come from env. After that, **Settings** in the console is the source of truth (SQLite). **PXE**, **DHCP**, **TFTP**, and **Machines** are separate collapsed sections. PXE shows the Docker **host** LAN IPv4 (`PXE_HOST_LAN_IPV4` in `.env`) plus bind interface, extra allowlisted dnsmasq lines, and copy-paste DHCP options 60/66/67 for an existing LAN DHCP server. DHCP and TFTP each have their own enable toggle. Machines holds the imaging timeout (default 15 minutes; `PXE_IMAGING_TIMEOUT_MINUTES` seeds the first row) and the default IANA timezone for new machines (`PXE_DEFAULT_TIMEZONE`, else UTC). **Files** in the header browses the TFTP, Images, and Data volumes (list/upload/download/delete; paths stay inside those roots). Saving PXE/DHCP/TFTP writes `dnsmasq-pxe.conf` plus `dhcp.enabled` / `tftp.enabled`; `scripts/entrypoint.sh` starts, stops, or reloads dnsmasq when either service is on. Extra option lines are allowlisted (`dhcp-option`, `dhcp-host`, …); `dhcp-script` and `conf-file` are rejected.
 
 ## 5. Machine identity and lifecycle
 
@@ -87,37 +87,42 @@ First-boot defaults come from env. After that, **Settings** in the console is th
 
 | State | PXE behavior | How it gets here |
 |-------|----------------|------------------|
-| `pending` | Wait/poll menu | First DHCP/iPXE seen for an unknown MAC, or operator added the MAC in the console |
-| `ready` | Wait menu | Operator named it / tagged it; no deploy yet |
-| `deploying` | Installer + guest init | Operator clicked Deploy |
-| `deployed` | Immediate local disk | Installer reported success, or operator marked deployed |
+| `pending` | Timeout then next boot device (no folder menu) | First DHCP/iPXE seen for an unknown MAC, or operator added the MAC in the console |
+| `ready` | Folder menu (countdown to disk) | Operator named it / tagged it; no deploy yet |
+| `deploying` | Installer + guest init | Operator clicked Deploy or the client picked an OS image |
+| `imaging` | Same as deploying | Installer early-command / WinPE startnet |
+| `timeout_error` | Folder menu; no guest-init | Imaging longer than Settings timeout (default 15 minutes) |
+| `deployed` | Folder menu (countdown to disk) | Installer reported success, or operator marked deployed |
 | `staged` | Same as `deploying` on next PXE | Operator saved image/guest-init changes |
-| `disabled` | Wait or refuse; no install | Operator quarantined the MAC |
+| `disabled` | Same as unknown (timeout then disk) | Operator quarantined the MAC |
 
-Unknown → `pending` is automatic. Every other transition is an operator action or a callback from the installer (`/api/machines/{id}/events`).
+Unknown → `pending` is automatic. Every other transition is an operator action, a client menu pick, or a callback from the installer (`/api/machines/{id}/events`).
 
-`Image.os_family` is `linux` or `windows`. Boot policy and seed URLs follow that family.
+`Image.os_family` is `linux`, `windows`, or `tool`. Boot policy and seed URLs follow that family. Tool images boot from the menu without a deploy.
 
 ## 6. Boot policy
 
 `GET /ipxe/{mac}` returns a `#!ipxe` script. Decision order:
 
-1. Unknown → insert `pending`, serve wait menu (`chain`/`sleep` back to the same URL).
-2. `pending` / `ready` / `disabled` → keep waiting.
-3. `deploying` or `staged`:
-   - **Linux:** kernel + initrd plus `ds=nocloud-net;s=${PXE_PUBLIC_URL}/cloud-init/{machine_id}/`.
+1. Unknown / unnamed pending / disabled → insert `pending` if needed, sleep the Boot menu unknown timeout, then `exit` / `sanboot` to the next boot device.
+2. Named, `ready`, `deployed`, or `timeout_error` → iPXE folder menu (`GET /ipxe/{mac}/menu/{id}` for nested folders). Default item continues to disk after the menu countdown. `GET /ipxe/{mac}/boot/{image_id}` starts deploy/stage for Linux/Windows, or boots a tool image without changing state.
+3. `deploying`, `staged`, or `imaging`:
+   - **Linux:** kernel + initrd plus `autoinstall`, `cloud-config-url=` to `/cloud-init/{machine_id}/user-data` on NFS, and `ds=nocloud;s=${PXE_PUBLIC_URL}/cloud-init/{machine_id}/`.
    - **Windows:** iPXE `wimboot` (or equivalent) into WinPE / Setup, with `unattend.xml` from `${PXE_PUBLIC_URL}/windows/{machine_id}/unattend.xml`.
-4. `deployed` and no staged job → `exit` to local disk (or `sanboot` fallback). No interactive prompt.
 
-The wait menu auto-refreshes every few seconds so a Deploy click is picked up **without** a second BIOS PXE cycle.
+The folder menu is built in the console **Boot menu** page (nested folders, default Windows / Linux / Tools). Extracting images are omitted from the client list.
 
-Installer success: Linux cloud-init `phone_home` or a Windows Setup/Cloudbase-Init callback to mark `deployed`. Failure leaves the machine in `deploying` and the next PXE retries.
+Installer progress: Linux autoinstall `early-commands` (and WinPE `startnet.cmd`) POST `?event=imaging`. Success: late-command / specialize `phone_home` marks `deployed`. If Imaging lasts longer than the Settings timeout, the machine becomes `timeout_error` (folder menu). Failure otherwise leaves `deploying` or `imaging` and the next PXE retries.
 
 ## 7. Images and guest initialization
 
 ### 7.1 Image library
 
-Operator-imported artifacts under `PXE_IMAGE_ROOT` (not git). The console can **upload** kernel/initrd/`boot.wim`/`install.wim`/ISO files or register relative paths already on the volume, and **edit** existing image records (metadata and replacement uploads). Linux image forms hide WIM fields; Windows forms hide kernel/initrd. An ISO-only image is served with iPXE `sanboot`; kernel+initrd still wins for Linux cloud-init installs.
+Operator-imported artifacts under `PXE_IMAGE_ROOT` (not git). The console can **upload** kernel/initrd/`boot.wim`/`install.wim`/ISO files or register relative paths already on the volume, and **edit** existing image records (metadata, replacement uploads, and the image seed file). Linux image forms hide WIM fields; Windows forms hide kernel/initrd.
+
+A registered ISO is saved immediately. A dedicated extractor process unpacks Ubuntu live-server `casper/` + `.disk/` + `dists/` + `pool/` onto a read-only NFS tree, or a full Windows Server media tree onto SMB. Image status is `idle | queued | extracting | ready | failed`. Managed Ubuntu installs use kernel/initrd plus `netboot=nfs nfsroot=host:/export/{id}/{rev}` (one Ganesha Path per extract directory; rpcbind on TCP/UDP 111) when casper squashfs is present; HTTP `iso-url=` / `url=` remains the fallback. Subiquity autoinstall includes locale, keyboard, storage, source, and apt so the guest does not prompt. Managed Windows installs boot WinPE via `wimboot` and run Setup from an authenticated read-only SMB share. ISO-only `sanboot` remains the fallback when there is no kernel/WIM pair and extraction did not fail.
+
+Each Linux image has a cloud-init **user-data** file; each Windows image has **unattend.xml**. A machine may store its own file of the same kind. Deploy copies the image template onto the machine if that file is empty; **Copy Default** on the machine page overwrites it with the latest image file. A non-empty machine file replaces the image file (no YAML/XML merge). Vault credentials are substituted at serve time through allowlisted `{{placeholders}}`.
 
 - Ubuntu live-server kernel/initrd + autoinstall (first Linux distro)
 - Windows Server install WIM + WinPE `boot.wim` (first Windows target: Server 2022 or 2025)
@@ -127,7 +132,7 @@ Each image record: name, `os_family`, architecture (`x86_64` / `aarch64`), kerne
 
 ### 7.2 Linux — cloud-init
 
-Per machine, HTTP nocloud-net:
+Per machine, HTTP nocloud (`ds=nocloud;s=` plus `cloud-config-url=` to `user-data` on NFS casper):
 
 - `GET /cloud-init/{machine_id}/user-data`
 - `GET /cloud-init/{machine_id}/meta-data`
@@ -191,20 +196,22 @@ Both **username and password** are Fernet-encrypted at rest. Optional lab-wide d
 ## 8. Web console (v1)
 
 - Login
-- **Machines:** last seen, MAC, UUID, IP, state, OS family, assigned image; actions Deploy, Stage reimage, Mark deployed, Disable
+- **Machines:** last seen, MAC, UUID, IP, state, OS family, assigned image; actions Deploy, Stage reimage, Mark deployed, Disable. Add machine is a popup.
+- **Boot menu:** nested iPXE folders, timeouts, image placement and reorder
 - **New / pending** highlight so unknown hardware is obvious
-- **Images:** import metadata + paths (file upload can be later); Linux vs Windows
-- **Machine detail:** guest-init editor (cloud-init or Cloudbase-Init), local account username + password rotate, staged vs applied, recent boot events
-- **Settings:** HTTPS certificate (self-signed on first start, or upload PEM cert + key), optional default Linux root and Windows Administrator credentials (encrypted)
+- **Images:** import metadata + paths; Linux vs Windows vs tool; add is a popup; edit is disabled while ISO extract is running
+- **Machine detail:** hostname and guest-init (IANA timezone dropdown, packages, SSH keys, cloud-init or unattend) share one form; Deploy saves then starts the install. Local account username + password rotate, staged vs applied, recent boot events
+- **Settings:** HTTPS certificate (self-signed on first start, or upload PEM cert + key), optional default Linux root and Windows Administrator credentials (encrypted), imaging timeout, default timezone for new machines
 - **Activity log:** who deployed what, redacted
 
 ## 9. Data model (sketch)
 
 - `Machine` — mac, uuid, hostname, state, last_seen_at, last_ip, assigned_image_id, instance_id
-- `Image` — name, os_family (`linux` \| `windows`), arch, payload paths, cmdline/unattend template
+- `Image` — name, os_family (`linux` \| `windows` \| `tool`), arch, `folder_id`, payload paths, cmdline/unattend template
+- `BootMenuFolder` / `BootMenuSettings` — nested iPXE menu tree and timeouts
 - `LocalAccount` — machine_id (nullable for lab defaults), kind (`linux_root` \| `windows_administrator`), `encrypted_username`, `encrypted_password`
 - `StagedJob` — machine_id, image_id, guest_overlay (no plaintext passwords), created_by, created_at, applied_at
-- `BootEvent` — machine_id, at, client_ip, script_kind (`wait` / `local` / `install`)
+- `BootEvent` — machine_id, at, client_ip, script_kind (`unknown_local` / `menu` / `install`)
 - `User` / session tables — same pattern as other hometinker12 apps
 
 SQLite only. Idempotent `_migrate_*` helpers in `src/db.py`, no Alembic.
@@ -244,11 +251,11 @@ Cursor rules/agents/skill, GitHub templates, CI stub, CONTRIBUTING/SECURITY/LICE
 
 **Exit:** app boots; missing `ENCRYPTION_KEY` fails closed outside tests.
 
-### M2 — Discovery and wait/skip
+### M2 — Discovery and continue-to-disk
 
-dnsmasq + iPXE binaries, machine registration, `/ipxe/{mac}` wait vs local-disk, machines list in the UI, boot events.
+dnsmasq + iPXE binaries, machine registration, `/ipxe/{mac}` unknown vs folder menu vs install, machines list in the UI, boot events.
 
-**Exit:** a new VM stays on the wait menu; a machine marked `deployed` exits to disk.
+**Exit:** a new VM continues to the next boot device after the unknown timeout; a named or deployed host sees the folder menu (countdown to disk).
 
 ### M3 — Linux deploy (Ubuntu first)
 
@@ -292,8 +299,8 @@ Resolve during the matching milestone; do not block M0–M2.
 ## 14. Success criteria (v1 done)
 
 - Compose up on a Linux host; existing LAN DHCP kept (proxyDHCP).
-- Brand-new machine appears as `pending` and loops the wait menu until Deploy.
-- Deployed machine PXE-checks in and boots disk with no menu.
+- Brand-new machine appears as `pending` and continues to disk after the unknown timeout (no install menu).
+- Named and deployed machines PXE-check in and see the folder menu unless a deploy is already in progress.
 - Ubuntu install completes with operator-supplied cloud-init; **root** username/password stored encrypted.
 - Windows Server install completes with `unattend.xml` + Cloudbase-Init; **local Administrator** username/password stored encrypted.
 - Staging a new image or guest-init on a deployed host applies on the next PXE boot (Linux and Windows).

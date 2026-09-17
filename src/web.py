@@ -9,11 +9,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.status import HTTP_303_SEE_OTHER
 
+from .models import state_label
 from .security import allow_insecure_defaults
 from .settings import get_settings
 from .version import get_app_version
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
+templates.env.globals["state_label"] = state_label
 
 
 def client_ip(request: Request) -> str:

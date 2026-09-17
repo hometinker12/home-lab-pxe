@@ -9,7 +9,7 @@ One Compose service on a **Linux host** with `network_mode: host`. `scripts/entr
 ```mermaid
 flowchart TB
   subgraph host["Linux host NIC — PXE_BIND_INTERFACE"]
-    LAN["LAN: DHCP / TFTP / HTTP :8080 / HTTPS :8443"]
+    LAN["LAN: DHCP / TFTP / HTTP :8080 / HTTPS :8443 / NFS / SMB"]
   end
 
   subgraph ctr["home-lab-pxe container"]
@@ -58,14 +58,17 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-  subgraph pid1["PID 1 — run-web.sh as uid 10001"]
+   subgraph pid1["PID 1 — run-web.sh as uid 10001"]
     H["uvicorn HTTP :8080"]
     S["uvicorn HTTPS :8443"]
+    X["extract_worker"]
   end
   subgraph root["entrypoint.sh then exec gosu"]
-    E["starts dnsmasq + TLS files"]
+    E["starts dnsmasq + smbd + ganesha.nfsd + TLS files"]
   end
   E --> D["dnsmasq<br/>caps: NET_ADMIN, NET_RAW<br/>ports 67 / 69"]
+  E --> SMB["smbd pxe-media<br/>TCP 445, not published on Docker Desktop"]
+  E --> NFS["ganesha.nfsd per-generation casper export<br/>TCP/UDP 111, 2049, 20048"]
   E --> pid1
   H --> F["FastAPI app"]
   S --> F
@@ -108,6 +111,8 @@ flowchart LR
 
 Authoritative mode (`PXE_DHCP_MODE=authoritative`) makes dnsmasq own the address range instead. Default is **proxy** so the home-lab router stays the DHCP server.
 
+When the existing LAN DHCP server must point clients at this box (DHCP disabled here), set option 66 to the host LAN IPv4 and option 67 to `undionly.kpxe` / `ipxe.efi` / `snponly.efi`. Option 60 (`PXEClient`) is required only when that DHCP server and this PXE/TFTP service share the same physical machine. Leave 60/66/67 unset on the other server if this container is already running proxyDHCP.
+
 ---
 
 ## 2. Boot data plane
@@ -127,16 +132,15 @@ sequenceDiagram
   PXE-->>FW: proxyDHCP: TFTP iPXE
   FW->>PXE: TFTP iPXE binary
   FW->>PXE: GET /ipxe/{mac}
-  alt unknown / pending / ready / disabled
-    PXE-->>FW: wait menu (chain + sleep)
-    FW->>PXE: poll same URL until operator acts
+  alt unknown / pending unnamed / disabled
+    PXE-->>FW: sleep timeout + exit / sanboot
+    FW->>Disk: next boot device
+  else named / ready / deployed / timeout_error
+    PXE-->>FW: iPXE folder menu (countdown to disk)
   else deploying / staged, Linux
     PXE-->>FW: kernel + initrd + cloud-init URL
   else deploying / staged, Windows
     PXE-->>FW: wimboot + unattend.xml URL
-  else deployed, no staged job
-    PXE-->>FW: exit / sanboot
-    FW->>Disk: boot OS
   end
 ```
 
@@ -146,18 +150,16 @@ sequenceDiagram
 flowchart TD
   REQ["GET /ipxe/{mac}"] --> ID{"MAC or UUID<br/>in inventory?"}
   ID -->|no| REG["Insert pending"]
-  REG --> WAIT["Wait / poll menu"]
+  REG --> DISK["Timeout then next boot device"]
   ID -->|yes| ST{"state"}
-  ST --> pending["pending / ready / disabled"]
-  pending --> WAIT
-  ST --> inst["deploying / staged"]
+  ST --> skip["unnamed pending / disabled"]
+  skip --> DISK
+  ST --> menu["named / ready / deployed / timeout_error"]
+  menu --> FOLDER["iPXE folder menu"]
+  ST --> inst["deploying / staged / imaging"]
   inst --> OS{"os_family"}
-  OS --> linux["Linux: kernel + nocloud-net"]
+  OS --> linux["Linux: kernel + nocloud"]
   OS --> win["Windows: wimboot + unattend"]
-  ST --> dep["deployed"]
-  dep --> JOB{"staged job?"}
-  JOB -->|yes| inst
-  JOB -->|no| LOCAL["exit to local disk"]
 ```
 
 ### 2.2 Linux install
@@ -171,7 +173,7 @@ sequenceDiagram
   participant OS as Installer + cloud-init
 
   IPXE->>API: GET /ipxe/{mac}
-  API-->>IPXE: kernel cmdline ds=nocloud-net
+  API-->>IPXE: kernel cmdline ds=nocloud
   IPXE->>API: GET kernel / initrd
   OS->>API: GET /cloud-init/{id}/meta-data
   OS->>API: GET /cloud-init/{id}/user-data
@@ -210,16 +212,22 @@ stateDiagram-v2
   pending --> ready: operator names / tags
   pending --> deploying: Deploy
   ready --> deploying: Deploy
+  deploying --> imaging: installer early-command
+  staged --> imaging: installer early-command
+  imaging --> deployed: installer phone_home
+  imaging --> timeout_error: Settings timeout
+  timeout_error --> deploying: Deploy
   deploying --> deployed: installer callback
   deployed --> staged: console save / reimage
-  staged --> deploying: next PXE
   pending --> disabled: quarantine
   ready --> disabled: quarantine
   deployed --> disabled: quarantine
+  imaging --> disabled: quarantine
+  timeout_error --> disabled: quarantine
   disabled --> ready: operator enables
 ```
 
-Identity: **MAC primary**, SMBIOS UUID secondary. A known UUID with a new MAC (NIC swap) attaches the MAC and keeps the record.
+Identity: **MAC primary**, SMBIOS UUID secondary. A known UUID with a new MAC (NIC swap) attaches the MAC and keeps the record. **Timeout Error** is wait-only (no guest-init); the operator Deploys again. The timer is Settings → Machines (default 15 minutes). New machines inherit the Settings default IANA timezone.
 
 ---
 
@@ -272,9 +280,9 @@ flowchart TB
     end
     subgraph grid["Inventory"]
       H["Host     State      OS        Image           IP"]
-      R1["web1     deployed   linux     ubuntu-24.04    192.168.1.21"]
-      R2["lab-dc   staged     windows   ws2022          192.168.1.22"]
-      R3["build    deploying  linux     ubuntu-24.04    192.168.1.23"]
+      R1["web1     Deployed   linux     ubuntu-24.04    192.168.1.21"]
+      R2["lab-dc   Deploying  windows   ws2022          192.168.1.22"]
+      R3["build    Imaging    linux     ubuntu-24.04    192.168.1.23"]
     end
   end
   pendingBox --> grid
@@ -316,6 +324,9 @@ flowchart LR
     Limg["ubuntu-24.04   linux    x86_64   kernel+initrd or ISO"]
     Wimg["ws2022         windows  x86_64   boot.wim + install.wim"]
   end
+  subgraph files["Files"]
+    Browser["TFTP / Images / Data volume browser"]
+  end
   subgraph settings["Settings"]
     Pxe["PXE  public URL  bind  extra options  next-server hints"]
     Dhcp["DHCP  enable  proxy or authoritative"]
@@ -337,11 +348,11 @@ sequenceDiagram
   participant Op as Operator
 
   M->>PXE: first iPXE check-in
-  PXE-->>M: wait menu
-  Op->>UI: sees pending row
+  PXE-->>M: timeout then next boot device
+  Op->>UI: sees pending row, sets hostname
   Op->>UI: hostname, image, root/Admin password
   UI->>PXE: encrypt local account, state=deploying
-  M->>PXE: wait menu polls /ipxe/{mac}
+  M->>PXE: GET /ipxe/{mac}
   PXE-->>M: install script
   M->>PXE: guest-init + phone_home
   PXE-->>UI: state=deployed
@@ -351,19 +362,23 @@ sequenceDiagram
   PXE-->>M: new image + bumped instance-id
 ```
 
-### 3.6 iPXE wait menu (client screen)
+### 3.6 iPXE folder menu (client screen)
 
-Not the web UI — what the **unknown machine** shows until Deploy.
+Named hosts see folders from the console **Boot menu** page. Unknown and disabled hosts skip it.
 
 ```mermaid
 flowchart TB
-  subgraph menu["iPXE"]
-    T["home-lab-pxe"]
-    S["Unknown machine  MAC aa:bb:cc:11:22:33"]
-    W["Waiting for operator in the web console"]
-    P["Polling every 5s  —  no disk install"]
+  subgraph menu["iPXE named host"]
+    T["Network Installation Options"]
+    C["Continue to next boot device"]
+    W["Windows"]
+    L["Linux"]
+    O["Tools"]
   end
-  T --> S --> W --> P
+  T --> C
+  T --> W
+  T --> L
+  T --> O
 ```
 
 ---
@@ -409,7 +424,7 @@ flowchart TD
   R["HTTP request"] --> K{"path"}
   K --> L["/login  /static"]
   L --> PUB["Public"]
-  K --> A["/machines  /images  /settings  /activity"]
+  K --> A["/machines  /images  /boot-menu  /settings  /activity"]
   A --> S{"valid session + CSRF on POST?"}
   S -->|no| DENY["401 / 403"]
   S -->|yes| OP["Operator actions"]
@@ -567,7 +582,7 @@ flowchart LR
 | Module | Responsibility |
 |--------|----------------|
 | `src/boot/` | Policy + `#!ipxe` |
-| `src/cloudinit/` | Linux nocloud-net |
+| `src/cloudinit/` | Linux nocloud |
 | `src/windows/` | `unattend.xml` + Cloudbase-Init |
 | `src/inventory/` | Machines, states, `LocalAccount` |
 | `src/security.py` | Fernet, hashing, cookie flags |

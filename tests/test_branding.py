@@ -19,6 +19,8 @@ def test_header_logo_on_authenticated_console(client):
     assert page.status_code == 200
     assert "/static/favicon.png" in page.text
     assert "home-lab-pxe" in page.text
+    assert 'href="/files"' in page.text
+    assert 'href="/boot-menu"' in page.text
 
 
 def test_brand_static_files_and_favicon_route(client):

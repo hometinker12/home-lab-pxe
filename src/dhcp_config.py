@@ -48,6 +48,7 @@ def render_dnsmasq_conf(spec: Settings | DnsmasqSpec, *, tftp_root: Path, conf_p
         lines.extend(
             [
                 "enable-tftp",
+                "tftp-single-port",
                 f"tftp-root={tftp_root}",
             ]
         )

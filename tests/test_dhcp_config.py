@@ -28,9 +28,19 @@ def test_proxy_dnsmasq_has_no_secrets(tmp_path: Path):
         debug_errors=False,
         data_dir=tmp_path,
         max_upload_bytes=1024,
+        max_seed_bytes=1024,
+        max_extract_bytes=1024,
+        extract_timeout_seconds=60,
+        seven_z_bin="7z",
+        smb_host="192.168.1.10",
+        smb_user="pxemedia",
+        smb_password="",
+        nfs_host="192.168.1.10",
+        nfs_export="/var/lib/pxe/images/nfs",
     )
     text = render_dnsmasq_conf(settings, tftp_root=tmp_path, conf_path=tmp_path / "dnsmasq.conf")
     assert "enable-tftp" in text
+    assert "tftp-single-port" in text
     assert "proxy" in text
     assert "boot.ipxe" in text
     assert "should-not-appear" not in text
@@ -69,6 +79,7 @@ def test_tftp_can_be_omitted(tmp_path: Path):
     )
     text = render_dnsmasq_conf(spec, tftp_root=tmp_path, conf_path=tmp_path / "dnsmasq.conf")
     assert "enable-tftp" not in text
+    assert "tftp-single-port" not in text
     assert "proxy" in text
 
 
@@ -87,5 +98,6 @@ def test_dhcp_can_be_omitted(tmp_path: Path):
     )
     text = render_dnsmasq_conf(spec, tftp_root=tmp_path, conf_path=tmp_path / "dnsmasq.conf")
     assert "enable-tftp" in text
+    assert "tftp-single-port" in text
     assert "dhcp-range" not in text
     assert "dhcp-boot" not in text

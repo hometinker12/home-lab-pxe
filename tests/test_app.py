@@ -29,6 +29,9 @@ def test_console_flow_create_image_and_deploy(client):
     detail = client.get(f"/api/machines/{machine_id}").json()
     assert detail["state"] == "deploying"
     assert "console-pass" not in str(detail)
+    page = client.get(f"/machines/{machine_id}")
+    assert ">Deploying<" in page.text
+    assert "console-pass" not in page.text
     ipxe = client.get("/ipxe/aa-bb-cc-dd-ee-01").text
     assert "kernel" in ipxe
     assert "console-pass" not in ipxe

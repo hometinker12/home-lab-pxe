@@ -68,8 +68,10 @@ def init_db() -> None:
     _migrate_schema()
     _seed_admin()
     from .dhcp_runtime import seed_dhcp_runtime
+    from .inventory.boot_menu import seed_boot_menu
 
     seed_dhcp_runtime()
+    seed_boot_menu()
 
 
 def _table_columns(conn, table: str) -> set[str]:
@@ -88,8 +90,21 @@ def _migrate_schema() -> None:
         tables = {row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
         if "image" in tables:
             _add_column_if_missing(conn, "image", "iso_path", "iso_path VARCHAR DEFAULT ''")
+            _add_column_if_missing(conn, "image", "extract_status", "extract_status VARCHAR DEFAULT 'idle'")
+            _add_column_if_missing(conn, "image", "extract_error", "extract_error VARCHAR DEFAULT ''")
+            _add_column_if_missing(conn, "image", "extract_revision", "extract_revision INTEGER DEFAULT 0")
+            _add_column_if_missing(conn, "image", "extract_generation", "extract_generation VARCHAR DEFAULT ''")
+            _add_column_if_missing(conn, "image", "wim_index", "wim_index INTEGER DEFAULT 1")
+            _add_column_if_missing(conn, "image", "folder_id", "folder_id INTEGER")
+            _add_column_if_missing(conn, "image", "sort_order", "sort_order INTEGER DEFAULT 0")
         if "dhcpruntime" in tables:
             _add_column_if_missing(conn, "dhcpruntime", "tftp_enabled", "tftp_enabled BOOLEAN DEFAULT 1")
+            _add_column_if_missing(
+                conn, "dhcpruntime", "imaging_timeout_minutes", "imaging_timeout_minutes INTEGER DEFAULT 15"
+            )
+            _add_column_if_missing(conn, "dhcpruntime", "default_timezone", "default_timezone VARCHAR DEFAULT 'UTC'")
+        if "machine" in tables:
+            _add_column_if_missing(conn, "machine", "imaging_started_at", "imaging_started_at DATETIME")
 
 
 def _seed_admin() -> None:

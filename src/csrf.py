@@ -17,6 +17,7 @@ _EXEMPT_PREFIXES = (
     "/windows/",
     "/cloudbase-init/",
     "/boot-files/",
+    "/install-files/",
     "/tftp/",
 )
 _EXEMPT_PATHS = re.compile(r"^/api/machines/\d+/events/?$")

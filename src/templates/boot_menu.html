@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Boot menu — home-lab-pxe{% endblock %}
+{% block body %}
+<header class="page-header">
+  <h1>Boot menu</h1>
+  <p class="description">Folders and timeouts for the iPXE menu on the client. Unknown and disabled machines skip this menu and continue to the next boot device. Named or ready machines see these folders and can start an install from the keyboard.</p>
+</header>
+{% if error and not edit_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="card">
+  <h2>Timeouts and labels</h2>
+  <form method="post" action="/boot-menu/settings" class="form">
+    {% if selected %}<input type="hidden" name="folder" value="{{ selected.id }}">{% endif %}
+    <label>Menu title <input name="title" value="{{ settings.title }}" required></label>
+    <label>Continue to next device <input name="continue_label" value="{{ settings.continue_label }}" required></label>
+    <label>Unknown / disabled timeout (seconds)
+      <input name="unknown_timeout_seconds" type="number" min="0" max="300" value="{{ settings.unknown_timeout_seconds }}">
+    </label>
+    <p class="meta">0 continues immediately. This timeout is not an OS-install menu — unknown and disabled hosts never see folders.</p>
+    <label>Configured-machine menu countdown (seconds)
+      <input name="menu_timeout_seconds" type="number" min="0" max="300" value="{{ settings.menu_timeout_seconds }}">
+    </label>
+    <p class="meta">0 waits until a key is pressed. The default item is continue-to-disk unless the operator opens a folder.</p>
+    <div class="btn-row">
+      <button type="submit">Save menu settings</button>
+    </div>
+  </form>
+</section>
+
+<div class="boot-menu-layout">
+  <aside class="card boot-menu-tree">
+    <h2>Folders</h2>
+    <ul class="boot-tree">
+      {% for node in tree %}
+      <li class="boot-tree-row" style="--depth: {{ node.depth }}">
+        <a href="/boot-menu?folder={{ node.folder.id }}" class="boot-tree-name{% if selected and selected.id == node.folder.id %} is-active{% endif %}">{{ node.folder.name }}</a>
+        <div class="boot-tree-actions">
+          <form method="post" action="/boot-menu/folders/{{ node.folder.id }}/move">
+            <input type="hidden" name="direction" value="up">
+            <button type="submit" class="icon-btn" {% if not node.can_move_up %}disabled{% endif %} aria-label="Move {{ node.folder.name }} up" title="Move up">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/></svg>
+            </button>
+          </form>
+          <form method="post" action="/boot-menu/folders/{{ node.folder.id }}/move">
+            <input type="hidden" name="direction" value="down">
+            <button type="submit" class="icon-btn" {% if not node.can_move_down %}disabled{% endif %} aria-label="Move {{ node.folder.name }} down" title="Move down">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12l-1.41-1.41L13 16.17V4h-2v12.17l-5.58-5.59L4 12l8 8 8-8z"/></svg>
+            </button>
+          </form>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="/boot-menu/folders" class="form compact-form">
+      <label>New folder
+        <input name="name" required placeholder="Folder name">
+      </label>
+      <label>Parent
+        <select name="parent_id">
+          <option value="">Top level</option>
+          {% for fid, path in folder_options %}
+          <option value="{{ fid }}" {% if selected and selected.id == fid %}selected{% endif %}>{{ path }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="btn-row">
+        <button type="submit">Add folder</button>
+      </div>
+    </form>
+  </aside>
+  <section class="card boot-menu-detail">
+    {% if selected %}
+    <div class="page-header-row">
+      <h2>{{ selected.name }}</h2>
+      <button type="button" class="btn-ghost btn-sm" data-open-dialog="edit-folder">Edit folder</button>
+    </div>
+    <h3>Images in this folder</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>OS</th><th>Ready</th><th></th></tr></thead>
+        <tbody>
+          {% for row in image_rows %}
+          <tr>
+            <td><a href="/images/{{ row.image.id }}">{{ row.image.name }}</a></td>
+            <td>{{ row.image.os_family }}</td>
+            <td>{% if row.reason %}<span class="meta">{{ row.reason }}</span>{% else %}yes{% endif %}</td>
+            <td class="col-actions">
+              <form method="post" action="/boot-menu/images/{{ row.image.id }}/move" class="inline-form">
+                <input type="hidden" name="direction" value="up">
+                <button type="submit" class="btn-ghost btn-sm">Up</button>
+              </form>
+              <form method="post" action="/boot-menu/images/{{ row.image.id }}/move" class="inline-form">
+                <input type="hidden" name="direction" value="down">
+                <button type="submit" class="btn-ghost btn-sm">Down</button>
+              </form>
+              <button type="button" class="btn-ghost btn-sm" data-open-dialog="move-image"
+                      data-move-action="/boot-menu/images/{{ row.image.id }}/folder"
+                      data-move-folder="{{ selected.id }}"
+                      data-move-name="{{ row.image.name }}">Move folder</button>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="empty">No images in this folder. Assign a folder when adding an image.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">No folders yet. Add Windows, Linux, or Tools to start.</p>
+    {% endif %}
+  </section>
+</div>
+
+{% if selected %}
+<dialog class="modal" id="edit-folder"{% if edit_open %} open{% endif %}>
+  <h2>Edit {{ selected.name }}</h2>
+  <p class="meta">Rename this folder or delete it when it is empty.</p>
+  {% if error and edit_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+  <form id="folder-rename" method="post" action="/boot-menu/folders/{{ selected.id }}" class="form">
+    <label>Rename <input name="name" value="{{ selected.name }}" required autocomplete="off" autofocus></label>
+  </form>
+  <form id="folder-delete" method="post" action="/boot-menu/folders/{{ selected.id }}/delete" onsubmit="return confirm('Delete this folder? Nested folders and images must be empty.');"></form>
+  <div class="modal-actions">
+    <button type="button" class="btn-secondary" data-close-dialog>Cancel</button>
+    <button type="submit" form="folder-delete" class="btn-danger"{% if delete_blocked %} disabled title="{{ delete_blocked }}"{% endif %}>Delete folder</button>
+    <button type="submit" form="folder-rename">Rename</button>
+  </div>
+</dialog>
+{% endif %}
+
+<dialog class="modal" id="move-image">
+  <form method="post" action="/boot-menu/images/0/folder" class="form">
+    <h2>Move to folder</h2>
+    <p class="meta">Move <strong data-move-image-name></strong> to another boot-menu folder.</p>
+    <label>Folder
+      <select name="folder_id" required>
+        {% for fid, path in folder_options %}
+        <option value="{{ fid }}">{{ path }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" data-close-dialog>Cancel</button>
+      <button type="submit">Move</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
