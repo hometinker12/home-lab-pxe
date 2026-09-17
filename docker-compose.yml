@@ -3,9 +3,9 @@ services:
     image: hometinker12/home-lab-pxe:latest
     pull_policy: always
     # Bridge publishes HTTP/HTTPS plus DHCP/TFTP UDP. dnsmasq uses tftp-single-port so
-    # TFTP file transfer stays on UDP 69 through Docker NAT. NFS casper pins NFS 2049
-    # and mountd 20048 so Ubuntu netboot=nfs works through NAT without host port 111
-    # (rpcbind). SMB still needs Linux host networking. For Linux LAN broadcasts, set
+    # TFTP file transfer stays on UDP 69 through Docker NAT. Ubuntu casper's nfsmount
+    # always queries rpcbind on 111 for mountd (it ignores mountport=), then NFS on
+    # 2049. SMB still needs Linux host networking. For Linux LAN broadcasts, set
     # network_mode: host in docker-compose.override.yml (ports are ignored).
     ports:
       - "8080:8080"
@@ -13,6 +13,8 @@ services:
       - "67:67/udp"
       - "69:69/udp"
       - "4011:4011/udp"
+      - "111:111/tcp"
+      - "111:111/udp"
       - "2049:2049/tcp"
       - "2049:2049/udp"
       - "20048:20048/tcp"
@@ -28,6 +30,8 @@ services:
       - CHOWN
       - FOWNER
       - DAC_OVERRIDE
+      - DAC_READ_SEARCH
+      - SETFCAP
     security_opt:
       - no-new-privileges:true
     extra_hosts:

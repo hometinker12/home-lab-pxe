@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from .db import get_engine, init_db, session_scope
+from .ganesha_exports import request_export_reload
 from .iso_extract import ArchiveRunner, ExtractError, extract_linux_payloads, extract_windows_media
 from .models import ExtractStatus, Image, InstallAttempt, OsFamily
 from .nfs_media import casper_has_squashfs, linux_http_generation, nfs_generation
@@ -305,6 +306,11 @@ def run_one_job(image_id: int, revision: int, runner: ArchiveRunner | None = Non
         db.add(image)
         gc_extract_generations(db, image)
         db.commit()
+        if family == OsFamily.linux.value:
+            try:
+                request_export_reload(root)
+            except OSError:
+                pass
 
 
 def nfs_tree_has_squashfs(image: Image) -> bool:

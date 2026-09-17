@@ -214,6 +214,13 @@
       if (!row) {
         return;
       }
+      if (row.getAttribute("data-kind") === "dir") {
+        const href = row.getAttribute("data-href");
+        if (href) {
+          window.location.href = href;
+        }
+        return;
+      }
       if (event.target.closest("a.fm-name")) {
         event.preventDefault();
       }
@@ -221,7 +228,10 @@
     });
     fm.addEventListener("dblclick", (event) => {
       const row = event.target.closest(".fm-row");
-      const href = row && row.getAttribute("data-href");
+      if (!row || row.getAttribute("data-kind") === "dir") {
+        return;
+      }
+      const href = row.getAttribute("data-href");
       if (href) {
         window.location.href = href;
       }
@@ -265,10 +275,16 @@
     if (pathForm) {
       pathForm.addEventListener("submit", () => {
         const input = pathForm.querySelector("input[name='dir']");
+        const rootInput = pathForm.querySelector("input[name='root']");
         if (!input) {
           return;
         }
         let value = input.value.trim().replaceAll("\\", "/");
+        const match = value.match(/^([a-z]+):\/?(.*)$/i);
+        if (match && rootInput) {
+          rootInput.value = match[1].toLowerCase();
+          value = match[2];
+        }
         if (value === "/" || value === ".") {
           value = "";
         }

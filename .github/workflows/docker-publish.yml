@@ -111,6 +111,8 @@ jobs:
             --cap-add CHOWN \
             --cap-add FOWNER \
             --cap-add DAC_OVERRIDE \
+            --cap-add DAC_READ_SEARCH \
+            --cap-add SETFCAP \
             --security-opt no-new-privileges:true \
             --tmpfs /tmp:size=64M,mode=1777 \
             --tmpfs /var/lib/pxe/data:size=64M,uid=10001,gid=10001,mode=1777 \

@@ -110,6 +110,10 @@ jobs:
             --cap-add SETUID \
             --cap-add SETGID \
             --cap-add CHOWN \
+            --cap-add FOWNER \
+            --cap-add DAC_OVERRIDE \
+            --cap-add DAC_READ_SEARCH \
+            --cap-add SETFCAP \
             "$IMAGE_TAG"
           ready=0
           for i in $(seq 1 45); do

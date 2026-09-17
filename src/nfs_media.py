@@ -8,6 +8,9 @@ from pathlib import Path
 _NFS_GENERATION = re.compile(r"^nfs/(\d+)/(\d+)$")
 NFS_GENERATION_PREFIX = "nfs/"
 LINUX_HTTP_GENERATION_PREFIX = "linux/"
+# Casper's klibc nfsmount treats commas in nfsroot= as the export path and rejects
+# mountport=. Mountd is always looked up via rpcbind on TCP/UDP 111.
+CASPER_NFSOPTS = "vers=3,tcp,port=2049"
 
 
 def nfs_generation(image_id: int, revision: int) -> str:
@@ -27,6 +30,7 @@ def nfs_subpath(media_relative: str) -> str | None:
 
 
 def advertised_nfsroot(media_relative: str, *, host: str, export: str) -> str | None:
+    """Return host:export/{id}/{rev} matching a per-generation Ganesha Path."""
     sub = nfs_subpath(media_relative)
     if sub is None:
         return None

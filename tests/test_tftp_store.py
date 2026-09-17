@@ -165,3 +165,51 @@ def test_is_stub_detects_placeholder(client, tmp_path):
     assert is_stub(path) is True
     path.write_bytes(b"MZ" + b"\x00" * 80)
     assert is_stub(path) is False
+
+
+def test_files_favorites_and_image_volume(client, tmp_path):
+    login(client)
+    page = client.get("/files")
+    assert page.status_code == 200
+    assert "iPXE boot files" in page.text
+    assert "Image uploads" in page.text
+    assert "NFS extracts" in page.text
+    assert "SMB media" in page.text
+    assert "Machine seeds" in page.text
+    assert 'href="/files?root=images&amp;dir=nfs"' in page.text or 'href="/files?root=images&dir=nfs"' in page.text
+    nfs = client.get("/files?root=images&dir=nfs")
+    assert nfs.status_code == 200
+    assert "images:/nfs" in nfs.text
+    assert "is-active" in nfs.text
+    uploads = client.get("/files?root=images&dir=uploads")
+    assert uploads.status_code == 200
+    assert "images:/uploads" in uploads.text
+    seeds = client.get("/files?root=data&dir=seeds")
+    assert seeds.status_code == 200
+    assert "data:/seeds" in seeds.text
+    (tmp_path / "images" / "nfs" / "marker.bin").write_bytes(b"casper-marker")
+    downloaded = client.get("/files/download", params={"root": "images", "path": "nfs/marker.bin"})
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"casper-marker"
+
+
+def test_files_image_volume_rejects_escape(client, tmp_path):
+    login(client)
+    secret = tmp_path / "secret.bin"
+    secret.write_bytes(b"nope")
+    listing = client.get("/files?root=images&dir=../")
+    assert listing.status_code == 200
+    assert "not allowed" in listing.text.lower()
+    download = client.get("/files/download", params={"root": "images", "path": "../secret.bin"})
+    assert download.status_code in {400, 404, 422}
+    assert secret.read_bytes() == b"nope"
+
+
+def test_files_cannot_delete_data_db(client, tmp_path):
+    login(client)
+    db_path = tmp_path / "pxe.db"
+    assert db_path.is_file()
+    response = client.post("/files/delete", data={"root": "data", "path": "pxe.db", "dir": ""})
+    assert response.status_code == 200
+    assert "Cannot delete this path" in response.text
+    assert db_path.is_file()

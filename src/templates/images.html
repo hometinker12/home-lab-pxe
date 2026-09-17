@@ -39,7 +39,7 @@
 </div>
 <section class="card">
   <h2>Add image</h2>
-  <p class="meta">Ubuntu live-server ISOs extract <code>casper/</code> and <code>.disk/</code> onto a read-only NFS export and PXE-install with <code>netboot=nfs</code>. HTTP <code>iso-url=</code> remains the fallback when the ISO has no squashfs. The uploaded ISO is deleted after NFS or Windows media extract. Windows Server extraction publishes Setup media on an authenticated read-only SMB share; a stock ISO does <strong>not</strong> include Cloudbase-Init. Paths are relative to the image volume (no <code>../</code>).</p>
+  <p class="meta">Ubuntu live-server ISOs extract <code>casper/</code> and <code>.disk/</code> under <code>images/nfs/{id}/{rev}</code>; that folder is published as its own NFS export and PXE-installs with <code>netboot=nfs</code>. HTTP <code>iso-url=</code> remains the fallback when the ISO has no squashfs. The uploaded ISO is deleted after NFS or Windows media extract. Windows Server extraction publishes Setup media on an authenticated read-only SMB share; a stock ISO does <strong>not</strong> include Cloudbase-Init. Paths are relative to the image volume (no <code>../</code>).</p>
   <form method="post" action="/images" enctype="multipart/form-data" class="image-form form">
     <label>Name <input name="name" required></label>
     <label>OS

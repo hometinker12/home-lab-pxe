@@ -572,13 +572,27 @@ body.files-page main.files-shell {
   font-size: 13px;
 }
 .fm-sidebar {
-  width: 220px;
+  width: 240px;
   flex-shrink: 0;
   background: #141b23;
   border-right: 1px solid var(--border);
   overflow: auto;
   padding: 0.35rem 0 1rem;
 }
+.fm-side-group {
+  margin: 0.1rem 0 0.35rem;
+}
+.fm-side-group > summary {
+  margin: 0.55rem 0.7rem 0.2rem;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  list-style: none;
+}
+.fm-side-group > summary::-webkit-details-marker { display: none; }
 .fm-side-group h2 {
   margin: 0.7rem 0.6rem 0.25rem;
   font-size: 11px;
@@ -598,6 +612,11 @@ body.files-page main.files-shell {
   margin: 0 0.35rem;
 }
 .fm-side-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+.fm-side-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .fm-side-item.is-active { background: var(--info-bg); }
 .fm-side-item:hover { background: var(--surface-2); }
 .fm-stage-stub { color: var(--warn); }
