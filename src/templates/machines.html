@@ -22,7 +22,7 @@
 <div class="table-wrap">
   <table>
     <thead>
-      <tr><th>Host</th><th>MAC</th><th>State</th><th>Image</th><th>IP</th></tr>
+      <tr><th>Host</th><th>MAC</th><th>State</th><th>Image</th><th>IP</th><th></th></tr>
     </thead>
     <tbody>
       {% for m in machines %}
@@ -32,9 +32,14 @@
         <td><span class="badge badge-{{ m.state }}">{{ m.state }}</span></td>
         <td>{% if m.assigned_image_id and images.get(m.assigned_image_id) %}{{ images[m.assigned_image_id].name }}{% else %}—{% endif %}</td>
         <td>{{ m.last_ip or "—" }}</td>
+        <td>
+          <form method="post" action="/machines/{{ m.id }}/delete" class="inline-form" onsubmit="return confirm('Delete this machine from inventory? The next PXE boot with this MAC will register as unknown.');">
+            <button type="submit" class="btn-danger btn-sm">Delete</button>
+          </form>
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="empty">No machines yet. Add a MAC below or PXE-boot a host to register it.</td></tr>
+      <tr><td colspan="6" class="empty">No machines yet. Add a MAC below or PXE-boot a host to register it.</td></tr>
       {% endfor %}
     </tbody>
   </table>

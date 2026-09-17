@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -74,12 +76,36 @@ def expect(cond: bool, message: str) -> None:
         fail(message)
 
 
+def seed_nfs_generation(container: str, image_id: int) -> None:
+    iid = int(image_id)
+    code = (
+        "from src.db import session_scope\n"
+        "from src.models import Image\n"
+        f"iid = {iid}\n"
+        "with session_scope() as db:\n"
+        "    img = db.get(Image, iid)\n"
+        "    if img is None:\n"
+        "        raise SystemExit('missing image')\n"
+        "    img.extract_generation = f'nfs/{iid}/1'\n"
+        "    db.add(img)\n"
+        "    db.commit()\n"
+    )
+    proc = subprocess.run(
+        ["docker", "exec", container, "python", "-c", code],
+        capture_output=True,
+        text=True,
+    )
+    detail = (proc.stderr or proc.stdout or "").strip()
+    expect(proc.returncode == 0, f"seed nfs generation failed rc={proc.returncode} {detail}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--user", default="admin")
     parser.add_argument("--password", default="smokepass")
     parser.add_argument("--smb-password", default="")
+    parser.add_argument("--container", default="", help="docker container name for NFS generation seed")
     args = parser.parse_args()
     c = Client(args.base_url)
     smb_secret = (args.smb_password or "").strip()
@@ -132,6 +158,9 @@ def main() -> None:
     expect(b"Option 67 (Boot File Name)" in body, "external DHCP option 67 hint")
     expect(b"Host LAN IPv4" in body, "settings host LAN address")
     expect(b"/boot.ipxe" in body, "settings advertised PXE URL")
+    expect(b"Already iPXE" in body, "settings already-iPXE TFTP filename hint")
+    expect(b"Ubuntu installation media (NFS)" in body, "settings NFS casper export")
+    expect(b"netboot=nfs" in body, "settings NFS netboot hint")
     expect(b"This page" not in body, "settings should not show request host")
     expect(b"Docker Desktop gateway" not in body, "settings should not show Docker gateway")
     status, _, _ = c.request(
@@ -182,6 +211,10 @@ def main() -> None:
     status, _, _ = c.request("GET", f"/install-files/{pmid}/kernel")
     expect(status == 404, "pending must not receive install-files")
 
+    status, _, body = c.request("GET", "/images")
+    expect(status == 200 and b"Advanced Settings" in body, "images missing Advanced Settings")
+    expect(b'name="kernel_path"' in body, "kernel path missing from advanced settings")
+
     dummy_iso = f"smoke-extract-{int(time.time())}"
     status, _, _ = c.multipart(
         "/images",
@@ -198,6 +231,8 @@ def main() -> None:
         time.sleep(1)
     expect(dummy_row is not None, "dummy iso image missing")
     expect(dummy_row.get("extract_status") == "failed", f"dummy iso extract {dummy_row}")
+    status, _, body = c.request("GET", "/images")
+    expect(b"Delete" in body, "image delete control missing")
     err = dummy_row.get("extract_error") or ""
     expect("/var/lib" not in err and "C:\\" not in err, "extract_error leaked a host path")
     status, _, body = c.request(
@@ -210,6 +245,11 @@ def main() -> None:
     expect(status in {200, 303, 302}, f"retry extract {status}")
     status, _, body = c.request("POST", f"/images/{dummy_row['id']}/seed/reset")
     expect(status in {200, 303, 302}, f"reset seed {status}")
+    dummy_id = dummy_row["id"]
+    status, _, _ = c.request("POST", f"/images/{dummy_id}/delete")
+    expect(status in {200, 303, 302}, f"delete dummy iso {status}")
+    status, _, body = c.request("GET", "/api/images")
+    expect(all(img.get("id") != dummy_id for img in json.loads(body)), "deleted dummy iso still listed")
 
     status, _, _ = c.request(
         "POST",
@@ -219,6 +259,14 @@ def main() -> None:
     expect(status in {200, 303, 302}, f"add machine {status}")
     status, _, body = c.request("GET", "/api/machines")
     expect(any(m.get("mac") == "aa:bb:cc:dd:ee:0f" for m in json.loads(body)), "manually added MAC missing")
+    added = next(m for m in json.loads(body) if m.get("mac") == "aa:bb:cc:dd:ee:0f")
+    status, _, body = c.request("GET", f"/machines/{added['id']}")
+    expect(status == 200 and b"Delete" in body, "machine delete control missing")
+    expect(b'name="hostname"' in body and b'form="machine-save"' in body, "hostname field missing from actions")
+    status, _, _ = c.request("POST", f"/machines/{added['id']}/delete")
+    expect(status in {200, 303, 302}, f"delete added machine {status}")
+    status, _, body = c.request("GET", "/api/machines")
+    expect(all(m.get("id") != added["id"] for m in json.loads(body)), "deleted machine still listed")
 
     ubuntu_name = f"smoke-ubuntu-{int(time.time())}"
     status, _, body = c.request(
@@ -332,6 +380,46 @@ def main() -> None:
     expect("kernel" not in iso_text, "iso-only install should not chain kernel")
     expect("iso-smoke-secret" not in iso_text, "password leaked into iso iPXE")
 
+    if os.environ.get("CI") == "true" and not args.container.strip():
+        fail("NFS iPXE smoke requires --container in CI")
+    if args.container.strip():
+        nfs_name = f"smoke-nfs-{int(time.time())}"
+        status, _, _ = c.request(
+            "POST",
+            "/images",
+            form={
+                "name": nfs_name,
+                "os_family": "linux",
+                "arch": "x86_64",
+                "kernel_path": "ubuntu/vmlinuz",
+                "initrd_path": "ubuntu/initrd",
+            },
+        )
+        expect(status in {200, 303, 302}, f"create nfs image {status}")
+        status, _, body = c.request("GET", "/api/images")
+        nfs_image = next((img for img in json.loads(body) if img.get("name") == nfs_name), None)
+        expect(nfs_image is not None, "nfs linux image missing after create")
+        nfs_image_id = int(nfs_image["id"])
+        seed_nfs_generation(args.container.strip(), nfs_image_id)
+        nfs_mac = "de-ad-be-ef-00-cc"
+        status, _, body = c.request("GET", f"/ipxe/{nfs_mac}")
+        expect("Waiting for operator" in body.decode(), "nfs MAC should wait first")
+        status, _, body = c.request("GET", "/api/machines")
+        nfs_machine = next(m for m in json.loads(body) if m["mac"] == "de:ad:be:ef:00:cc")
+        status, _, _ = c.request(
+            "POST",
+            f"/machines/{nfs_machine['id']}/deploy",
+            form={"image_id": str(nfs_image_id), "username": "root", "password": "nfs-smoke-secret"},
+        )
+        expect(status in {200, 303, 302}, f"nfs deploy {status}")
+        status, _, body = c.request("GET", f"/ipxe/{nfs_mac}")
+        nfs_text = body.decode()
+        expect("netboot=nfs" in nfs_text and "boot=casper" in nfs_text, "expected nfs casper iPXE")
+        expect("nfsroot=" in nfs_text and f"/nfs/{nfs_image_id}/1" in nfs_text, "expected nfsroot path")
+        expect("port=2049" in nfs_text and "mountport=20048" in nfs_text, "expected pinned nfs ports")
+        expect("iso-url=" not in nfs_text and "ramdisk_size" not in nfs_text, "nfs install should not wget ISO")
+        expect("nfs-smoke-secret" not in nfs_text, "password leaked into nfs iPXE")
+
     status, _, body = c.request("GET", "/api/machines")
     expect(status == 200, f"/api/machines {status} {body[:200]!r}")
     machines = json.loads(body)
@@ -384,6 +472,17 @@ def main() -> None:
     expect("exit" in body.decode() and "Waiting" not in body.decode(), "deployed should skip menu")
     status, _, body = c.request("GET", f"/cloud-init/{mid}/user-data")
     expect(status == 404, "deployed must not keep serving user-data")
+
+    status, _, body = c.request("GET", f"/machines/{mid}")
+    expect(status == 200 and b'form="machine-save"' in body, "hostname field missing from machine actions")
+    status, _, _ = c.request(
+        "POST",
+        f"/machines/{mid}/save",
+        form={"hostname": "smoke-linux-named", "timezone": "UTC"},
+    )
+    expect(status in {200, 303, 302}, f"deployed hostname save {status}")
+    status, _, body = c.request("GET", f"/api/machines/{mid}")
+    expect(json.loads(body).get("hostname") == "smoke-linux-named", "deployed hostname did not persist")
 
     status, _, _ = c.request("POST", f"/machines/{mid}/stage", form={})
     expect(status in {200, 303, 302}, f"stage {status}")

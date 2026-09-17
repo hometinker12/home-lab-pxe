@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-model: claude-opus-5[thinking=true,context=300k,effort=low,fast=false]
+model: composer-2.5[fast=true]
 description: Strict, isolated, read-only code audit for non-trivial or risky changes. Use instead of having the authoring agent review its own multi-file, auth, boot-policy, cloud-init, or API contract changes.
 readonly: true
 ---

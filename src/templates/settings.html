@@ -43,11 +43,12 @@
       </dd>
       <dt>Option 67 (Boot File Name)</dt>
       <dd>
-        <p class="meta">Specifies the initial file name to download over TFTP. This appliance uses iPXE binaries such as <code>undionly.kpxe</code> (BIOS) or <code>ipxe.efi</code> (UEFI), not WDS names like <code>bootx64\wdsnbp.com</code>. Pick one name per architecture (your DHCP UI may have separate BIOS and UEFI classes). After iPXE starts, it chains to the HTTP script — that URL is not option 67 on a typical DHCP server.</p>
+        <p class="meta">Specifies the initial file name to download over TFTP. This appliance uses iPXE binaries such as <code>undionly.kpxe</code> (BIOS) or <code>ipxe.efi</code> (UEFI), not WDS names like <code>bootx64\wdsnbp.com</code>. Pick one name per architecture (your DHCP UI may have separate BIOS and UEFI classes). If the client already shows the iPXE banner (Proxmox/SeaBIOS ROM), do not use <code>ipxe.efi</code> — that is a UEFI binary and iPXE fails with exec format error. Use TFTP <code>{{ pxe_hints.ipxe_filename }}</code> instead. After iPXE starts, it chains to the HTTP script.</p>
         <ul class="option-values">
           <li><span class="meta">BIOS / legacy</span> <code>{{ pxe_hints.bios_filename }}</code></li>
           <li><span class="meta">UEFI x86_64</span> <code>{{ pxe_hints.efi_filename }}</code></li>
           <li><span class="meta">UEFI ARM64</span> <code>{{ pxe_hints.arm_filename }}</code></li>
+          <li><span class="meta">Already iPXE (Proxmox / SeaBIOS)</span> <code>{{ pxe_hints.ipxe_filename }}</code></li>
           <li><span class="meta">iPXE script (HTTP, after iPXE)</span> <code>{{ pxe_hints.ipxe_script }}</code></li>
         </ul>
       </dd>
@@ -160,6 +161,18 @@
       <dd><code>{{ smb_user }}</code></dd>
       <dt>Password</dt>
       <dd>{% if smb_password_set %}<span class="badge badge-deployed">set</span>{% else %}<span class="badge badge-disabled">not set</span>{% endif %}</dd>
+    </dl>
+  </div>
+</details>
+<details class="card" {% if open_section == "nfs" %}open{% endif %}>
+  <summary>Ubuntu installation media (NFS)</summary>
+  <div class="card-body">
+    <p class="meta">Ubuntu live-server casper media is exported read-only over NFS (userspace). Clients boot with <code>netboot=nfs</code> so the installer does not wget the ISO into RAM. Linux <code>network_mode: host</code> is the supported LAN path; Compose also publishes TCP/UDP 2049 and 20048 for Docker NAT (iPXE passes <code>port=2049,mountport=20048</code> so host rpcbind/111 is not required).</p>
+    <dl class="hints">
+      <dt>NFS host</dt>
+      <dd><code>{{ nfs_host }}</code></dd>
+      <dt>Export</dt>
+      <dd><code>{{ nfs_export }}</code></dd>
     </dl>
   </div>
 </details>

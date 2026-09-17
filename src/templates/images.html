@@ -3,7 +3,7 @@
 {% block body %}
 <header class="page-header">
   <h1>Images</h1>
-  <p class="description">Boot payloads served over PXE. Uploading an Ubuntu live-server or Windows Server ISO returns immediately; a background worker extracts netboot files. Linux kernel/initrd pairs and custom Windows boot.wim uploads still work.</p>
+  <p class="description">Boot payloads served over PXE. Uploading an Ubuntu live-server or Windows Server ISO returns immediately; a background worker extracts netboot files and then deletes the uploaded ISO when NFS or SMB media is ready. Linux kernel/initrd pairs and custom Windows boot.wim uploads still work.</p>
 </header>
 {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 <div class="table-wrap">
@@ -24,7 +24,12 @@
           {% if img.extract_status == 'failed' and img.extract_error %}<div class="meta">{{ img.extract_error }}</div>{% endif %}
         </td>
         <td><code>{{ img.kernel_path or img.boot_wim_path or img.iso_path or "—" }}</code></td>
-        <td><a class="btn-ghost btn-sm" href="/images/{{ img.id }}">Edit</a></td>
+        <td>
+          <a class="btn-ghost btn-sm" href="/images/{{ img.id }}">Edit</a>
+          <form method="post" action="/images/{{ img.id }}/delete" class="inline-form" onsubmit="return confirm('Delete this image and its extracted files?');">
+            <button type="submit" class="btn-danger btn-sm">Delete</button>
+          </form>
+        </td>
       </tr>
       {% else %}
       <tr><td colspan="6" class="empty">No images registered. Add one below to start deploying.</td></tr>
@@ -34,7 +39,7 @@
 </div>
 <section class="card">
   <h2>Add image</h2>
-  <p class="meta">Ubuntu live-server ISOs extract <code>casper/vmlinuz</code> and <code>casper/initrd</code> and PXE-install with HTTP <code>url=</code> plus autoinstall. Windows Server extraction publishes Setup media on an authenticated read-only SMB share; a stock ISO does <strong>not</strong> include Cloudbase-Init. Paths are relative to the image volume (no <code>../</code>).</p>
+  <p class="meta">Ubuntu live-server ISOs extract <code>casper/</code> and <code>.disk/</code> onto a read-only NFS export and PXE-install with <code>netboot=nfs</code>. HTTP <code>iso-url=</code> remains the fallback when the ISO has no squashfs. The uploaded ISO is deleted after NFS or Windows media extract. Windows Server extraction publishes Setup media on an authenticated read-only SMB share; a stock ISO does <strong>not</strong> include Cloudbase-Init. Paths are relative to the image volume (no <code>../</code>).</p>
   <form method="post" action="/images" enctype="multipart/form-data" class="image-form form">
     <label>Name <input name="name" required></label>
     <label>OS
@@ -44,12 +49,6 @@
       </select>
     </label>
     <label>Arch <input name="arch" value="x86_64"></label>
-    <div data-os="linux">
-      <label>Kernel path <input name="kernel_path" placeholder="ubuntu/vmlinuz"></label>
-      <label>Kernel file <input type="file" name="kernel_file"></label>
-      <label>Initrd path <input name="initrd_path" placeholder="ubuntu/initrd"></label>
-      <label>Initrd file <input type="file" name="initrd_file"></label>
-    </div>
     <div data-os="windows">
       <label>boot.wim path <input name="boot_wim_path"></label>
       <label>boot.wim file <input type="file" name="boot_wim_file"></label>
@@ -60,6 +59,15 @@
     <label>ISO path <input name="iso_path" placeholder="ubuntu/ubuntu-24.04.iso"></label>
     <label>ISO file <input type="file" name="iso_file" accept=".iso,.img"></label>
     <label>Extra cmdline <input name="cmdline"></label>
+    <details class="advanced-settings" data-os="linux">
+      <summary>Advanced Settings</summary>
+      <div class="advanced-settings-body">
+        <label>Kernel path <input name="kernel_path" placeholder="ubuntu/vmlinuz"></label>
+        <label>Kernel file <input type="file" name="kernel_file"></label>
+        <label>Initrd path <input name="initrd_path" placeholder="ubuntu/initrd"></label>
+        <label>Initrd file <input type="file" name="initrd_file"></label>
+      </div>
+    </details>
     <div class="btn-row">
       <button type="submit">Add</button>
     </div>

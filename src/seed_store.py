@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 from .models import OsFamily
@@ -112,6 +113,19 @@ def write_machine_seed(machine_id: int, os_family: OsFamily | str, body: str) ->
 
 def delete_machine_seed(machine_id: int, os_family: OsFamily | str) -> None:
     delete_seed(get_settings().data_dir, machine_seed_relative(machine_id, os_family))
+
+
+def remove_machine_seed_tree(machine_id: int) -> None:
+    root = get_settings().data_dir
+    for relative in (f"seeds/{int(machine_id)}", f"install-seeds/{int(machine_id)}"):
+        try:
+            path = resolve_under(root, relative)
+        except UnsafePathError:
+            continue
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        elif path.is_file():
+            path.unlink(missing_ok=True)
 
 
 def ensure_image_seed(image_id: int, os_family: OsFamily | str) -> None:

@@ -23,11 +23,15 @@ class FakeRunner:
     def extract_member_bytes(self, iso: Path, member: str) -> bytes:
         return self.blobs.get(member, b"payload")
 
-    def extract_tree(self, iso: Path, dest: Path) -> None:
+    def extract_tree(self, iso: Path, dest: Path, prefixes: tuple[str, ...] = ()) -> None:
+        wanted = tuple(item.replace("\\", "/").strip("/") for item in prefixes if item.strip())
         for name, _size, is_dir in self.members:
             if is_dir:
                 continue
-            path = dest.joinpath(*name.replace("\\", "/").split("/"))
+            rel = name.replace("\\", "/")
+            if wanted and not any(rel == prefix or rel.startswith(prefix + "/") for prefix in wanted):
+                continue
+            path = dest.joinpath(*rel.split("/"))
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(self.blobs.get(name, b"media"))
 
@@ -63,6 +67,36 @@ def test_linux_extract_writes_slots(tmp_path, monkeypatch):
     assert (dest / "kernel").read_bytes() == b"kern"
     assert (dest / "initrd").read_bytes() == b"ird"
     assert result.kernel_relative == "kernel"
+    assert result.media_relative == ""
+
+
+def test_linux_extract_publishes_casper_media(tmp_path, monkeypatch):
+    monkeypatch.setenv("PXE_IMAGE_ROOT", str(tmp_path))
+    monkeypatch.setenv("PXE_MAX_EXTRACT_BYTES", "100000")
+    clear_settings_cache()
+    iso = tmp_path / "image.iso"
+    iso.write_bytes(b"iso")
+    dest = tmp_path / "out"
+    dest.mkdir()
+    runner = FakeRunner(
+        [
+            ("casper/vmlinuz", 4, False),
+            ("casper/initrd", 4, False),
+            ("casper/filesystem.squashfs", 8, False),
+            (".disk/casper-uuid-generic", 4, False),
+        ],
+        {
+            "casper/vmlinuz": b"kern",
+            "casper/initrd": b"ird",
+            "casper/filesystem.squashfs": b"squashok",
+            ".disk/casper-uuid-generic": b"uuid",
+        },
+    )
+    result = extract_linux_payloads(iso, dest, image_root=tmp_path, runner=runner)
+    assert result.media_relative == "casper"
+    assert (dest / "kernel").read_bytes() == b"kern"
+    assert (dest / "casper" / "filesystem.squashfs").read_bytes() == b"squashok"
+    assert (dest / ".disk" / "casper-uuid-generic").read_bytes() == b"uuid"
 
 
 def test_windows_extract_returns_media(tmp_path, monkeypatch):

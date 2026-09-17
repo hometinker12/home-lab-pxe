@@ -7,6 +7,8 @@ from ..auth import require_user
 from ..db import get_db
 from ..inventory.mac import InvalidMacError
 from ..inventory.service import (
+    apply_hostname,
+    delete_machine,
     deploy_machine,
     disable_machine,
     dump_overlay,
@@ -29,7 +31,7 @@ from ..inventory.service import (
 )
 from ..models import AccountKind, MachineState, OsFamily
 from ..seed_render import validate_seed_template
-from ..seed_store import SeedError, delete_machine_seed, read_machine_seed, write_machine_seed
+from ..seed_store import SeedError, delete_machine_seed, read_machine_seed, remove_machine_seed_tree, write_machine_seed
 from ..web import render
 
 router = APIRouter(tags=["console"], include_in_schema=False)
@@ -214,6 +216,7 @@ def machine_save(
     seed_body = unattend_xml if family == OsFamily.windows else user_data
     assigned = get_image(db, machine.assigned_image_id)
     try:
+        apply_hostname(machine, hostname)
         if assigned is None:
             pass
         elif seed_body.strip():
@@ -230,7 +233,8 @@ def machine_save(
             return RedirectResponse(url=f"/machines/{machine_id}", status_code=HTTP_303_SEE_OTHER)
         if machine.state == MachineState.deployed.value:
             if assigned is None:
-                raise ValueError("Assign an image before staging a reimage")
+                db.commit()
+                return RedirectResponse(url=f"/machines/{machine_id}", status_code=HTTP_303_SEE_OTHER)
             stage_machine(db, machine, actor=user, image=assigned)
         elif machine.state == MachineState.staged.value:
             if assigned is None:
@@ -318,6 +322,24 @@ def machine_enable(machine_id: int, db: Session = Depends(get_db), user: str = D
     disable_machine(db, machine, actor=user, disabled=False)
     db.commit()
     return RedirectResponse(url=f"/machines/{machine_id}", status_code=HTTP_303_SEE_OTHER)
+
+
+@router.post("/machines/{machine_id}/delete")
+def machine_delete(
+    request: Request,
+    machine_id: int,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_user),
+):
+    machine = _machine_or_404(db, machine_id)
+    try:
+        deleted_id = delete_machine(db, machine, actor=user)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return _detail(request, db, machine, error=str(exc))
+    remove_machine_seed_tree(deleted_id)
+    return RedirectResponse(url="/machines", status_code=HTTP_303_SEE_OTHER)
 
 
 @router.post("/machines/{machine_id}/account")

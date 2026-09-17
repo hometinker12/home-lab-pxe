@@ -15,6 +15,7 @@ _SLOT = {
     "boot.wim": "boot_wim_path",
     "install.wim": "install_wim_path",
     "iso": "iso_path",
+    "image.iso": "iso_path",
 }
 
 

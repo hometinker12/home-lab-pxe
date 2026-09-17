@@ -66,6 +66,8 @@ class Settings:
     smb_host: str
     smb_user: str
     smb_password: str
+    nfs_host: str
+    nfs_export: str
 
 
 def _database_url() -> str:
@@ -101,6 +103,16 @@ def _host_from_public_url(public: str) -> str:
     return host or "127.0.0.1"
 
 
+def _nfs_export_path() -> str:
+    raw = (os.getenv("PXE_NFS_EXPORT") or "").strip().replace("\\", "/")
+    default = "/var/lib/pxe/images/nfs"
+    if not raw:
+        return default
+    if not raw.startswith("/") or ".." in raw.split("/"):
+        return default
+    return raw.rstrip("/") or default
+
+
 def validate_smb_user(value: str) -> str:
     text = (value or "").strip()
     if not _SMB_USER_RE.match(text):
@@ -124,6 +136,7 @@ def get_settings() -> Settings:
     if smb_password and not _SMB_PASSWORD_RE.match(smb_password):
         smb_password = ""
     smb_host = (os.getenv("PXE_SMB_HOST") or "").strip() or _host_from_public_url(public)
+    nfs_host = (os.getenv("PXE_NFS_HOST") or "").strip() or smb_host
     return Settings(
         http_bind=os.getenv("PXE_HTTP_BIND", "0.0.0.0").strip() or "0.0.0.0",
         http_port=int(os.getenv("PXE_HTTP_PORT") or os.getenv("HTTP_PORT") or "8080"),
@@ -154,6 +167,8 @@ def get_settings() -> Settings:
         smb_host=smb_host,
         smb_user=smb_user,
         smb_password=smb_password,
+        nfs_host=nfs_host,
+        nfs_export=_nfs_export_path(),
     )
 
 

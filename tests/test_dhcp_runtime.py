@@ -16,6 +16,8 @@ def test_settings_saves_dhcp_toggle_and_options(client, tmp_path):
     assert "same physical machine" in page.text
     assert "mandatory" in page.text
     assert "undionly.kpxe" in page.text
+    assert "Already iPXE" in page.text
+    assert "exec format error" in page.text
     assert 'data-dhcp-mode="authoritative"' in page.text
     assert "dhcp-form" in page.text
     pxe = client.post(
@@ -101,6 +103,7 @@ def test_settings_can_toggle_tftp_separately(client):
     assert enabled_path().read_text(encoding="utf-8").strip() == "1"
     assert tftp_enabled_path().read_text(encoding="utf-8").strip() == "0"
     assert "enable-tftp" not in conf_path().read_text(encoding="utf-8")
+    assert "tftp-single-port" not in conf_path().read_text(encoding="utf-8")
     enabled = client.post(
         "/settings/tftp",
         data={"tftp_enabled": "1"},
@@ -109,6 +112,7 @@ def test_settings_can_toggle_tftp_separately(client):
     assert enabled.status_code in {302, 303}
     assert tftp_enabled_path().read_text(encoding="utf-8").strip() == "1"
     assert "enable-tftp" in conf_path().read_text(encoding="utf-8")
+    assert "tftp-single-port" in conf_path().read_text(encoding="utf-8")
 
 
 def test_external_dhcp_hints_include_option_60(client):
@@ -119,5 +123,6 @@ def test_external_dhcp_hints_include_option_60(client):
     assert hints["bios_filename"] == "undionly.kpxe"
     assert hints["efi_filename"] == "ipxe.efi"
     assert hints["arm_filename"] == "snponly.efi"
+    assert hints["ipxe_filename"] == "boot.ipxe"
     assert hints["ipxe_script"].endswith("/boot.ipxe")
     assert hints["next_server"]

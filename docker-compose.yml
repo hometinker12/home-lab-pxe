@@ -2,11 +2,21 @@ services:
   pxe:
     image: hometinker12/home-lab-pxe:latest
     pull_policy: always
-    # Bridge + published HTTP/HTTPS ports work on Docker Desktop. For real LAN DHCP/TFTP
-    # on Linux, set network_mode: host in docker-compose.override.yml.
+    # Bridge publishes HTTP/HTTPS plus DHCP/TFTP UDP. dnsmasq uses tftp-single-port so
+    # TFTP file transfer stays on UDP 69 through Docker NAT. NFS casper pins NFS 2049
+    # and mountd 20048 so Ubuntu netboot=nfs works through NAT without host port 111
+    # (rpcbind). SMB still needs Linux host networking. For Linux LAN broadcasts, set
+    # network_mode: host in docker-compose.override.yml (ports are ignored).
     ports:
       - "8080:8080"
       - "8443:8443"
+      - "67:67/udp"
+      - "69:69/udp"
+      - "4011:4011/udp"
+      - "2049:2049/tcp"
+      - "2049:2049/udp"
+      - "20048:20048/tcp"
+      - "20048:20048/udp"
     cap_drop:
       - ALL
     cap_add:

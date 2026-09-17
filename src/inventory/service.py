@@ -24,6 +24,7 @@ from ..models import (
 from ..security import decrypt_value, encrypt_value
 from ..seed_store import (
     SeedError,
+    delete_seed,
     ensure_image_seed,
     factory_seed_text,
     snapshot_seed_relative,
@@ -253,19 +254,25 @@ def touch_machine(
     return machine
 
 
+def apply_hostname(machine: Machine, hostname: str) -> str:
+    host = (hostname or "").strip()
+    if len(host) > 253:
+        raise ValueError("Hostname is too long")
+    machine.hostname = host
+    return host
+
+
 def register_machine(db: Session, *, mac: str, hostname: str = "", actor: str) -> Machine:
     mac_n = normalize_mac(mac)
     if find_by_mac(db, mac_n) is not None:
         raise ValueError("A machine with that MAC already exists")
-    host = hostname.strip()
-    if len(host) > 253:
-        raise ValueError("Hostname is too long")
     machine = Machine(
         mac=mac_n,
-        hostname=host,
+        hostname="",
         state=MachineState.pending.value,
         last_seen_at=now(),
     )
+    apply_hostname(machine, hostname)
     db.add(machine)
     db.flush()
     record_activity(db, actor=actor, action="machine.register", detail=mac_n)
@@ -345,7 +352,7 @@ def deploy_machine(db: Session, machine: Machine, *, image: Image, actor: str) -
 
 
 def mark_ready(db: Session, machine: Machine, *, hostname: str, actor: str) -> Machine:
-    machine.hostname = hostname.strip()
+    apply_hostname(machine, hostname)
     if machine.state == MachineState.pending.value:
         machine.state = MachineState.ready.value
     db.add(machine)
@@ -374,8 +381,6 @@ def mark_deployed(db: Session, machine: Machine, *, actor: str = "installer") ->
         if attempt.image_id:
             image_ids.add(int(attempt.image_id))
         if attempt.seed_snapshot_path:
-            from ..seed_store import delete_seed
-
             delete_seed(get_settings().data_dir, attempt.seed_snapshot_path)
     db.add(machine)
     record_activity(db, actor=actor, action="machine.deployed", detail=machine.mac)
@@ -429,6 +434,27 @@ def update_staged_attempt(db: Session, machine: Machine, *, actor: str, image: I
     refresh_install_attempt(db, machine, image)
     record_activity(db, actor=actor, action="machine.staged-update", detail=machine.mac)
     return machine
+
+
+def delete_machine(db: Session, machine: Machine, *, actor: str) -> int:
+    machine_id = int(machine.id or 0)
+    if machine_id < 1:
+        raise ValueError("Unknown machine")
+    mac = machine.mac
+    close_open_attempts(db, machine)
+    for row in db.exec(select(LocalAccount).where(LocalAccount.machine_id == machine_id)).all():
+        db.delete(row)
+    for row in db.exec(select(StagedJob).where(StagedJob.machine_id == machine_id)).all():
+        db.delete(row)
+    for row in db.exec(select(InstallAttempt).where(InstallAttempt.machine_id == machine_id)).all():
+        if row.seed_snapshot_path:
+            delete_seed(get_settings().data_dir, row.seed_snapshot_path)
+        db.delete(row)
+    for row in db.exec(select(BootEvent).where(BootEvent.machine_id == machine_id)).all():
+        db.delete(row)
+    db.delete(machine)
+    record_activity(db, actor=actor, action="machine.delete", detail=mac)
+    return machine_id
 
 
 def create_image(
@@ -515,6 +541,40 @@ def update_image(
         ensure_image_seed(int(image.id), os_family)
     record_activity(db, actor=actor, action="image.update", detail=image.name)
     return image
+
+
+def delete_image(db: Session, image: Image, *, actor: str) -> int:
+    image_id = int(image.id or 0)
+    if image_id < 1:
+        raise ValueError("Unknown image")
+    open_attempts = db.exec(
+        select(InstallAttempt).where(
+            InstallAttempt.image_id == image_id,
+            InstallAttempt.completed_at == None,  # noqa: E711
+        )
+    ).all()
+    if open_attempts:
+        raise ValueError("Cannot delete this image while a machine is installing it")
+    busy = db.exec(
+        select(Machine).where(
+            Machine.assigned_image_id == image_id,
+            col(Machine.state).in_(list(INSTALL_STATES)),
+        )
+    ).all()
+    if busy:
+        raise ValueError("Cannot delete this image while a machine is deploying or staged")
+    for machine in db.exec(select(Machine).where(Machine.assigned_image_id == image_id)).all():
+        machine.assigned_image_id = None
+        db.add(machine)
+    for job in db.exec(select(StagedJob).where(StagedJob.image_id == image_id)).all():
+        db.delete(job)
+    for attempt in db.exec(select(InstallAttempt).where(InstallAttempt.image_id == image_id)).all():
+        attempt.image_id = None
+        db.add(attempt)
+    name = image.name
+    db.delete(image)
+    record_activity(db, actor=actor, action="image.delete", detail=name)
+    return image_id
 
 
 def os_family_for(db: Session, machine: Machine) -> OsFamily:

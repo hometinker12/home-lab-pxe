@@ -9,7 +9,7 @@ One Compose service on a **Linux host** with `network_mode: host`. `scripts/entr
 ```mermaid
 flowchart TB
   subgraph host["Linux host NIC — PXE_BIND_INTERFACE"]
-    LAN["LAN: DHCP / TFTP / HTTP :8080 / HTTPS :8443"]
+    LAN["LAN: DHCP / TFTP / HTTP :8080 / HTTPS :8443 / NFS / SMB"]
   end
 
   subgraph ctr["home-lab-pxe container"]
@@ -64,10 +64,11 @@ flowchart LR
     X["extract_worker"]
   end
   subgraph root["entrypoint.sh then exec gosu"]
-    E["starts dnsmasq + smbd + TLS files"]
+    E["starts dnsmasq + smbd + ganesha.nfsd + TLS files"]
   end
   E --> D["dnsmasq<br/>caps: NET_ADMIN, NET_RAW<br/>ports 67 / 69"]
   E --> SMB["smbd pxe-media<br/>TCP 445, not published on Docker Desktop"]
+  E --> NFS["ganesha.nfsd casper export<br/>TCP/UDP 2049, 20048"]
   E --> pid1
   H --> F["FastAPI app"]
   S --> F

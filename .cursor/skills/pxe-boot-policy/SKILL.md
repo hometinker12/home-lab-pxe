@@ -12,7 +12,7 @@ For every DHCP/iPXE request, resolve the machine then emit **one** script:
 1. **Unknown** (no MAC/UUID in inventory) → register as `pending`, serve the wait/poll menu. Never install.
 2. **Pending / ready** with no operator action → keep waiting.
 3. **Deploying** or **staged reimage** → serve the assigned image:
-   - Linux: kernel/initrd plus cloud-init seed URL.
+   - Linux: kernel/initrd plus cloud-init seed URL. Ubuntu live-server with extracted casper squashfs uses `netboot=nfs nfsroot=…` (HTTP `iso-url=` is fallback).
    - Windows: wimboot/WinPE plus `unattend.xml` URL; Cloudbase-Init seed for first boot.
 4. **Deployed** with no staged job → exit iPXE immediately to local disk (no menu).
 5. **Quarantine / disabled** → wait menu or explicit refuse script; do not boot an image.

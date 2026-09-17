@@ -117,6 +117,11 @@ jobs:
             --tmpfs /var/lib/pxe/images:size=16M,uid=10001,gid=10001,mode=1755 \
             --tmpfs /var/lib/pxe/ssl:size=1M,uid=10001,gid=10001,mode=1777 \
             --tmpfs /run/samba:size=8M,mode=1777 \
+            --tmpfs /run/rpcbind:size=1M,mode=1777 \
+            --tmpfs /run/dbus:size=8M,mode=1777 \
+            --tmpfs /var/run/ganesha:size=8M,mode=1777 \
+            --tmpfs /var/log/ganesha:size=8M,mode=1777 \
+            --tmpfs /var/lib/nfs:size=8M,mode=1777 \
             --tmpfs /var/log/samba:size=8M,mode=1777 \
             --tmpfs /var/lib/samba:size=16M,mode=1777 \
             -p 127.0.0.1:8080:8080 \
@@ -181,10 +186,12 @@ jobs:
             --base-url http://127.0.0.1:8080 \
             --user admin \
             --password container-smoke-password \
-            --smb-password "$SMB_PASS"
+            --smb-password "$SMB_PASS" \
+            --container "$CONTAINER_NAME"
           docker exec "$CONTAINER_NAME" bash -lc 'command -v 7z && 7z i >/dev/null'
           docker exec "$CONTAINER_NAME" pgrep -f src.extract_worker >/dev/null
           docker exec "$CONTAINER_NAME" testparm -s >/dev/null
+          docker exec "$CONTAINER_NAME" pgrep -f ganesha.nfsd >/dev/null
           smb_ok=0
           for i in $(seq 1 15); do
             if docker exec "$CONTAINER_NAME" smbclient //127.0.0.1/pxe-media -U "pxemedia%${SMB_PASS}" -c 'ls' >/dev/null; then

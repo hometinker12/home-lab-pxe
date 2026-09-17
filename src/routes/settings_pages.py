@@ -72,6 +72,8 @@ def _settings_context(
         smb_host=settings.smb_host,
         smb_user=settings.smb_user,
         smb_password_set=smb_password_configured(),
+        nfs_host=settings.nfs_host,
+        nfs_export=settings.nfs_export,
         error=error,
         notice=notice,
         open_section=open_section,

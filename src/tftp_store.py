@@ -16,6 +16,7 @@ _MAX_ENTRIES = 500
 _MAX_PARTS = 8
 _STUB_MARK = b"ipxe-stub"
 EXPECTED_FILES = ("undionly.kpxe", "ipxe.efi", "snponly.efi", "wimboot")
+BOOT_CHAIN_NAME = "boot.ipxe"
 
 
 class TftpStoreError(ValueError):
@@ -26,6 +27,17 @@ def tftp_root() -> Path:
     root = get_settings().tftp_root
     root.mkdir(parents=True, exist_ok=True)
     return root.resolve()
+
+
+def boot_chain_script_body(public_url: str) -> str:
+    base = public_url.rstrip("/")
+    return f"#!ipxe\nchain --replace {base}/ipxe/${{mac:hexhyp}}?uuid=${{uuid}}&ip=${{ip}}\n"
+
+
+def write_boot_chain_script() -> Path:
+    path = tftp_root() / BOOT_CHAIN_NAME
+    path.write_text(boot_chain_script_body(get_settings().public_url), encoding="utf-8")
+    return path
 
 
 def resolve_tftp(relative: str) -> Path:
