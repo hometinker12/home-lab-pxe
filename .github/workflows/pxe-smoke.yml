@@ -100,10 +100,12 @@ jobs:
           set -euo pipefail
           IMAGE_TAG="home-lab-pxe:ci-${GITHUB_SHA}"
           # Local image only. This workflow must never docker login or docker push.
+          # Match docker-publish hardened smoke: read-only rootfs + writable tmpfs
+          # for data/images/ssl/run/samba. Do not tmpfs TFTP — baked iPXE/wimboot live there.
           docker run -d --name pxe-smoke \
             --env-file ci.env \
-            -p 8080:8080 \
-            -p 8443:8443 \
+            --read-only \
+            --cap-drop ALL \
             --cap-add NET_ADMIN \
             --cap-add NET_RAW \
             --cap-add NET_BIND_SERVICE \
@@ -114,6 +116,20 @@ jobs:
             --cap-add DAC_OVERRIDE \
             --cap-add DAC_READ_SEARCH \
             --cap-add SETFCAP \
+            --security-opt no-new-privileges:true \
+            --tmpfs /tmp:size=64M,mode=1777 \
+            --tmpfs /run:size=32M,mode=0755 \
+            --tmpfs /var/lib/pxe/data:size=64M,uid=10001,gid=10001,mode=1777 \
+            --tmpfs /var/lib/pxe/images:size=16M,uid=10001,gid=10001,mode=1755 \
+            --tmpfs /var/lib/pxe/ssl:size=1M,uid=10001,gid=10001,mode=1777 \
+            --tmpfs /var/lib/samba:size=16M,mode=0755 \
+            --tmpfs /var/cache/samba:size=16M,mode=0755 \
+            --tmpfs /var/log/samba:size=8M,mode=1777 \
+            --tmpfs /var/log/ganesha:size=8M,mode=1777 \
+            --tmpfs /var/lib/nfs:size=8M,mode=1777 \
+            --tmpfs /var/lib/misc:size=1M,mode=0755 \
+            -p 8080:8080 \
+            -p 8443:8443 \
             "$IMAGE_TAG"
           ready=0
           for i in $(seq 1 45); do

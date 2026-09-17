@@ -16,7 +16,7 @@ PID_FILE="/tmp/dnsmasq-pxe.pid"
 export PXE_DATA_DIR="$DATA_DIR"
 export PXE_SSL_DIR="$SSL_DIR"
 
-mkdir -p "$TFTP_ROOT" "$DATA_DIR" "$SSL_DIR" || true
+mkdir -p "$TFTP_ROOT" "$DATA_DIR" "$SSL_DIR" /var/lib/misc || true
 mkdir -p "$IMAGE_ROOT/smb" "$IMAGE_ROOT/nfs" /run/rpcbind || true
 
 for f in undionly.kpxe ipxe.efi snponly.efi; do
@@ -170,7 +170,8 @@ import os, re, sys
 pw = os.environ.get("PXE_SMB_PASSWORD") or ""
 sys.exit(0 if re.fullmatch(r"[A-Za-z0-9._~-]{20,128}", pw) else 1)
 PY
-  mkdir -p /var/log/samba /run/samba "$IMAGE_ROOT/smb" || true
+  mkdir -p /var/log/samba /run/samba /var/lib/samba/private /var/cache/samba "$IMAGE_ROOT/smb" || true
+  chmod 0755 /run/samba /var/lib/samba /var/lib/samba/private /var/cache/samba 2>/dev/null || true
   if ! id pxemedia >/dev/null 2>&1; then
     useradd --system --no-create-home --shell /usr/sbin/nologin --uid 10002 --gid 10001 pxemedia >/dev/null 2>&1 || true
   fi

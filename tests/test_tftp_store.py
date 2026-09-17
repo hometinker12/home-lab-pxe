@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import pytest
 from tests.conftest import login
 
+from src.dhcp_runtime import seed_dhcp_runtime
 from src.tftp_store import TftpStoreError, format_bytes, is_stub, resolve_tftp, write_boot_chain_script
 
 
@@ -16,6 +19,20 @@ def test_write_boot_chain_script_uses_public_url(client, tmp_path):
     path = write_boot_chain_script()
     assert path.name == "boot.ipxe"
     assert "http://pxe.test:8080/ipxe/" in path.read_text(encoding="utf-8")
+
+
+def test_write_boot_chain_script_tolerates_read_only_tftp(client, tmp_path, monkeypatch):
+    original = Path.write_text
+
+    def wrapped(self, data, *args, **kwargs):
+        if self.name == "boot.ipxe":
+            raise OSError(30, "Read-only file system")
+        return original(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", wrapped)
+    path = write_boot_chain_script()
+    assert path.name == "boot.ipxe"
+    seed_dhcp_runtime()
 
 
 def test_format_bytes():
