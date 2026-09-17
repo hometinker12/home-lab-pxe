@@ -82,6 +82,8 @@ def discard_uploaded_iso(image: Image) -> bool:
 
 
 def schedule_extract(db: Session, image: Image) -> bool:
+    if image.os_family == OsFamily.tool.value:
+        return False
     if iso_on_disk(image) is None:
         return False
     image.extract_revision = int(image.extract_revision or 0) + 1

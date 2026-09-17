@@ -15,6 +15,7 @@ from .rate_limit import rate_limit_exceeded, rate_limit_rejection_response
 from .routes.activity import router as activity_router
 from .routes.auth_pages import router as auth_router
 from .routes.boot_files import router as boot_files_router
+from .routes.boot_menu import router as boot_menu_router
 from .routes.cloudinit import router as cloudinit_router
 from .routes.events import router as events_router
 from .routes.files import router as files_router
@@ -67,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(boot_files_router)
     app.include_router(machines_router)
     app.include_router(images_router)
+    app.include_router(boot_menu_router)
     app.include_router(files_router)
     app.include_router(settings_router)
     app.include_router(activity_router)

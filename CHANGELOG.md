@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-17
+
+### Added
+
+- **Boot menu** console page (header nav) to edit nested iPXE folders, menu title, and timeouts. First boot seeds Windows, Linux, and Tools. Images must belong to a folder. The last remaining folder cannot be deleted.
+- Tool `os_family` for utility kernels/ISOs that boot from the client menu without deploying.
+
+### Changed
+
+- Unknown and disabled machines no longer poll a wait menu. They sleep the Boot menu unknown/disabled timeout (default 5s, 0 is immediate) and continue to the next boot device.
+- Named, ready, deployed, and timeout-error hosts see an iPXE folder menu with a countdown continue-to-disk default. Selecting a Linux or Windows image starts deploy/stage from the client. Staged/imaging installs still skip the menu.
+- Add image is a popup next to the Images heading, matching Add machine. Edit stays disabled while ISO extraction is queued or running. The add popup no longer includes the long ISO/NFS extract explainer.
+- Boot menu folder rename/delete is a popup (Delete stays disabled while the folder has images or nested folders). Folder up/down controls sit on the tree. Images can be moved to another folder from a popup listed in menu order.
+
 ## [0.3.0] - 2026-09-17
 
 ### Changed

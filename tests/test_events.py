@@ -138,7 +138,8 @@ def test_imaging_timeout_moves_to_timeout_error(client):
     api = client.get(f"/api/machines/{mid}").json()
     assert api["state"] == "timeout_error"
     ipxe = client.get("/ipxe/02-00-00-00-00-36")
-    assert "Waiting for operator" in ipxe.text
+    assert "menu " in ipxe.text
+    assert "choose" in ipxe.text
     assert "kernel" not in ipxe.text
     refused = client.post(f"/api/machines/{mid}/events", json={"event": "phone_home"})
     assert refused.status_code == 409

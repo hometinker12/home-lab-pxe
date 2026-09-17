@@ -91,7 +91,8 @@ main.wrap { padding-block: 1.5rem; }
   gap: 0.75rem;
   flex-wrap: wrap;
 }
-.page-header-row h1 { margin: 0; }
+.page-header-row h1,
+.page-header-row h2 { margin: 0; }
 .page-header h1 { margin: 0; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .page-header .description {
   margin: 0.35rem 0 0;
@@ -451,6 +452,14 @@ textarea.seed-editor {
   gap: 0.25rem;
   max-width: 30rem;
 }
+.form fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+  display: grid;
+  gap: inherit;
+}
 
 .check { display: flex; align-items: center; gap: 0.5rem; font-weight: 400; }
 .check input { margin: 0; }
@@ -460,7 +469,10 @@ label .meta { font-weight: 400; }
 
 /* OS / DHCP conditional fields (no-JS fallback; app.js sets hidden too) */
 form.image-form:has([name="os_family"] option[value="linux"]:checked) [data-os="windows"],
-form.image-form:has([name="os_family"] option[value="windows"]:checked) [data-os="linux"] {
+form.image-form:has([name="os_family"] option[value="tool"]:checked) [data-os="windows"],
+form.image-form:has([name="os_family"] option[value="tool"]:checked) [data-os="linux"],
+form.image-form:has([name="os_family"] option[value="windows"]:checked) [data-os="linux"],
+form.image-form:has([name="os_family"] option[value="windows"]:checked) [data-os="linux,tool"] {
   display: none;
 }
 form.dhcp-form:has([name="mode"] option[value="proxy"]:checked) [data-dhcp-mode="authoritative"],
@@ -826,6 +838,11 @@ body.files-page main.files-shell {
   width: min(28rem, calc(100vw - 2rem));
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
+.modal.modal-wide {
+  width: min(36rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
 .modal::backdrop { background: rgba(0, 0, 0, 0.55); }
 .modal h2 { margin: 0 0 0.4rem; }
 .modal .meta { margin: 0 0 0.9rem; }
@@ -835,6 +852,75 @@ body.files-page main.files-shell {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 0.9rem;
+}
+
+/* ---------- boot menu editor ---------- */
+
+.boot-menu-layout {
+  display: grid;
+  grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+.boot-tree {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+}
+.boot-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding-left: calc(0.2rem + (var(--depth, 0) * 0.9rem));
+}
+.boot-tree-name {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  color: var(--text);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+.boot-tree-name:hover { background: var(--surface-2); }
+.boot-tree-name.is-active {
+  background: var(--info-bg);
+  font-weight: 600;
+}
+.boot-tree-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.05rem;
+}
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+.icon-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-2);
+  filter: none;
+}
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.compact-form label { margin-bottom: 0.5rem; }
+
+@media (max-width: 800px) {
+  .boot-menu-layout { grid-template-columns: 1fr; }
 }
 
 /* ---------- small screens ---------- */

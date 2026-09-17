@@ -6,7 +6,7 @@
     <h1>Machines</h1>
     <button type="button" class="btn-ghost btn-sm" data-open-dialog="add-machine">Add machine</button>
   </div>
-  <p class="description">Every host that PXE-boots checks in here. Unknown hosts wait for operator approval; deployed hosts boot from local disk unless you stage a reimage.</p>
+  <p class="description">Every host that PXE-boots checks in here. Unknown and disabled hosts continue to local disk after a short timeout. Named hosts see the Boot menu folders unless you stage a reimage.</p>
 </header>
 {% if pending %}
 <section class="alert alert-warn">

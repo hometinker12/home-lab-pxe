@@ -42,6 +42,7 @@ def state_label(state: str) -> str:
 class OsFamily(StrEnum):
     linux = "linux"
     windows = "windows"
+    tool = "tool"
 
 
 class AccountKind(StrEnum):
@@ -65,6 +66,22 @@ class User(SQLModel, table=True):
     session_version: int = 0
 
 
+class BootMenuFolder(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    parent_id: int | None = Field(default=None, foreign_key="bootmenufolder.id")
+    name: str = Field(index=True)
+    sort_order: int = 0
+
+
+class BootMenuSettings(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    title: str = "Network Installation Options"
+    continue_label: str = "Continue to next boot device"
+    unknown_timeout_seconds: int = 5
+    menu_timeout_seconds: int = 10
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class Image(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(unique=True, index=True)
@@ -81,6 +98,8 @@ class Image(SQLModel, table=True):
     extract_revision: int = 0
     extract_generation: str = ""
     wim_index: int = 1
+    folder_id: int | None = Field(default=None, foreign_key="bootmenufolder.id")
+    sort_order: int = 0
 
 
 class Machine(SQLModel, table=True):

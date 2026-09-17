@@ -49,11 +49,11 @@ WAIT_STATES = frozenset(
     {
         MachineState.pending.value,
         MachineState.ready.value,
-        MachineState.disabled.value,
         MachineState.timeout_error.value,
     }
 )
-EXTRACT_BLOCKING = frozenset({ExtractStatus.queued.value, ExtractStatus.extracting.value, ExtractStatus.failed.value})
+EXTRACT_IN_PROGRESS = frozenset({ExtractStatus.queued.value, ExtractStatus.extracting.value})
+EXTRACT_BLOCKING = frozenset({*EXTRACT_IN_PROGRESS, ExtractStatus.failed.value})
 
 
 def guest_init_allowed(machine: Machine) -> bool:
@@ -178,6 +178,10 @@ def close_open_attempts(db: Session, machine: Machine) -> None:
         db.add(row)
 
 
+def image_extract_in_progress(image: Image) -> bool:
+    return (image.extract_status or ExtractStatus.idle.value) in EXTRACT_IN_PROGRESS
+
+
 def image_extract_blocking(image: Image) -> bool:
     return (image.extract_status or ExtractStatus.idle.value) in EXTRACT_BLOCKING
 
@@ -188,6 +192,12 @@ def image_deploy_reason(image: Image) -> str:
         return "extraction in progress"
     if status == ExtractStatus.failed.value:
         return "extraction failed"
+    if image.os_family == OsFamily.tool.value:
+        if (image.kernel_path or "").strip() and (image.initrd_path or "").strip():
+            return ""
+        if (image.iso_path or "").strip():
+            return ""
+        return "Tool image needs a kernel and initrd, or an ISO"
     if image.os_family == OsFamily.linux.value:
         if (image.kernel_path or "").strip() and (image.initrd_path or "").strip():
             return ""
@@ -380,6 +390,8 @@ def bump_instance_id(machine: Machine) -> None:
 
 
 def deploy_machine(db: Session, machine: Machine, *, image: Image, actor: str) -> Machine:
+    if image.os_family == OsFamily.tool.value:
+        raise ValueError("Tool images boot from the PXE menu and cannot be deployed")
     assert_image_deployable(image)
     machine.assigned_image_id = image.id
     machine.state = MachineState.deploying.value
@@ -494,6 +506,8 @@ def stage_machine(
     target = image or get_image(db, machine.assigned_image_id)
     if target is None:
         raise ValueError("Assign an image before staging a reimage")
+    if target.os_family == OsFamily.tool.value:
+        raise ValueError("Tool images boot from the PXE menu and cannot be staged")
     assert_image_deployable(target)
     if image is not None:
         machine.assigned_image_id = image.id
@@ -559,6 +573,7 @@ def create_image(
     iso_path: str = "",
     cmdline: str = "",
     wim_index: int = 1,
+    folder_id: int | None = None,
     actor: str,
 ) -> Image:
     trimmed = name.strip()
@@ -580,7 +595,10 @@ def create_image(
     )
     db.add(image)
     db.flush()
-    if image.id is not None:
+    from .boot_menu import place_new_image
+
+    place_new_image(db, image, folder_id=folder_id, os_family=os_family)
+    if image.id is not None and os_family != OsFamily.tool:
         ensure_image_seed(int(image.id), os_family)
     record_activity(db, actor=actor, action="image.create", detail=image.name)
     return image
@@ -600,6 +618,7 @@ def update_image(
     iso_path: str | None = None,
     cmdline: str | None = None,
     wim_index: int | None = None,
+    folder_id: int | None = None,
     actor: str,
 ) -> Image:
     new_name = name.strip()
@@ -625,8 +644,15 @@ def update_image(
         image.cmdline = cmdline.strip()
     if wim_index is not None:
         image.wim_index = max(1, int(wim_index))
+    if folder_id is not None:
+        from .boot_menu import get_folder, set_image_folder
+
+        folder = get_folder(db, folder_id)
+        if folder is None:
+            raise ValueError("Unknown boot-menu folder")
+        set_image_folder(db, image, folder, actor=actor)
     db.add(image)
-    if image.id is not None:
+    if image.id is not None and os_family != OsFamily.tool:
         ensure_image_seed(int(image.id), os_family)
     record_activity(db, actor=actor, action="image.update", detail=image.name)
     return image
@@ -669,9 +695,12 @@ def delete_image(db: Session, image: Image, *, actor: str) -> int:
 def os_family_for(db: Session, machine: Machine) -> OsFamily:
     image = get_image(db, machine.assigned_image_id)
     if image is not None:
-        return OsFamily(image.os_family)
+        try:
+            return OsFamily(image.os_family)
+        except ValueError:
+            return OsFamily.linux
     overlay = load_overlay(machine.guest_overlay)
     raw = str(overlay.get("os_family") or "").lower()
-    if raw in {OsFamily.linux.value, OsFamily.windows.value}:
+    if raw in {OsFamily.linux.value, OsFamily.windows.value, OsFamily.tool.value}:
         return OsFamily(raw)
     return OsFamily.linux

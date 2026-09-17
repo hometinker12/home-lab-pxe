@@ -2,18 +2,23 @@
 {% block title %}Images — home-lab-pxe{% endblock %}
 {% block body %}
 <header class="page-header">
-  <h1>Images</h1>
+  <div class="page-header-row">
+    <h1>Images</h1>
+    <button type="button" class="btn-ghost btn-sm" data-open-dialog="add-image">Add image</button>
+  </div>
   <p class="description">Boot payloads served over PXE. Uploading an Ubuntu live-server or Windows Server ISO returns immediately; a background worker extracts netboot files and then deletes the uploaded ISO when NFS or SMB media is ready. Linux kernel/initrd pairs and custom Windows boot.wim uploads still work.</p>
 </header>
-{% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+{% if error and not add_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Name</th><th>OS</th><th>Arch</th><th>Extract</th><th>Paths</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>OS</th><th>Folder</th><th>Arch</th><th>Extract</th><th>Paths</th><th></th></tr></thead>
     <tbody>
       {% for img in images %}
+      {% set extract_busy = (img.extract_status or 'idle') in ('queued', 'extracting') %}
       <tr data-image-id="{{ img.id }}">
         <td>{{ img.name }}</td>
         <td>{{ img.os_family }}</td>
+        <td>{{ folder_paths.get(img.id, "—") }}</td>
         <td>{{ img.arch }}</td>
         <td class="extract-status" data-status="{{ img.extract_status or 'idle' }}">
           {% if img.extract_status == 'queued' %}<span class="badge badge-pending">queued</span>
@@ -25,52 +30,68 @@
         </td>
         <td><code>{{ img.kernel_path or img.boot_wim_path or img.iso_path or "—" }}</code></td>
         <td>
-          <a class="btn-ghost btn-sm" href="/images/{{ img.id }}">Edit</a>
+          {% if extract_busy %}
+          <button type="button" class="btn-ghost btn-sm" data-image-edit disabled title="Wait until extraction finishes">Edit</button>
+          {% else %}
+          <a class="btn-ghost btn-sm" data-image-edit href="/images/{{ img.id }}">Edit</a>
+          {% endif %}
           <form method="post" action="/images/{{ img.id }}/delete" class="inline-form" onsubmit="return confirm('Delete this image and its extracted files?');">
             <button type="submit" class="btn-danger btn-sm">Delete</button>
           </form>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="empty">No images registered. Add one below to start deploying.</td></tr>
+      <tr><td colspan="7" class="empty">No images registered. Use Add image to start deploying.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
-<section class="card">
-  <h2>Add image</h2>
-  <p class="meta">Ubuntu live-server ISOs extract <code>casper/</code>, <code>.disk/</code>, <code>dists/</code>, and <code>pool/</code> under <code>images/nfs/{id}/{rev}</code>; that folder is published as its own NFS export. The installer then fetches per-machine autoinstall over HTTP (<code>/cloud-init/{id}/user-data</code>), not from the NFS tree. HTTP <code>iso-url=</code> remains the fallback when the ISO has no squashfs. The uploaded ISO is deleted after NFS or Windows media extract. Windows Server extraction publishes Setup media on an authenticated read-only SMB share; a stock ISO does <strong>not</strong> include Cloudbase-Init. Paths are relative to the image volume (no <code>../</code>).</p>
-  <form method="post" action="/images" enctype="multipart/form-data" class="image-form form">
-    <label>Name <input name="name" required></label>
+<dialog class="modal modal-wide" id="add-image"{% if add_open %} open{% endif %}>
+  <form method="post" action="/images" enctype="multipart/form-data" class="image-form form"
+        data-folder-linux="{{ folder_defaults.get('linux', '') }}"
+        data-folder-windows="{{ folder_defaults.get('windows', '') }}"
+        data-folder-tool="{{ folder_defaults.get('tool', '') }}">
+    <h2>Add image</h2>
+    {% if error and add_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+    <label>Name <input name="name" required value="{{ add.name }}" autocomplete="off" autofocus></label>
     <label>OS
       <select name="os_family">
-        <option value="linux">linux</option>
-        <option value="windows">windows</option>
+        <option value="linux" {% if add.os_family == "linux" %}selected{% endif %}>linux</option>
+        <option value="windows" {% if add.os_family == "windows" %}selected{% endif %}>windows</option>
+        <option value="tool" {% if add.os_family == "tool" %}selected{% endif %}>tool</option>
       </select>
     </label>
-    <label>Arch <input name="arch" value="x86_64"></label>
+    <label>Folder
+      <select name="folder_id" required{% if add.folder_id %} data-user-picked="1"{% endif %}>
+        {% for fid, path in folder_options %}
+        <option value="{{ fid }}" {% if add.folder_id and add.folder_id|string == fid|string %}selected{% endif %}>{{ path }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Arch <input name="arch" value="{{ add.arch or 'x86_64' }}"></label>
     <div data-os="windows">
-      <label>boot.wim path <input name="boot_wim_path"></label>
+      <label>boot.wim path <input name="boot_wim_path" value="{{ add.boot_wim_path }}"></label>
       <label>boot.wim file <input type="file" name="boot_wim_file"></label>
-      <label>install.wim path <input name="install_wim_path"></label>
+      <label>install.wim path <input name="install_wim_path" value="{{ add.install_wim_path }}"></label>
       <label>install.wim file <input type="file" name="install_wim_file"></label>
-      <label>WIM index <input name="wim_index" type="number" min="1" value="1"></label>
+      <label>WIM index <input name="wim_index" type="number" min="1" value="{{ add.wim_index or 1 }}"></label>
     </div>
-    <label>ISO path <input name="iso_path" placeholder="ubuntu/ubuntu-24.04.iso"></label>
+    <label>ISO path <input name="iso_path" placeholder="ubuntu/ubuntu-24.04.iso" value="{{ add.iso_path }}"></label>
     <label>ISO file <input type="file" name="iso_file" accept=".iso,.img"></label>
-    <label>Extra cmdline <input name="cmdline"></label>
-    <details class="advanced-settings" data-os="linux">
+    <label>Extra cmdline <input name="cmdline" value="{{ add.cmdline }}"></label>
+    <details class="advanced-settings" data-os="linux,tool">
       <summary>Advanced Settings</summary>
       <div class="advanced-settings-body">
-        <label>Kernel path <input name="kernel_path" placeholder="ubuntu/vmlinuz"></label>
+        <label>Kernel path <input name="kernel_path" placeholder="ubuntu/vmlinuz" value="{{ add.kernel_path }}"></label>
         <label>Kernel file <input type="file" name="kernel_file"></label>
-        <label>Initrd path <input name="initrd_path" placeholder="ubuntu/initrd"></label>
+        <label>Initrd path <input name="initrd_path" placeholder="ubuntu/initrd" value="{{ add.initrd_path }}"></label>
         <label>Initrd file <input type="file" name="initrd_file"></label>
       </div>
     </details>
-    <div class="btn-row">
-      <button type="submit">Add</button>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" data-close-dialog>Cancel</button>
+      <button type="submit">Add image</button>
     </div>
   </form>
-</section>
+</dialog>
 {% endblock %}

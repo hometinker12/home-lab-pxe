@@ -8,7 +8,15 @@ from ..auth import require_user
 from ..db import get_db
 from ..extract_worker import schedule_extract
 from ..image_store import UploadError, has_upload, relative_slot_path, remove_image_tree, save_upload_file
-from ..inventory.service import create_image, delete_image, get_image, list_images, update_image
+from ..inventory.boot_menu import default_folder_ids, folder_options, folder_path, get_folder
+from ..inventory.service import (
+    create_image,
+    delete_image,
+    get_image,
+    image_extract_in_progress,
+    list_images,
+    update_image,
+)
 from ..models import OsFamily
 from ..paths import UnsafePathError, resolve_under
 from ..seed_render import validate_seed_template
@@ -25,7 +33,22 @@ _PLACEHOLDER_HELP = (
 
 
 def _family(os_family: str) -> OsFamily:
-    return OsFamily.windows if os_family.strip().lower() == OsFamily.windows.value else OsFamily.linux
+    raw = os_family.strip().lower()
+    if raw == OsFamily.windows.value:
+        return OsFamily.windows
+    if raw == OsFamily.tool.value:
+        return OsFamily.tool
+    return OsFamily.linux
+
+
+def _folder_id(form) -> int | None:
+    raw = _form_str(form, "folder_id")
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError("Folder is required") from exc
 
 
 def _form_str(form, name: str, default: str = "") -> str:
@@ -92,6 +115,8 @@ def _apply_uploads(
 
 
 def _save_image_seed(image_id: int, os_family: OsFamily, form) -> None:
+    if os_family == OsFamily.tool:
+        return
     field = "unattend_xml" if os_family == OsFamily.windows else "user_data"
     if field not in form:
         return
@@ -102,9 +127,51 @@ def _save_image_seed(image_id: int, os_family: OsFamily, form) -> None:
     write_image_seed(image_id, os_family, body)
 
 
+def _empty_add_values() -> dict[str, str]:
+    return {
+        "name": "",
+        "os_family": "linux",
+        "arch": "x86_64",
+        "folder_id": "",
+        "boot_wim_path": "",
+        "install_wim_path": "",
+        "wim_index": "1",
+        "iso_path": "",
+        "cmdline": "",
+        "kernel_path": "",
+        "initrd_path": "",
+    }
+
+
+def _add_values_from_form(form) -> dict[str, str]:
+    values = _empty_add_values()
+    for key in values:
+        values[key] = _form_str(form, key, values[key])
+    return values
+
+
+def _image_list_context(request: Request, db: Session, *, error=None, add_open: bool = False, add: dict | None = None):
+    images = list_images(db)
+    paths = {}
+    for img in images:
+        folder = get_folder(db, img.folder_id)
+        paths[img.id] = folder_path(db, folder) if folder else "—"
+    return render(
+        request,
+        "images.html",
+        images=images,
+        folder_paths=paths,
+        folder_options=folder_options(db),
+        folder_defaults=default_folder_ids(db),
+        error=error,
+        add_open=add_open,
+        add=add or _empty_add_values(),
+    )
+
+
 def _image_detail_context(request: Request, db: Session, image, *, error=None):
-    family = OsFamily(image.os_family)
-    seed = read_image_seed(int(image.id), family)
+    family = OsFamily(image.os_family) if image.os_family in {e.value for e in OsFamily} else OsFamily.linux
+    seed = "" if family == OsFamily.tool else read_image_seed(int(image.id), family)
     return render(
         request,
         "image_detail.html",
@@ -112,6 +179,9 @@ def _image_detail_context(request: Request, db: Session, image, *, error=None):
         seed_text=seed,
         seed_field="unattend_xml" if family == OsFamily.windows else "user_data",
         placeholder_help=_PLACEHOLDER_HELP,
+        folder_options=folder_options(db),
+        folder_defaults=default_folder_ids(db),
+        extract_busy=image_extract_in_progress(image),
         error=error,
     )
 
@@ -132,6 +202,7 @@ def api_images(db: Session = Depends(get_db), user: str = Depends(require_user))
             "extract_status": img.extract_status or "idle",
             "extract_error": img.extract_error or "",
             "wim_index": img.wim_index or 1,
+            "folder_id": img.folder_id,
         }
         for img in list_images(db)
     ]
@@ -139,7 +210,7 @@ def api_images(db: Session = Depends(get_db), user: str = Depends(require_user))
 
 @router.get("/images", response_class=HTMLResponse)
 def images_page(request: Request, db: Session = Depends(get_db), user: str = Depends(require_user)):
-    return render(request, "images.html", images=list_images(db), error=None)
+    return _image_list_context(request, db)
 
 
 @router.get("/images/{image_id}", response_class=HTMLResponse)
@@ -159,6 +230,7 @@ async def images_create(request: Request, db: Session = Depends(get_db), user: s
             name=_form_str(form, "name"),
             os_family=_family(_form_str(form, "os_family")),
             arch=_form_str(form, "arch", "x86_64"),
+            folder_id=_folder_id(form),
             actor=user,
         )
         db.flush()
@@ -176,13 +248,14 @@ async def images_create(request: Request, db: Session = Depends(get_db), user: s
             iso_path=paths["iso_path"],
             cmdline=_form_str(form, "cmdline"),
             wim_index=_wim_index(form) if _form_str(form, "wim_index") else 1,
+            folder_id=_folder_id(form),
             actor=user,
         )
         schedule_extract(db, image)
         db.commit()
     except (ValueError, UploadError, SeedError) as exc:
         db.rollback()
-        return render(request, "images.html", images=list_images(db), error=str(exc))
+        return _image_list_context(request, db, error=str(exc), add_open=True, add=_add_values_from_form(form))
     if has_upload(_form_file(form, "iso_file")):
         return RedirectResponse(url="/images", status_code=HTTP_303_SEE_OTHER)
     return RedirectResponse(url=f"/images/{image.id}", status_code=HTTP_303_SEE_OTHER)
@@ -195,6 +268,10 @@ async def images_update(
     image = get_image(db, image_id)
     if image is None:
         raise HTTPException(status_code=404, detail="unknown image")
+    if image_extract_in_progress(image):
+        return _image_detail_context(
+            request, db, image, error="Wait until extraction finishes before editing this image"
+        )
     form = await request.form()
     try:
         family = _family(_form_str(form, "os_family"))
@@ -212,6 +289,7 @@ async def images_update(
             iso_path=paths["iso_path"],
             cmdline=_form_str(form, "cmdline"),
             wim_index=_wim_index(form),
+            folder_id=_folder_id(form),
             actor=user,
         )
         _save_image_seed(int(image.id), family, form)
@@ -235,7 +313,7 @@ def image_delete(request: Request, image_id: int, db: Session = Depends(get_db),
         db.commit()
     except ValueError as exc:
         db.rollback()
-        return render(request, "images.html", images=list_images(db), error=str(exc))
+        return _image_list_context(request, db, error=str(exc))
     remove_image_tree(deleted_id)
     return RedirectResponse(url="/images", status_code=HTTP_303_SEE_OTHER)
 
@@ -247,6 +325,8 @@ def image_retry_extract(
     image = get_image(db, image_id)
     if image is None:
         raise HTTPException(status_code=404, detail="unknown image")
+    if image.os_family == OsFamily.tool.value:
+        return _image_detail_context(request, db, image, error="Tool images are not extracted")
     if not schedule_extract(db, image):
         db.rollback()
         return _image_detail_context(request, db, image, error="ISO file is not on disk")
@@ -259,6 +339,12 @@ def image_reset_seed(request: Request, image_id: int, db: Session = Depends(get_
     image = get_image(db, image_id)
     if image is None:
         raise HTTPException(status_code=404, detail="unknown image")
+    if image.os_family == OsFamily.tool.value:
+        return _image_detail_context(request, db, image, error="Tool images do not have guest-init seeds")
+    if image_extract_in_progress(image):
+        return _image_detail_context(
+            request, db, image, error="Wait until extraction finishes before editing this image"
+        )
     try:
         reset_image_seed(int(image.id), image.os_family)
     except SeedError as exc:
