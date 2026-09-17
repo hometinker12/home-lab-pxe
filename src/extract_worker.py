@@ -178,12 +178,8 @@ def _publish_linux_tree(staging: Path, image_id: int, revision: int, media_relat
         if nfs_pub.exists():
             shutil.rmtree(nfs_pub)
         nfs_pub.mkdir(parents=True)
-        casper = staging / "casper"
-        disk = staging / ".disk"
-        if casper.exists():
-            shutil.move(str(casper), str(nfs_pub / "casper"))
-        if disk.exists():
-            shutil.move(str(disk), str(nfs_pub / ".disk"))
+        for child in list(staging.iterdir()):
+            shutil.move(str(child), str(nfs_pub / child.name))
         _world_readable(nfs_pub)
         shutil.rmtree(staging, ignore_errors=True)
         return extracts_pub, nfs_generation(image_id, revision)
@@ -323,6 +319,18 @@ def nfs_tree_has_squashfs(image: Image) -> bool:
     return casper_has_squashfs(root)
 
 
+def nfs_tree_has_apt_repo(image: Image) -> bool:
+    if image.id is None:
+        return False
+    revision = int(image.extract_revision or 0)
+    if revision < 1:
+        return False
+    dists = get_settings().image_root / "nfs" / str(int(image.id)) / str(revision) / "dists"
+    if not dists.is_dir():
+        return False
+    return any((child / "Release").is_file() for child in dists.iterdir() if child.is_dir())
+
+
 def linux_needs_nfs_backfill(image: Image) -> bool:
     if image.os_family != OsFamily.linux.value:
         return False
@@ -332,7 +340,7 @@ def linux_needs_nfs_backfill(image: Image) -> bool:
         return False
     generation = (image.extract_generation or "").replace("\\", "/").strip()
     if generation.startswith("nfs/"):
-        return not nfs_tree_has_squashfs(image)
+        return not nfs_tree_has_squashfs(image) or not nfs_tree_has_apt_repo(image)
     if generation.startswith("linux/"):
         return False
     return True

@@ -22,6 +22,24 @@ def test_literal_password_rejected():
         validate_seed_template(body, OsFamily.linux)
 
 
+def test_complete_linux_user_data_fills_unattended_keys():
+    from src.seed_render import complete_linux_user_data
+
+    filled = complete_linux_user_data("#cloud-config\nautoinstall:\n  version: 1\n  ssh:\n    install-server: true\n")
+    assert "locale:" in filled
+    assert "storage:" in filled
+    assert "ubuntu-server-minimal" in filled
+    assert "offline-install" in filled
+    assert "proxy:" in filled
+
+
+def test_complete_linux_user_data_skips_non_autoinstall():
+    from src.seed_render import complete_linux_user_data
+
+    text = "#cloud-config\nhostname: stay\n"
+    assert complete_linux_user_data(text) == text
+
+
 def test_seed_path_confinement(tmp_path, monkeypatch):
     monkeypatch.setenv("PXE_IMAGE_ROOT", str(tmp_path))
     clear_settings_cache()

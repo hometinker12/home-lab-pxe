@@ -44,6 +44,8 @@ def test_cloud_init_injects_root_and_bumps_instance_id(client):
     assert "root" in user_data
     assert "root-secret" not in user_data
     assert "$6$" in user_data
+    assert "storage:" in user_data
+    assert "locale:" in user_data
     assert f"/api/machines/{mid}/events" in user_data
     assert first_id in meta
     disk = read_image_seed(image_id, OsFamily.linux)

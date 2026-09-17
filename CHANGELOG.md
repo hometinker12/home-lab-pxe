@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Ubuntu live-server autoinstall now fills locale, keyboard, network, storage, source, and apt so Subiquity does not prompt. NFS extracts also include `dists/` and `pool/` so `file:/cdrom` apt has a Release file; re-upload the ISO to refresh an existing casper-only extract.
+
 ## [0.2.0] - 2026-09-17
 
 ### Changed

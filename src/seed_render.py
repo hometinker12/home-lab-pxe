@@ -125,6 +125,67 @@ def validate_seed_template(text: str, os_family: OsFamily | str) -> None:
         raise SeedError("user-data must be a YAML mapping")
 
 
+AUTOINSTALL_UNATTENDED = {
+    "locale": "en_US.UTF-8",
+    "keyboard": {"layout": "us"},
+    "refresh-installer": {"update": False},
+    "source": {"id": "ubuntu-server-minimal", "search_drivers": False},
+    "network": {
+        "version": 2,
+        "ethernets": {
+            "zz-all-en": {"match": {"name": "en*"}, "dhcp4": True},
+            "zz-all-eth": {"match": {"name": "eth*"}, "dhcp4": True},
+        },
+    },
+    "proxy": None,
+    "apt": {
+        "preserve_sources_list": False,
+        "geoip": False,
+        "fallback": "offline-install",
+        "mirror-selection": {
+            "primary": [
+                {"uri": "http://archive.ubuntu.com/ubuntu", "arches": ["amd64", "i386"]},
+                {
+                    "uri": "http://ports.ubuntu.com/ubuntu-ports",
+                    "arches": ["arm64", "armhf", "ppc64el", "riscv64", "s390x"],
+                },
+            ]
+        },
+    },
+    "storage": {"layout": {"name": "lvm"}},
+    "shutdown": "reboot",
+    "updates": "security",
+    "early-commands": [
+        "rm -f /etc/apt/sources.list.d/cdrom.list /etc/apt/sources.list.d/cdrom-sources.list",
+        "sed -i.bak -e '/cdrom/d' -e '\\#file:/cdrom#d' /etc/apt/sources.list || true",
+    ],
+}
+
+
+def complete_linux_user_data(rendered: str) -> str:
+    """Fill missing Subiquity autoinstall keys so NFS installs stay non-interactive."""
+    try:
+        parsed = yaml.safe_load(rendered)
+    except yaml.YAMLError:
+        return rendered
+    if not isinstance(parsed, dict):
+        return rendered
+    auto = parsed.get("autoinstall")
+    if not isinstance(auto, dict):
+        return rendered
+    for key, value in AUTOINSTALL_UNATTENDED.items():
+        if key not in auto:
+            auto[key] = value
+        elif key == "apt" and isinstance(value, dict) and isinstance(auto.get("apt"), dict):
+            for apt_key, apt_val in value.items():
+                auto["apt"].setdefault(apt_key, apt_val)
+    parsed["autoinstall"] = auto
+    dumped = yaml.safe_dump(parsed, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    if not dumped.lstrip().startswith("#cloud-config"):
+        dumped = "#cloud-config\n" + dumped
+    return dumped if dumped.endswith("\n") else dumped + "\n"
+
+
 def dummy_values() -> dict[str, Any]:
     return {
         "hostname": "dummyhost",
@@ -280,6 +341,7 @@ def render_selected_seed(
                 raw = str(overlay.get("raw_overlay") or "").strip()
                 if raw:
                     rendered = rendered.rstrip() + "\n" + raw + "\n"
+            rendered = complete_linux_user_data(rendered)
             yaml.safe_load(rendered)
     except (SeedRenderError, ET.ParseError, yaml.YAMLError) as exc:
         raise SeedRenderError("seed_render_failed") from exc

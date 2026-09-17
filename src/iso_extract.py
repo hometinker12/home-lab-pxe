@@ -19,7 +19,7 @@ class ExtractError(ValueError):
     pass
 
 
-LINUX_MEDIA_PREFIXES = ("casper", ".disk")
+LINUX_MEDIA_PREFIXES = ("casper", ".disk", "dists", "pool")
 
 
 class ArchiveRunner(Protocol):
@@ -79,7 +79,7 @@ def select_linux_members(members: list[str]) -> tuple[str, str]:
 
 def _is_linux_media_member(member: str) -> bool:
     lower = member.lower()
-    return lower.startswith("casper/") or lower.startswith(".disk/")
+    return any(lower == prefix or lower.startswith(f"{prefix}/") for prefix in LINUX_MEDIA_PREFIXES)
 
 
 def linux_media_bytes(sizes: dict[str, int]) -> int:

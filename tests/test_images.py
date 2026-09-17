@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 from tests.conftest import login
@@ -364,6 +365,12 @@ class _LinuxNfsRunner:
         (casper / "initrd").write_bytes(b"ird")
         (casper / "filesystem.squashfs").write_bytes(b"squashok")
         (disk / "casper-uuid-generic").write_bytes(b"uuid")
+        release = dest / "dists" / "resolute" / "Release"
+        release.parent.mkdir(parents=True, exist_ok=True)
+        release.write_bytes(b"rel")
+        deb = dest / "pool" / "main" / "a" / "hello.deb"
+        deb.parent.mkdir(parents=True, exist_ok=True)
+        deb.write_bytes(b"deb")
 
 
 def test_linux_iso_publishes_nfs_casper(client, tmp_path):
@@ -389,10 +396,42 @@ def test_linux_iso_publishes_nfs_casper(client, tmp_path):
         assert image.iso_path == ""
     squash = tmp_path / "images" / "nfs" / "1" / "1" / "casper" / "filesystem.squashfs"
     assert squash.read_bytes() == b"squashok"
+    assert (tmp_path / "images" / "nfs" / "1" / "1" / "dists" / "resolute" / "Release").read_bytes() == b"rel"
     kernel = tmp_path / "images" / "uploads" / "1" / "extracts" / "1" / "kernel"
     assert kernel.read_bytes() == b"kern"
     iso = tmp_path / "images" / "uploads" / "1" / "image.iso"
     assert not iso.exists()
+
+
+def test_linux_nfs_backfill_requeues_missing_apt_repo(client, tmp_path):
+    login(client)
+    client.post(
+        "/images",
+        data={"name": "ubuntu-nfs-apt", "os_family": "linux", "arch": "x86_64"},
+        files={"iso_file": ("ubuntu.iso", b"iso-bytes", "application/octet-stream")},
+        follow_redirects=False,
+    )
+    from src.db import session_scope
+    from src.extract_worker import requeue_linux_nfs_backfill
+    from src.models import Image
+
+    with session_scope() as db:
+        run_one_job(1, 1, runner=_LinuxNfsRunner())
+        db.commit()
+    shutil.rmtree(tmp_path / "images" / "nfs" / "1" / "1" / "dists")
+    iso = tmp_path / "images" / "uploads" / "1" / "image.iso"
+    iso.parent.mkdir(parents=True, exist_ok=True)
+    iso.write_bytes(b"iso")
+    with session_scope() as db:
+        image = db.get(Image, 1)
+        image.iso_path = "uploads/1/image.iso"
+        db.add(image)
+        db.commit()
+    requeue_linux_nfs_backfill()
+    with session_scope() as db:
+        image = db.get(Image, 1)
+        assert image.extract_status == ExtractStatus.queued.value
+        assert int(image.extract_revision) == 2
 
 
 def test_linux_nfs_backfill_requeues_legacy_extract(client, tmp_path):
