@@ -65,7 +65,7 @@ Same general shape as other hometinker12 services so Cursor rules stay familiar:
 
 One image, one Compose service for v1 (dnsmasq + uvicorn via `scripts/entrypoint.sh`).
 
-- **`network_mode: host`** on Linux (DHCP broadcasts do not traverse a user-defined bridge).
+- **`network_mode: host`** on Linux (DHCP broadcasts do not traverse a user-defined bridge). Default Compose still publishes UDP 67/69/4011 plus HTTP/HTTPS for Docker Desktop; dnsmasq `tftp-single-port` keeps TFTP on 69 through NAT.
 - Capabilities: `NET_ADMIN`, `NET_RAW`, and bind to 67/69 — **not** `privileged: true` unless a later milestone proves it is required.
 - Volumes: `/var/lib/pxe/data` (SQLite), `/var/lib/pxe/images` (operator-imported payloads), `/var/lib/pxe/tftp` (iPXE binaries), `/var/lib/pxe/ssl` (TLS cert + key).
 - Web process runs as non-root after dnsmasq is started; document the split if a single PID 1 supervisor is cleaner.
@@ -119,7 +119,7 @@ Installer success: Linux cloud-init `phone_home` or a Windows Setup/Cloudbase-In
 
 Operator-imported artifacts under `PXE_IMAGE_ROOT` (not git). The console can **upload** kernel/initrd/`boot.wim`/`install.wim`/ISO files or register relative paths already on the volume, and **edit** existing image records (metadata, replacement uploads, and the image seed file). Linux image forms hide WIM fields; Windows forms hide kernel/initrd.
 
-A registered ISO is saved immediately. A dedicated extractor process unpacks Ubuntu live-server `casper/` payloads or a full Windows Server media tree. Image status is `idle | queued | extracting | ready | failed`. Managed Ubuntu installs use kernel/initrd plus HTTP `url=` to the ISO and autoinstall. Managed Windows installs boot WinPE via `wimboot` and run Setup from an authenticated read-only SMB share. ISO-only `sanboot` remains the fallback when there is no kernel/WIM pair and extraction did not fail.
+A registered ISO is saved immediately. A dedicated extractor process unpacks Ubuntu live-server `casper/` + `.disk/` onto a read-only NFS export, or a full Windows Server media tree onto SMB. Image status is `idle | queued | extracting | ready | failed`. Managed Ubuntu installs use kernel/initrd plus `netboot=nfs nfsroot=…` when casper squashfs is present; HTTP `iso-url=` / `url=` remains the fallback. Managed Windows installs boot WinPE via `wimboot` and run Setup from an authenticated read-only SMB share. ISO-only `sanboot` remains the fallback when there is no kernel/WIM pair and extraction did not fail.
 
 Each Linux image has a cloud-init **user-data** file; each Windows image has **unattend.xml**. A machine may store its own file of the same kind; a non-empty machine file replaces the image file (no YAML/XML merge). Vault credentials are substituted at serve time through allowlisted `{{placeholders}}`.
 

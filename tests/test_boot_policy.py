@@ -176,10 +176,52 @@ def test_linux_kernel_iso_uses_url_and_autoinstall(client, tmp_path):
     response = client.get("/ipxe/02-00-00-00-00-07")
     text = response.text
     assert "url=" in text
+    assert "iso-url=" in text
+    assert "image.iso" in text
+    assert not any(
+        token.endswith("/iso") for token in text.split() if token.startswith("url=") or token.startswith("iso-url=")
+    )
+    iso = client.get("/install-files/1/image.iso")
+    assert iso.status_code == 200
+    assert iso.content == b"iso-bytes"
+    assert "root=/dev/ram0" in text
+    assert "ramdisk_size=1500000" in text
     assert "autoinstall" in text
     assert "sanboot" not in text
     assert r"\;s=" in text
     assert ";s=" not in text.replace(r"\;s=", "")
+
+
+def test_linux_nfs_casper_skips_iso_url(client):
+    login(client)
+    from src.db import session_scope
+    from src.inventory.service import deploy_machine, register_machine
+
+    with session_scope() as db:
+        image = create_image(
+            db,
+            name="ubuntu-nfs",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            iso_path="ubuntu/live.iso",
+            actor="admin",
+        )
+        image.extract_generation = "nfs/1/1"
+        db.add(image)
+        machine = register_machine(db, mac="02:00:00:00:00:08", actor="admin")
+        deploy_machine(db, machine, image=image, actor="admin")
+        db.commit()
+    text = client.get("/ipxe/02-00-00-00-00-08").text
+    assert "netboot=nfs" in text
+    assert "nfsroot=pxe.test:/var/lib/pxe/images/nfs/1/1" in text
+    assert "port=2049" in text
+    assert "mountport=20048" in text
+    assert "iso-url=" not in text
+    assert "ramdisk_size" not in text
+    assert "boot=casper" in text
+    assert "secret" not in text.lower()
+    assert r"\;s=" in text
 
 
 def test_linux_iso_image_uses_sanboot(client):

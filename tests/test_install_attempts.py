@@ -49,10 +49,16 @@ def test_gc_keeps_open_revision(client, tmp_path):
     root = tmp_path / "images"
     old = root / "uploads" / "1" / "extracts" / "1"
     new = root / "uploads" / "1" / "extracts" / "2"
+    old_nfs = root / "nfs" / "1" / "1"
+    new_nfs = root / "nfs" / "1" / "2"
     old.mkdir(parents=True)
     new.mkdir(parents=True)
+    old_nfs.mkdir(parents=True)
+    new_nfs.mkdir(parents=True)
     (old / "kernel").write_bytes(b"old")
     (new / "kernel").write_bytes(b"new")
+    (old_nfs / "casper").mkdir()
+    (new_nfs / "casper").mkdir()
     with session_scope() as db:
         image = create_image(db, name="gc", os_family=OsFamily.linux, actor="admin")
         image.extract_revision = 2
@@ -73,6 +79,8 @@ def test_gc_keeps_open_revision(client, tmp_path):
         gc_extract_generations(db, image)
     assert old.exists()
     assert new.exists()
+    assert old_nfs.exists()
+    assert new_nfs.exists()
     with session_scope() as db:
         image = db.get(Image, 1)
         for row in db.exec(select(InstallAttempt)).all():
@@ -82,3 +90,5 @@ def test_gc_keeps_open_revision(client, tmp_path):
         gc_extract_generations(db, image)
     assert not old.exists()
     assert new.exists()
+    assert not old_nfs.exists()
+    assert new_nfs.exists()

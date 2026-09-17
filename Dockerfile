@@ -43,6 +43,9 @@ RUN apt-get update \
         perl-base \
         samba \
         smbclient \
+        dbus \
+        nfs-ganesha \
+        nfs-ganesha-vfs \
         tftp-hpa \
         bsdutils \
         libblkid1 \
@@ -60,8 +63,8 @@ RUN apt-get update \
     && groupadd --gid 10001 app \
     && useradd --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin app \
     && useradd --uid 10002 --gid 10001 --system --no-create-home --shell /usr/sbin/nologin pxemedia \
-    && mkdir -p /var/lib/pxe/tftp /var/lib/pxe/images /var/lib/pxe/images/smb /var/lib/pxe/data /var/lib/pxe/ssl \
-        /usr/share/home-lab-pxe /var/log/samba /run/samba
+    && mkdir -p /var/lib/pxe/tftp /var/lib/pxe/images /var/lib/pxe/images/smb /var/lib/pxe/images/nfs /var/lib/pxe/data /var/lib/pxe/ssl \
+        /usr/share/home-lab-pxe /var/log/samba /var/log/ganesha /run/samba /run/rpcbind /run/dbus /var/run/ganesha /var/lib/nfs/ganesha
 
 # Best-effort official iPXE binaries. Always leave non-empty TFTP files so a
 # read-only rootfs (CI hardened smoke) can start even when the downloads 404.
@@ -85,14 +88,15 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 COPY VERSION ./VERSION
 COPY config/smb.conf /etc/samba/smb.conf
+COPY config/ganesha.conf /etc/ganesha/ganesha.conf
 COPY src ./src
 COPY scripts ./scripts
 RUN sed -i 's/\r$//' ./scripts/entrypoint.sh ./scripts/run-web.sh ./scripts/pxe_smoke.py \
     && chmod +x ./scripts/entrypoint.sh ./scripts/run-web.sh \
     && chown -R app:app /app /var/lib/pxe \
-    && chmod 644 /etc/samba/smb.conf
+    && chmod 644 /etc/samba/smb.conf /etc/ganesha/ganesha.conf
 
-EXPOSE 8080 8443 67/udp 69/udp
+EXPOSE 8080 8443 67/udp 69/udp 2049/tcp 2049/udp 20048/tcp 20048/udp
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]

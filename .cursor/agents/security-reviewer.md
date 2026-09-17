@@ -1,6 +1,6 @@
 ---
 name: security-reviewer
-model: claude-opus-5[thinking=true,context=300k,effort=medium,fast=false]
+model: grok-4.6[effort=xhigh,fast=false]
 description: Adversarial, read-only security audit of code changes for the commit→release workflow. Use before promoting develop to release; FAIL on high or medium confidence findings.
 readonly: true
 ---

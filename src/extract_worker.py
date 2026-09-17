@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 from .db import get_engine, init_db, session_scope
 from .iso_extract import ArchiveRunner, ExtractError, extract_linux_payloads, extract_windows_media
 from .models import ExtractStatus, Image, InstallAttempt, OsFamily
+from .nfs_media import casper_has_squashfs, linux_http_generation, nfs_generation
 from .paths import UnsafePathError, resolve_under
 from .seed_store import ensure_image_seed
 from .settings import get_settings
@@ -49,6 +50,33 @@ def generated_windows_prefix(image_id: int) -> str:
 def _is_generated(path: str, prefix: str) -> bool:
     text = (path or "").replace("\\", "/")
     return text.startswith(prefix) or not text
+
+
+def media_replaces_uploaded_iso(os_family: str, media_relative: str) -> bool:
+    generation = (media_relative or "").replace("\\", "/").strip()
+    if os_family == OsFamily.linux.value:
+        return generation.startswith("nfs/")
+    return os_family == OsFamily.windows.value and bool(generation)
+
+
+def discard_uploaded_iso(image: Image) -> bool:
+    if image.id is None:
+        return False
+    relative = (image.iso_path or "").replace("\\", "/").strip()
+    prefix = f"uploads/{int(image.id)}/"
+    if not relative.startswith(prefix) or "/extracts/" in relative:
+        return False
+    try:
+        path = resolve_under(get_settings().image_root, relative)
+    except UnsafePathError:
+        return False
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        LOGGER.warning("could not remove uploaded ISO image_id=%s", image.id)
+        return False
+    image.iso_path = ""
+    return True
 
 
 def schedule_extract(db: Session, image: Image) -> bool:
@@ -120,6 +148,48 @@ def _replace_dir(src: Path, dest: Path) -> None:
     shutil.move(str(src), str(dest))
 
 
+def _world_readable(path: Path) -> None:
+    if not path.exists():
+        return
+    targets = [path, *path.rglob("*")] if path.is_dir() else [path]
+    for child in targets:
+        try:
+            child.chmod(0o755 if child.is_dir() else 0o644)
+        except OSError:
+            continue
+
+
+def _publish_linux_tree(staging: Path, image_id: int, revision: int, media_relative: str) -> tuple[Path, str]:
+    root = get_settings().image_root
+    extracts_pub = root / "uploads" / str(image_id) / "extracts" / str(revision)
+    extracts_pub.parent.mkdir(parents=True, exist_ok=True)
+    if extracts_pub.exists():
+        shutil.rmtree(extracts_pub)
+    extracts_pub.mkdir(parents=True)
+    kernel = staging / "kernel"
+    initrd = staging / "initrd"
+    if not kernel.is_file() or not initrd.is_file():
+        raise ExtractError("Ubuntu live-server payloads not found (casper/vmlinuz + casper/initrd)")
+    shutil.move(str(kernel), str(extracts_pub / "kernel"))
+    shutil.move(str(initrd), str(extracts_pub / "initrd"))
+    nfs_pub = root / "nfs" / str(image_id) / str(revision)
+    if media_relative == "casper" or casper_has_squashfs(staging):
+        if nfs_pub.exists():
+            shutil.rmtree(nfs_pub)
+        nfs_pub.mkdir(parents=True)
+        casper = staging / "casper"
+        disk = staging / ".disk"
+        if casper.exists():
+            shutil.move(str(casper), str(nfs_pub / "casper"))
+        if disk.exists():
+            shutil.move(str(disk), str(nfs_pub / ".disk"))
+        _world_readable(nfs_pub)
+        shutil.rmtree(staging, ignore_errors=True)
+        return extracts_pub, nfs_generation(image_id, revision)
+    shutil.rmtree(staging, ignore_errors=True)
+    return extracts_pub, linux_http_generation(image_id, revision)
+
+
 def gc_extract_generations(db: Session, image: Image) -> None:
     if image.id is None:
         return
@@ -135,7 +205,11 @@ def gc_extract_generations(db: Session, image: Image) -> None:
     }
     keep = {int(image.extract_revision or 0), *open_revs}
     root = get_settings().image_root
-    for base in (root / "uploads" / str(image_id) / "extracts", root / "smb" / str(image_id)):
+    for base in (
+        root / "uploads" / str(image_id) / "extracts",
+        root / "smb" / str(image_id),
+        root / "nfs" / str(image_id),
+    ):
         if not base.is_dir():
             continue
         for child in base.iterdir():
@@ -179,9 +253,7 @@ def run_one_job(image_id: int, revision: int, runner: ArchiveRunner | None = Non
                 install_rel = f"smb/{image_id}/{revision}/{result.install_wim_relative}"
             else:
                 result = extract_linux_payloads(iso, staging, image_root=root, runner=runner)
-                published = root / "uploads" / str(image_id) / "extracts" / str(revision)
-                _replace_dir(staging, published)
-                media_rel = ""
+                published, media_rel = _publish_linux_tree(staging, image_id, revision, result.media_relative)
                 boot_rel = ""
                 install_rel = ""
         except ExtractError as exc:
@@ -209,6 +281,8 @@ def run_one_job(image_id: int, revision: int, runner: ArchiveRunner | None = Non
         image = db.get(Image, image_id)
         if image is None or int(image.extract_revision or 0) != revision:
             shutil.rmtree(published, ignore_errors=True)
+            if family == OsFamily.linux.value:
+                shutil.rmtree(root / "nfs" / str(image_id) / str(revision), ignore_errors=True)
             return
         if family == OsFamily.linux.value:
             linux_prefix = generated_linux_prefix(image_id)
@@ -216,7 +290,7 @@ def run_one_job(image_id: int, revision: int, runner: ArchiveRunner | None = Non
                 image.kernel_path = _relative_under_root(published / "kernel")
             if _is_generated(image.initrd_path, linux_prefix):
                 image.initrd_path = _relative_under_root(published / "initrd")
-            image.extract_generation = f"uploads/{image_id}/extracts/{revision}"
+            image.extract_generation = media_rel
         else:
             win_prefix = generated_windows_prefix(image_id)
             if _is_generated(image.boot_wim_path, win_prefix):
@@ -226,9 +300,63 @@ def run_one_job(image_id: int, revision: int, runner: ArchiveRunner | None = Non
             image.extract_generation = media_rel
         image.extract_status = ExtractStatus.ready.value
         image.extract_error = ""
+        if media_replaces_uploaded_iso(family, media_rel):
+            discard_uploaded_iso(image)
         db.add(image)
         gc_extract_generations(db, image)
         db.commit()
+
+
+def nfs_tree_has_squashfs(image: Image) -> bool:
+    if image.id is None:
+        return False
+    revision = int(image.extract_revision or 0)
+    if revision < 1:
+        return False
+    root = get_settings().image_root / "nfs" / str(int(image.id)) / str(revision)
+    return casper_has_squashfs(root)
+
+
+def linux_needs_nfs_backfill(image: Image) -> bool:
+    if image.os_family != OsFamily.linux.value:
+        return False
+    if image.extract_status != ExtractStatus.ready.value:
+        return False
+    if iso_on_disk(image) is None:
+        return False
+    generation = (image.extract_generation or "").replace("\\", "/").strip()
+    if generation.startswith("nfs/"):
+        return not nfs_tree_has_squashfs(image)
+    if generation.startswith("linux/"):
+        return False
+    return True
+
+
+def requeue_linux_nfs_backfill() -> None:
+    with session_scope() as db:
+        changed = False
+        for image in db.exec(select(Image)).all():
+            if not linux_needs_nfs_backfill(image):
+                continue
+            if schedule_extract(db, image):
+                changed = True
+        if changed:
+            db.commit()
+
+
+def discard_isos_for_extracted_media() -> None:
+    with session_scope() as db:
+        changed = False
+        for image in db.exec(select(Image)).all():
+            if image.extract_status != ExtractStatus.ready.value:
+                continue
+            if not media_replaces_uploaded_iso(image.os_family, image.extract_generation or ""):
+                continue
+            if discard_uploaded_iso(image):
+                db.add(image)
+                changed = True
+        if changed:
+            db.commit()
 
 
 def main() -> None:
@@ -236,6 +364,8 @@ def main() -> None:
     init_db()
     requeue_stale_extracting()
     backfill_image_seeds()
+    requeue_linux_nfs_backfill()
+    discard_isos_for_extracted_media()
     LOGGER.info("extract worker ready")
     while True:
         job = claim_next_job()

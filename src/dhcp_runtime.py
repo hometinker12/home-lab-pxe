@@ -153,6 +153,7 @@ def external_dhcp_hints(snapshot=None) -> dict[str, str]:
         "bios_filename": "undionly.kpxe",
         "efi_filename": "ipxe.efi",
         "arm_filename": "snponly.efi",
+        "ipxe_filename": "boot.ipxe",
         "ipxe_script": f"{ipxe_base}/boot.ipxe",
     }
 
@@ -195,11 +196,14 @@ def spec_from_runtime(row: DhcpRuntime) -> DnsmasqSpec:
 
 
 def write_runtime_files(row: DhcpRuntime, *, request_apply: bool) -> None:
+    from .tftp_store import write_boot_chain_script
+
     settings = get_settings()
     render_dnsmasq_conf(spec_from_runtime(row), tftp_root=settings.tftp_root, conf_path=conf_path())
     enabled_path().write_text("1\n" if row.enabled else "0\n", encoding="utf-8")
     tftp_on = True if row.tftp_enabled is None else bool(row.tftp_enabled)
     tftp_enabled_path().write_text("1\n" if tftp_on else "0\n", encoding="utf-8")
+    write_boot_chain_script()
     if request_apply:
         cmd_path().write_text("apply\n", encoding="utf-8")
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..models import Machine
+from ..nfs_media import advertised_nfsroot
 from ..settings import get_settings
 from .payload import BootPayload
 from .policy import ScriptKind
@@ -58,9 +59,10 @@ def local_disk_script() -> str:
 
 def _boot_file_url(machine: Machine, payload: BootPayload, slot: str) -> str:
     base = get_settings().public_url
+    path_slot = "image.iso" if slot == "iso" else slot
     if machine.id:
-        return f"{base}/install-files/{machine.id}/{slot}"
-    return f"{base}/boot-files/{payload.image_id}/{slot}"
+        return f"{base}/install-files/{machine.id}/{path_slot}"
+    return f"{base}/boot-files/{payload.image_id}/{path_slot}"
 
 
 def linux_install_script(machine: Machine, payload: BootPayload) -> str:
@@ -75,12 +77,33 @@ def linux_install_script(machine: Machine, payload: BootPayload) -> str:
     kernel = _boot_file_url(machine, payload, "kernel")
     initrd = _boot_file_url(machine, payload, "initrd")
     extra = payload.cmdline.strip()
+    nfsroot = advertised_nfsroot(payload.media_relative, host=settings.nfs_host, export=settings.nfs_export)
     defaults: list[str] = []
-    if iso_ok:
+    if nfsroot:
+        if not _has_token(extra, "boot="):
+            defaults.append("boot=casper")
+        if not _has_token(extra, "netboot="):
+            defaults.append("netboot=nfs")
+        if not _has_token(extra, "nfsroot="):
+            defaults.append(f"nfsroot={nfsroot},vers=3,nolock,tcp,port=2049,mountport=20048")
         if not _has_token(extra, "ip="):
             defaults.append("ip=dhcp")
+        if not _has_token(extra, "autoinstall"):
+            defaults.append("autoinstall")
+        if not _has_token(extra, "cloud-config-url="):
+            defaults.append("cloud-config-url=/dev/null")
+    elif iso_ok:
+        iso_url = _boot_file_url(machine, payload, "iso")
+        if not _has_token(extra, "root="):
+            defaults.append("root=/dev/ram0")
+        if not _has_token(extra, "ramdisk_size="):
+            defaults.append("ramdisk_size=1500000")
+        if not _has_token(extra, "ip="):
+            defaults.append("ip=dhcp")
+        if not _has_token(extra, "iso-url="):
+            defaults.append(f"iso-url={iso_url}")
         if not _has_token(extra, "url="):
-            defaults.append(f"url={_boot_file_url(machine, payload, 'iso')}")
+            defaults.append(f"url={iso_url}")
         if not _has_token(extra, "autoinstall"):
             defaults.append("autoinstall")
         if not _has_token(extra, "cloud-config-url="):

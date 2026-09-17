@@ -16,7 +16,8 @@ PID_FILE="/tmp/dnsmasq-pxe.pid"
 export PXE_DATA_DIR="$DATA_DIR"
 export PXE_SSL_DIR="$SSL_DIR"
 
-mkdir -p "$TFTP_ROOT" "$IMAGE_ROOT" "$DATA_DIR" "$SSL_DIR" || true
+mkdir -p "$TFTP_ROOT" "$DATA_DIR" "$SSL_DIR" || true
+mkdir -p "$IMAGE_ROOT/smb" "$IMAGE_ROOT/nfs" /run/rpcbind || true
 
 for f in undionly.kpxe ipxe.efi snponly.efi; do
   if [ ! -f "$TFTP_ROOT/$f" ]; then
@@ -44,22 +45,14 @@ elif [ ! -f "$WIMBOOT_DEST" ]; then
   printf 'ipxe-stub\n' > "$WIMBOOT_DEST" 2>/dev/null || true
 fi
 
-mkdir -p "$IMAGE_ROOT/smb" || true
+mkdir -p "$IMAGE_ROOT/smb" "$IMAGE_ROOT/nfs" || true
 
 python - <<'PY'
-import os
-from pathlib import Path
+from src.db import init_db
+from src.dhcp_runtime import conf_path
 
-from src.dhcp_config import render_dnsmasq_conf, spec_from_settings
-from src.settings import get_settings
-
-settings = get_settings()
-conf = Path(os.environ.get("PXE_DATA_DIR", "/var/lib/pxe/data")) / "dnsmasq-pxe.conf"
-if not conf.is_file():
-    render_dnsmasq_conf(spec_from_settings(settings), tftp_root=settings.tftp_root, conf_path=conf)
-    print(f"wrote {conf}")
-else:
-    print(f"keeping {conf}")
+init_db()
+print(f"dhcp conf {conf_path()}")
 PY
 
 python - <<'PY' || echo "WARN: could not ensure TLS certificate" >&2
@@ -209,6 +202,46 @@ start_smbd || true
     if [ -n "${PXE_SMB_PASSWORD:-}" ]; then
       if ! pgrep -x smbd >/dev/null 2>&1; then
         start_smbd || true
+      fi
+    fi
+    sleep 5
+  done
+) &
+
+start_nfs() {
+  mkdir -p /run/rpcbind /run/dbus /var/run/ganesha /var/log/ganesha /var/lib/nfs/ganesha "$IMAGE_ROOT/nfs" || true
+  chmod 755 "$IMAGE_ROOT/nfs" 2>/dev/null || true
+  if command -v rpcbind >/dev/null 2>&1; then
+    if rpcbind -w >/dev/null 2>&1 || rpcbind >/dev/null 2>&1; then
+      echo "rpcbind started"
+    else
+      echo "WARN: rpcbind did not start" >&2
+    fi
+  fi
+  if command -v dbus-uuidgen >/dev/null 2>&1; then
+    dbus-uuidgen --ensure >/dev/null 2>&1 || true
+  fi
+  if command -v dbus-daemon >/dev/null 2>&1 && [ ! -S /run/dbus/system_bus_socket ]; then
+    dbus-daemon --system --fork >/dev/null 2>&1 || echo "WARN: dbus-daemon did not start" >&2
+  fi
+  if ! command -v ganesha.nfsd >/dev/null 2>&1; then
+    echo "WARN: ganesha.nfsd not installed" >&2
+    return 0
+  fi
+  if ganesha.nfsd -f /etc/ganesha/ganesha.conf -L /var/log/ganesha/ganesha.log; then
+    echo "ganesha.nfsd started"
+  else
+    echo "WARN: ganesha.nfsd did not start" >&2
+  fi
+}
+
+start_nfs || true
+(
+  trap '' HUP
+  while true; do
+    if command -v ganesha.nfsd >/dev/null 2>&1; then
+      if ! pgrep -f ganesha.nfsd >/dev/null 2>&1; then
+        start_nfs || true
       fi
     fi
     sleep 5

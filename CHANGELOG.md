@@ -2,11 +2,20 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Compose publishes UDP 67 (DHCP), 69 (TFTP), and 4011 (proxyDHCP) alongside HTTP/HTTPS. dnsmasq uses `tftp-single-port` so TFTP transfers work through Docker port mapping.
+- TFTP now includes a generated `boot.ipxe` chain script. Settings lists it as the DHCP filename for clients that already run iPXE (Proxmox/SeaBIOS); those clients cannot execute `ipxe.efi`.
+- Ubuntu live-server ISO import extracts `casper/` and `.disk/` onto a read-only NFS export and boots with `netboot=nfs nfsroot=…` so the guest does not wget the ISO into RAM. HTTP `iso-url=` / `url=` remains the fallback when squashfs is missing. The uploaded ISO is deleted after a successful NFS or Windows media extract.
+- Machine hostname lives under Actions (below the image selector). Saving guest-init on an existing host now persists the hostname on the machine record, not only in the overlay JSON.
+
 ### Added
 
 - Background ISO import: Ubuntu live-server extracts casper kernel/initrd; Windows Server publishes Setup media for WinPE. Image rows show queued/extracting/ready/failed.
 - Editable cloud-init user-data (Ubuntu) and unattend.xml (Windows) on each image, with optional per-machine replacement files and `{{placeholder}}` vault substitution at serve time.
 - Ubuntu HTTP ISO autoinstall (`url=` + escaped nocloud-net) and Windows WinPE startup that maps an authenticated read-only SMB share on Linux host networking.
+- Image delete, ISO upload progress overlay, and Linux kernel/initrd fields collapsed under Advanced Settings after the ISO path.
+- Delete a machine from the inventory list or its detail page. Related boot events, staged jobs, install attempts, local-account ciphertext, and seed files are removed.
 
 ## [0.1.2] - 2026-09-16
 

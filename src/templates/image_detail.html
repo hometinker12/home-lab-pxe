@@ -16,7 +16,7 @@
 {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 {% if image.extract_status == 'failed' and image.extract_error %}<p class="alert alert-error" role="alert">{{ image.extract_error }}</p>{% endif %}
 <section class="card">
-  <p class="meta">Leave a file empty to keep the current payload. A new upload replaces that slot. Ubuntu live-server ISO extraction fills kernel/initrd unless you set custom paths. Windows extraction publishes Setup media over authenticated SMB; stock ISOs do not include Cloudbase-Init.</p>
+  <p class="meta">Leave a file empty to keep the current payload. A new upload replaces that slot. Ubuntu live-server ISO extraction fills kernel/initrd and publishes casper media over NFS unless you set custom kernel paths. Windows extraction publishes Setup media over authenticated SMB; stock ISOs do not include Cloudbase-Init. After a successful NFS or Windows media extract, the uploaded ISO is deleted to save space (re-upload to retry extract).</p>
   <form method="post" action="/images/{{ image.id }}" enctype="multipart/form-data" class="image-form form">
     <label>Name <input name="name" value="{{ image.name }}" required></label>
     <label>OS
@@ -26,12 +26,6 @@
       </select>
     </label>
     <label>Arch <input name="arch" value="{{ image.arch }}"></label>
-    <div data-os="linux">
-      <label>Kernel path <input name="kernel_path" value="{{ image.kernel_path }}"></label>
-      <label>Replace kernel <input type="file" name="kernel_file"></label>
-      <label>Initrd path <input name="initrd_path" value="{{ image.initrd_path }}"></label>
-      <label>Replace initrd <input type="file" name="initrd_file"></label>
-    </div>
     <div data-os="windows">
       <label>boot.wim path <input name="boot_wim_path" value="{{ image.boot_wim_path }}"></label>
       <label>Replace boot.wim <input type="file" name="boot_wim_file"></label>
@@ -42,6 +36,15 @@
     <label>ISO path <input name="iso_path" value="{{ image.iso_path }}"></label>
     <label>Replace ISO <input type="file" name="iso_file" accept=".iso,.img"></label>
     <label>Extra cmdline <input name="cmdline" value="{{ image.cmdline }}"></label>
+    <details class="advanced-settings" data-os="linux"{% if image.kernel_path or image.initrd_path %} open{% endif %}>
+      <summary>Advanced Settings</summary>
+      <div class="advanced-settings-body">
+        <label>Kernel path <input name="kernel_path" value="{{ image.kernel_path }}"></label>
+        <label>Replace kernel <input type="file" name="kernel_file"></label>
+        <label>Initrd path <input name="initrd_path" value="{{ image.initrd_path }}"></label>
+        <label>Replace initrd <input type="file" name="initrd_file"></label>
+      </div>
+    </details>
     <div data-os="linux">
       <label>cloud-init user-data
         <textarea name="user_data" rows="24" class="seed-editor">{{ seed_text }}</textarea>
@@ -62,6 +65,7 @@
   <div class="btn-row">
     <form method="post" action="/images/{{ image.id }}/extract"><button type="submit" class="btn-secondary">Retry extract</button></form>
     <form method="post" action="/images/{{ image.id }}/seed/reset" onsubmit="return confirm('Replace this image seed with the factory starter?');"><button type="submit" class="btn-secondary">Reset seed to factory default</button></form>
+    <form method="post" action="/images/{{ image.id }}/delete" onsubmit="return confirm('Delete this image and its extracted files?');"><button type="submit" class="btn-danger">Delete image</button></form>
   </div>
 </section>
 {% endblock %}

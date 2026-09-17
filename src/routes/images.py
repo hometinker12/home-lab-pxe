@@ -7,8 +7,8 @@ from starlette.status import HTTP_303_SEE_OTHER
 from ..auth import require_user
 from ..db import get_db
 from ..extract_worker import schedule_extract
-from ..image_store import UploadError, has_upload, relative_slot_path, save_upload_file
-from ..inventory.service import create_image, get_image, list_images, update_image
+from ..image_store import UploadError, has_upload, relative_slot_path, remove_image_tree, save_upload_file
+from ..inventory.service import create_image, delete_image, get_image, list_images, update_image
 from ..models import OsFamily
 from ..paths import UnsafePathError, resolve_under
 from ..seed_render import validate_seed_template
@@ -183,6 +183,8 @@ async def images_create(request: Request, db: Session = Depends(get_db), user: s
     except (ValueError, UploadError, SeedError) as exc:
         db.rollback()
         return render(request, "images.html", images=list_images(db), error=str(exc))
+    if has_upload(_form_file(form, "iso_file")):
+        return RedirectResponse(url="/images", status_code=HTTP_303_SEE_OTHER)
     return RedirectResponse(url=f"/images/{image.id}", status_code=HTTP_303_SEE_OTHER)
 
 
@@ -218,7 +220,24 @@ async def images_update(
     except (ValueError, UploadError, SeedError) as exc:
         db.rollback()
         return _image_detail_context(request, db, image, error=str(exc))
+    if has_upload(_form_file(form, "iso_file")):
+        return RedirectResponse(url="/images", status_code=HTTP_303_SEE_OTHER)
     return RedirectResponse(url=f"/images/{image_id}", status_code=HTTP_303_SEE_OTHER)
+
+
+@router.post("/images/{image_id}/delete")
+def image_delete(request: Request, image_id: int, db: Session = Depends(get_db), user: str = Depends(require_user)):
+    image = get_image(db, image_id)
+    if image is None:
+        raise HTTPException(status_code=404, detail="unknown image")
+    try:
+        deleted_id = delete_image(db, image, actor=user)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return render(request, "images.html", images=list_images(db), error=str(exc))
+    remove_image_tree(deleted_id)
+    return RedirectResponse(url="/images", status_code=HTTP_303_SEE_OTHER)
 
 
 @router.post("/images/{image_id}/extract")

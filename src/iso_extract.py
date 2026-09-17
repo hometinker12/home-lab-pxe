@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from .nfs_media import casper_has_squashfs
 from .settings import get_settings
 
 LINUX_KERNELS = ("casper/vmlinuz", "casper/vmlinuz.efi")
@@ -18,12 +19,15 @@ class ExtractError(ValueError):
     pass
 
 
+LINUX_MEDIA_PREFIXES = ("casper", ".disk")
+
+
 class ArchiveRunner(Protocol):
     def list_entries(self, iso: Path) -> list[tuple[str, int, bool]]: ...
 
     def extract_member_bytes(self, iso: Path, member: str) -> bytes: ...
 
-    def extract_tree(self, iso: Path, dest: Path) -> None: ...
+    def extract_tree(self, iso: Path, dest: Path, prefixes: tuple[str, ...] = ()) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,15 @@ def select_linux_members(members: list[str]) -> tuple[str, str]:
     if kernel is None or initrd is None:
         raise ExtractError("Ubuntu live-server payloads not found (casper/vmlinuz + casper/initrd)")
     return kernel, initrd
+
+
+def _is_linux_media_member(member: str) -> bool:
+    lower = member.lower()
+    return lower.startswith("casper/") or lower.startswith(".disk/")
+
+
+def linux_media_bytes(sizes: dict[str, int]) -> int:
+    return sum(int(size) for name, size in sizes.items() if _is_linux_media_member(name))
 
 
 def validate_windows_media(members: list[str], sizes: dict[str, int] | None = None) -> WindowsMediaSpec:
@@ -153,9 +166,10 @@ class SevenZipRunner:
             raise ExtractError("ISO is not a readable archive")
         return proc.stdout
 
-    def extract_tree(self, iso: Path, dest: Path) -> None:
+    def extract_tree(self, iso: Path, dest: Path, prefixes: tuple[str, ...] = ()) -> None:
         dest.mkdir(parents=True, exist_ok=True)
-        proc = self._run(["x", "-y", f"-o{dest}", str(iso)])
+        args = ["x", "-y", f"-o{dest}", str(iso), *prefixes]
+        proc = self._run(args)
         if proc.returncode != 0:
             raise ExtractError("ISO is not a readable archive")
 
@@ -180,6 +194,16 @@ def extract_member(iso: Path, member: str, dest: Path, runner: ArchiveRunner | N
     dest.write_bytes(data)
 
 
+def _copy_extracted_slot(dest: Path, member: str, slot: str) -> None:
+    source = dest.joinpath(*member.split("/"))
+    target = dest / slot
+    if source.is_file() and source.stat().st_size > 0:
+        if source.resolve() != target.resolve():
+            shutil.copyfile(source, target)
+        return
+    raise ExtractError("Ubuntu live-server payloads not found (casper/vmlinuz + casper/initrd)")
+
+
 def extract_linux_payloads(
     iso: Path,
     dest_dir: Path,
@@ -188,7 +212,8 @@ def extract_linux_payloads(
     runner: ArchiveRunner | None = None,
 ) -> ExtractResult:
     runner = runner or SevenZipRunner()
-    root = (image_root or get_settings().image_root).resolve()
+    settings = get_settings()
+    root = (image_root or settings.image_root).resolve()
     dest = dest_dir.resolve()
     try:
         dest.relative_to(root)
@@ -196,15 +221,40 @@ def extract_linux_payloads(
     except ValueError as exc:
         raise ExtractError("ISO path is not allowed") from exc
     entries = runner.list_entries(iso)
-    members = [normalize_member(name) for name, _size, is_dir in entries if not is_dir]
+    sizes: dict[str, int] = {}
+    members: list[str] = []
+    for name, size, is_dir in entries:
+        if is_dir:
+            continue
+        member = normalize_member(name)
+        members.append(member)
+        sizes[member] = int(size)
     kernel_member, initrd_member = select_linux_members(members)
+    dest.mkdir(parents=True, exist_ok=True)
+    squashfs = [name for name in members if name.lower().startswith("casper/") and name.lower().endswith(".squashfs")]
+    if squashfs:
+        total = linux_media_bytes(sizes)
+        if total > settings.max_extract_bytes:
+            raise ExtractError("ISO contents exceed PXE_MAX_EXTRACT_BYTES")
+        usage = shutil.disk_usage(dest.parent if dest.parent.exists() else root)
+        if total and usage.free < total:
+            raise ExtractError("Not enough free space to extract Ubuntu casper media")
+        runner.extract_tree(iso, dest, prefixes=LINUX_MEDIA_PREFIXES)
+        _copy_extracted_slot(dest, kernel_member, "kernel")
+        _copy_extracted_slot(dest, initrd_member, "initrd")
+    else:
+        kernel_dest = dest / "kernel"
+        initrd_dest = dest / "initrd"
+        extract_member(iso, kernel_member, kernel_dest, runner=runner)
+        extract_member(iso, initrd_member, initrd_dest, runner=runner)
     kernel_dest = dest / "kernel"
     initrd_dest = dest / "initrd"
-    extract_member(iso, kernel_member, kernel_dest, runner=runner)
-    extract_member(iso, initrd_member, initrd_dest, runner=runner)
-    if kernel_dest.stat().st_size == 0 or initrd_dest.stat().st_size == 0:
+    kernel_ok = kernel_dest.is_file() and kernel_dest.stat().st_size > 0
+    initrd_ok = initrd_dest.is_file() and initrd_dest.stat().st_size > 0
+    if not kernel_ok or not initrd_ok:
         raise ExtractError("Ubuntu live-server payloads not found (casper/vmlinuz + casper/initrd)")
-    return ExtractResult(kernel_relative=kernel_dest.name, initrd_relative=initrd_dest.name)
+    media = "casper" if casper_has_squashfs(dest) else ""
+    return ExtractResult(kernel_relative=kernel_dest.name, initrd_relative=initrd_dest.name, media_relative=media)
 
 
 def extract_windows_media(

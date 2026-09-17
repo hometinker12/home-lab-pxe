@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from pathlib import Path
 
 from starlette.datastructures import UploadFile
@@ -88,3 +89,16 @@ def has_upload(upload: UploadFile | None) -> bool:
         return False
     name = (upload.filename or "").strip()
     return bool(name)
+
+
+def remove_image_tree(image_id: int) -> None:
+    root = get_settings().image_root
+    for relative in (f"uploads/{int(image_id)}", f"smb/{int(image_id)}", f"nfs/{int(image_id)}"):
+        try:
+            path = resolve_under(root, relative)
+        except UnsafePathError:
+            continue
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        elif path.is_file():
+            path.unlink(missing_ok=True)

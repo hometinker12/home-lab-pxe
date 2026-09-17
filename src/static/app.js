@@ -28,6 +28,14 @@
     }
     select.addEventListener("change", () => syncImageForm(form));
     syncImageForm(form);
+    form.addEventListener("submit", (event) => {
+      const iso = form.querySelector("input[name='iso_file']");
+      if (!iso || !iso.files || !iso.files.length) {
+        return;
+      }
+      event.preventDefault();
+      uploadIsoWithProgress(form);
+    });
   });
 
   document.querySelectorAll("form.dhcp-form").forEach((form) => {
@@ -38,6 +46,92 @@
     select.addEventListener("change", () => syncDhcpForm(form));
     syncDhcpForm(form);
   });
+
+  function uploadOverlay() {
+    let overlay = document.querySelector(".upload-overlay");
+    if (overlay) {
+      return overlay;
+    }
+    overlay = document.createElement("div");
+    overlay.className = "upload-overlay";
+    overlay.hidden = true;
+    overlay.setAttribute("role", "alertdialog");
+    overlay.setAttribute("aria-live", "polite");
+    overlay.innerHTML =
+      '<div class="upload-status"><p data-upload-label>Uploading ISO…</p><progress data-upload-bar max="100" value="0"></progress></div>';
+    document.body.append(overlay);
+    return overlay;
+  }
+
+  function setUploadStatus(percent, label) {
+    const overlay = uploadOverlay();
+    overlay.hidden = false;
+    document.body.setAttribute("aria-busy", "true");
+    const text = overlay.querySelector("[data-upload-label]");
+    const bar = overlay.querySelector("[data-upload-bar]");
+    if (text) {
+      text.textContent = label;
+    }
+    if (bar) {
+      if (percent == null) {
+        bar.removeAttribute("value");
+      } else {
+        bar.max = 100;
+        bar.value = String(percent);
+      }
+    }
+  }
+
+  function hideUploadOverlay() {
+    const overlay = document.querySelector(".upload-overlay");
+    if (overlay) {
+      overlay.hidden = true;
+    }
+    document.body.removeAttribute("aria-busy");
+  }
+
+  function uploadIsoWithProgress(form) {
+    const xhr = new XMLHttpRequest();
+    const action = form.getAttribute("action") || window.location.pathname;
+    xhr.open((form.getAttribute("method") || "POST").toUpperCase(), action);
+    xhr.withCredentials = true;
+    setUploadStatus(0, "Uploading ISO… 0%");
+    xhr.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+        setUploadStatus(percent, `Uploading ISO… ${percent}%`);
+        return;
+      }
+      setUploadStatus(null, "Uploading ISO…");
+    });
+    xhr.upload.addEventListener("load", () => {
+      setUploadStatus(100, "Starting extraction…");
+    });
+    xhr.addEventListener("error", () => {
+      hideUploadOverlay();
+      window.alert("ISO upload failed. Check the connection and try again.");
+    });
+    xhr.addEventListener("abort", () => hideUploadOverlay());
+    xhr.addEventListener("load", () => {
+      if (xhr.status === 401 || xhr.status === 403 || /\/login\/?$/.test(xhr.responseURL || "")) {
+        window.location.assign("/login");
+        return;
+      }
+      if (xhr.status >= 400) {
+        hideUploadOverlay();
+        window.alert("ISO upload failed.");
+        return;
+      }
+      if ((xhr.responseText || "").includes("alert-error")) {
+        document.open();
+        document.write(xhr.responseText);
+        document.close();
+        return;
+      }
+      window.location.assign("/images");
+    });
+    xhr.send(new FormData(form));
+  }
 
   const extractCells = [...document.querySelectorAll(".extract-status[data-status]")];
   const extractBusy = extractCells.some((el) => {

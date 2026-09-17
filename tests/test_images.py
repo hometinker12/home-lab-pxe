@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from tests.conftest import login
 
 from src.extract_worker import run_one_job
@@ -11,7 +13,7 @@ class _LinuxRunner:
     def extract_member_bytes(self, iso, member):
         return b"kern" if "vmlinuz" in member.replace("\\", "/") else b"ird"
 
-    def extract_tree(self, iso, dest):
+    def extract_tree(self, iso, dest, prefixes=()):
         return None
 
 
@@ -34,6 +36,7 @@ def test_create_and_edit_image_metadata(client):
     listing = client.get("/images")
     assert "ubuntu-edit" in listing.text
     assert "Edit" in listing.text
+    assert "Delete" in listing.text
     detail = client.get("/images/1")
     assert detail.status_code == 200
     assert "ubuntu/vmlinuz" in detail.text
@@ -83,6 +86,7 @@ def test_iso_upload_queues_extract(client, tmp_path):
         follow_redirects=False,
     )
     assert response.status_code in {302, 303}
+    assert response.headers["location"] == "/images"
     dest = tmp_path / "images" / "uploads" / "1" / "image.iso"
     assert dest.read_bytes() == b"iso-bytes"
     api = client.get("/api/images").json()
@@ -101,6 +105,14 @@ def test_iso_upload_queues_extract(client, tmp_path):
     assert api[0]["extract_status"] == "ready"
     assert api[0]["kernel_path"].endswith("/kernel")
     assert dest.read_bytes() == b"iso-bytes"
+    from src.models import Image
+
+    with session_scope() as db:
+        image = db.get(Image, 1)
+        assert image.extract_generation == "linux/1/1"
+        assert image.iso_path.endswith("image.iso")
+    dest = tmp_path / "images" / "uploads" / "1" / "image.iso"
+    assert dest.is_file()
 
 
 def test_missing_iso_stays_idle(client):
@@ -217,7 +229,7 @@ def test_failed_extract_keeps_iso(client, tmp_path):
         def extract_member_bytes(self, iso, member):
             return b""
 
-        def extract_tree(self, iso, dest):
+        def extract_tree(self, iso, dest, prefixes=()):
             return None
 
     from src.db import session_scope
@@ -238,6 +250,9 @@ def test_image_form_hides_os_specific_fields(client):
     assert "boot_wim_file" in page.text
     assert 'data-os="windows"' in page.text
     assert "iso_file" in page.text
+    assert "Advanced Settings" in page.text
+    assert "kernel_path" in page.text
+    assert page.text.find('name="iso_file"') < page.text.find("Advanced Settings")
 
 
 def test_image_upload_rejects_unsafe_filename(client):
@@ -278,3 +293,225 @@ def test_iso_range_request(client, tmp_path):
     response = client.get("/boot-files/1/iso", headers={"Range": "bytes=2-5"})
     assert response.status_code == 206
     assert response.content == b"cdef"
+
+
+def test_delete_image_removes_row_and_files(client, tmp_path):
+    login(client)
+    created = client.post(
+        "/images",
+        data={"name": "to-delete", "os_family": "linux", "arch": "x86_64"},
+        files={"iso_file": ("ubuntu.iso", b"iso-bytes", "application/octet-stream")},
+        follow_redirects=False,
+    )
+    assert created.status_code in {302, 303}
+    assert created.headers["location"] == "/images"
+    uploaded = tmp_path / "images" / "uploads" / "1"
+    assert uploaded.is_dir()
+    deleted = client.post("/images/1/delete", follow_redirects=False)
+    assert deleted.status_code in {302, 303}
+    assert deleted.headers["location"] == "/images"
+    assert client.get("/api/images").json() == []
+    assert not uploaded.exists()
+    listing = client.get("/images")
+    assert "to-delete" not in listing.text
+
+
+def test_delete_image_blocked_during_install(client):
+    login(client)
+    from src.db import session_scope
+    from src.inventory.service import create_image, deploy_machine, register_machine
+    from src.models import OsFamily
+
+    with session_scope() as db:
+        image = create_image(
+            db,
+            name="in-use",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
+        machine = register_machine(db, mac="02:00:00:00:00:99", actor="admin")
+        deploy_machine(db, machine, image=image, actor="admin")
+        db.commit()
+        image_id = int(image.id)
+    blocked = client.post(f"/images/{image_id}/delete")
+    assert blocked.status_code == 200
+    assert "installing" in blocked.text.lower() or "deploying" in blocked.text.lower()
+    names = [img["name"] for img in client.get("/api/images").json()]
+    assert "in-use" in names
+
+
+class _LinuxNfsRunner:
+    def list_entries(self, iso):
+        return [
+            ("casper/vmlinuz", 4, False),
+            ("casper/initrd", 4, False),
+            ("casper/filesystem.squashfs", 8, False),
+            (".disk/casper-uuid-generic", 4, False),
+        ]
+
+    def extract_member_bytes(self, iso, member):
+        return b"kern" if "vmlinuz" in member.replace("\\", "/") else b"ird"
+
+    def extract_tree(self, iso, dest, prefixes=()):
+        dest = Path(dest)
+        casper = dest / "casper"
+        disk = dest / ".disk"
+        casper.mkdir(parents=True, exist_ok=True)
+        disk.mkdir(parents=True, exist_ok=True)
+        (casper / "vmlinuz").write_bytes(b"kern")
+        (casper / "initrd").write_bytes(b"ird")
+        (casper / "filesystem.squashfs").write_bytes(b"squashok")
+        (disk / "casper-uuid-generic").write_bytes(b"uuid")
+
+
+def test_linux_iso_publishes_nfs_casper(client, tmp_path):
+    login(client)
+    client.post(
+        "/images",
+        data={"name": "ubuntu-nfs", "os_family": "linux", "arch": "x86_64"},
+        files={"iso_file": ("ubuntu.iso", b"iso-bytes", "application/octet-stream")},
+        follow_redirects=False,
+    )
+    from src.db import session_scope
+
+    with session_scope() as db:
+        run_one_job(1, 1, runner=_LinuxNfsRunner())
+        db.commit()
+    api = client.get("/api/images").json()
+    assert api[0]["extract_status"] == "ready"
+    from src.models import Image
+
+    with session_scope() as db:
+        image = db.get(Image, 1)
+        assert image.extract_generation == "nfs/1/1"
+        assert image.iso_path == ""
+    squash = tmp_path / "images" / "nfs" / "1" / "1" / "casper" / "filesystem.squashfs"
+    assert squash.read_bytes() == b"squashok"
+    kernel = tmp_path / "images" / "uploads" / "1" / "extracts" / "1" / "kernel"
+    assert kernel.read_bytes() == b"kern"
+    iso = tmp_path / "images" / "uploads" / "1" / "image.iso"
+    assert not iso.exists()
+
+
+def test_linux_nfs_backfill_requeues_legacy_extract(client, tmp_path):
+    login(client)
+    client.post(
+        "/images",
+        data={"name": "legacy-linux", "os_family": "linux", "arch": "x86_64"},
+        files={"iso_file": ("ubuntu.iso", b"iso-bytes", "application/octet-stream")},
+        follow_redirects=False,
+    )
+    from src.db import session_scope
+    from src.extract_worker import requeue_linux_nfs_backfill
+    from src.models import Image
+
+    with session_scope() as db:
+        run_one_job(1, 1, runner=_LinuxRunner())
+        image = db.get(Image, 1)
+        image.extract_generation = "uploads/1/extracts/1"
+        db.add(image)
+        db.commit()
+    requeue_linux_nfs_backfill()
+    with session_scope() as db:
+        image = db.get(Image, 1)
+        assert image.extract_status == ExtractStatus.queued.value
+        assert int(image.extract_revision) == 2
+
+
+def test_linux_http_generation_skips_nfs_backfill(client, tmp_path):
+    login(client)
+    client.post(
+        "/images",
+        data={"name": "kernel-only", "os_family": "linux", "arch": "x86_64"},
+        files={"iso_file": ("ubuntu.iso", b"iso-bytes", "application/octet-stream")},
+        follow_redirects=False,
+    )
+    from src.db import session_scope
+    from src.extract_worker import requeue_linux_nfs_backfill
+    from src.models import Image
+
+    with session_scope() as db:
+        run_one_job(1, 1, runner=_LinuxRunner())
+        db.commit()
+    requeue_linux_nfs_backfill()
+    with session_scope() as db:
+        image = db.get(Image, 1)
+        assert image.extract_status == ExtractStatus.ready.value
+        assert image.extract_generation == "linux/1/1"
+        assert int(image.extract_revision) == 1
+        assert image.iso_path.endswith("image.iso")
+    assert (tmp_path / "images" / "uploads" / "1" / "image.iso").is_file()
+
+
+class _WindowsRunner:
+    def list_entries(self, iso):
+        return [
+            ("setup.exe", 4, False),
+            ("sources/boot.wim", 4, False),
+            ("sources/install.wim", 4, False),
+        ]
+
+    def extract_member_bytes(self, iso, member):
+        return b"wim"
+
+    def extract_tree(self, iso, dest, prefixes=()):
+        dest = Path(dest)
+        (dest / "setup.exe").write_bytes(b"setup")
+        sources = dest / "sources"
+        sources.mkdir(parents=True, exist_ok=True)
+        (sources / "boot.wim").write_bytes(b"boot")
+        (sources / "install.wim").write_bytes(b"install")
+
+
+def test_windows_iso_extract_deletes_uploaded_iso(client, tmp_path):
+    login(client)
+    client.post(
+        "/images",
+        data={"name": "ws-iso", "os_family": "windows", "arch": "x86_64"},
+        files={"iso_file": ("server.iso", b"iso-bytes", "application/octet-stream")},
+        follow_redirects=False,
+    )
+    from src.db import session_scope
+    from src.models import Image
+
+    iso = tmp_path / "images" / "uploads" / "1" / "image.iso"
+    assert iso.is_file()
+    with session_scope() as db:
+        run_one_job(1, 1, runner=_WindowsRunner())
+        db.commit()
+        image = db.get(Image, 1)
+        assert image.extract_status == ExtractStatus.ready.value
+        assert image.iso_path == ""
+        assert image.boot_wim_path.endswith("boot.wim")
+    assert not iso.exists()
+    assert (tmp_path / "images" / "smb" / "1" / "1" / "setup.exe").is_file()
+
+
+def test_discard_sweep_removes_iso_after_nfs_media(client, tmp_path):
+    login(client)
+    client.post(
+        "/images",
+        data={"name": "already-nfs", "os_family": "linux", "arch": "x86_64"},
+        files={"iso_file": ("ubuntu.iso", b"iso-bytes", "application/octet-stream")},
+        follow_redirects=False,
+    )
+    from src.db import session_scope
+    from src.extract_worker import discard_isos_for_extracted_media
+    from src.models import Image
+
+    iso = tmp_path / "images" / "uploads" / "1" / "image.iso"
+    with session_scope() as db:
+        run_one_job(1, 1, runner=_LinuxNfsRunner())
+        image = db.get(Image, 1)
+        image.iso_path = "uploads/1/image.iso"
+        db.add(image)
+        db.commit()
+    iso.write_bytes(b"iso-bytes")
+    assert iso.is_file()
+    discard_isos_for_extracted_media()
+    assert not iso.exists()
+    with session_scope() as db:
+        image = db.get(Image, 1)
+        assert image.iso_path == ""

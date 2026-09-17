@@ -1,7 +1,21 @@
 import pytest
 from tests.conftest import login
 
-from src.tftp_store import TftpStoreError, format_bytes, is_stub, resolve_tftp
+from src.tftp_store import TftpStoreError, format_bytes, is_stub, resolve_tftp, write_boot_chain_script
+
+
+def test_client_writes_tftp_boot_chain_script(client, tmp_path):
+    path = tmp_path / "tftp" / "boot.ipxe"
+    assert path.is_file()
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("#!ipxe")
+    assert "chain --replace http://pxe.test:8080/ipxe/${mac:hexhyp}" in text
+
+
+def test_write_boot_chain_script_uses_public_url(client, tmp_path):
+    path = write_boot_chain_script()
+    assert path.name == "boot.ipxe"
+    assert "http://pxe.test:8080/ipxe/" in path.read_text(encoding="utf-8")
 
 
 def test_format_bytes():

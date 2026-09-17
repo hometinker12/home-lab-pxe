@@ -20,10 +20,12 @@
         {% endfor %}
       </select>
     </label>
+    <label>Hostname <input form="machine-save" name="hostname" value="{{ machine.hostname or overlay.hostname or '' }}" placeholder="lab-node-01" {% if deploying %}disabled{% endif %}></label>
     <label>Local user <input name="username" value="{{ account.username }}" placeholder="root or Administrator" {% if deploying %}disabled{% endif %}></label>
     <label>Password <input type="password" name="password" autocomplete="new-password" placeholder="{% if account.set %}set — leave blank to keep{% else %}required to deploy{% endif %}" {% if deploying %}disabled{% endif %}></label>
     <div class="btn-row">
       <button type="submit" {% if deploying %}disabled{% endif %}>Deploy</button>
+      <button type="submit" form="machine-save" class="btn-secondary" {% if deploying %}disabled{% endif %}>Save</button>
     </div>
   </form>
   <hr class="sep">
@@ -35,6 +37,7 @@
     {% else %}
     <form method="post" action="/machines/{{ machine.id }}/disable" onsubmit="return confirm('Disable this machine? It will no longer be served a boot image.');"><button type="submit" class="btn-danger">Disable</button></form>
     {% endif %}
+    <form method="post" action="/machines/{{ machine.id }}/delete" onsubmit="return confirm('Delete this machine from inventory? The next PXE boot with this MAC will register as unknown.');"><button type="submit" class="btn-danger">Delete</button></form>
   </div>
 </section>
 
@@ -43,8 +46,7 @@
   {% if overlay.raw_overlay %}
   <p class="alert alert-error" role="status">This machine still has a legacy raw overlay. Saving a machine seed file replaces it.</p>
   {% endif %}
-  <form class="form" method="post" action="/machines/{{ machine.id }}/save">
-    <label>Hostname <input name="hostname" value="{{ machine.hostname }}" {% if deploying %}disabled{% endif %}></label>
+  <form id="machine-save" class="form" method="post" action="/machines/{{ machine.id }}/save">
     <label>Timezone <input name="timezone" value="{{ overlay.timezone or 'UTC' }}" {% if deploying %}disabled{% endif %}></label>
     <label>Packages (comma) <input name="packages" value="{{ overlay.packages|join(', ') if overlay.packages else '' }}" {% if deploying %}disabled{% endif %}></label>
     <label>SSH keys (one per line)
