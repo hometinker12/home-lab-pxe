@@ -16,6 +16,10 @@
 - Add image is a popup next to the Images heading, matching Add machine. Edit stays disabled while ISO extraction is queued or running. The add popup no longer includes the long ISO/NFS extract explainer.
 - Boot menu folder rename/delete is a popup (Delete stays disabled while the folder has images or nested folders). Folder up/down controls sit on the tree. Images can be moved to another folder from a popup listed in menu order.
 
+### Fixed
+
+- Starting the container with a read-only rootfs no longer crashes when TFTP cannot receive the generated `boot.ipxe` chain script. HTTP still serves `/boot.ipxe`.
+
 ## [0.3.0] - 2026-09-17
 
 ### Changed
