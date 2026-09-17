@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,6 +12,7 @@ from starlette.datastructures import UploadFile
 from .paths import UnsafePathError, resolve_under
 from .settings import get_settings
 
+LOGGER = logging.getLogger("home_lab_pxe")
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._+-]{1,120}$")
 _MAX_ENTRIES = 500
 _MAX_PARTS = 8
@@ -25,7 +27,10 @@ class TftpStoreError(ValueError):
 
 def tftp_root() -> Path:
     root = get_settings().tftp_root
-    root.mkdir(parents=True, exist_ok=True)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     return root.resolve()
 
 
@@ -36,7 +41,11 @@ def boot_chain_script_body(public_url: str) -> str:
 
 def write_boot_chain_script() -> Path:
     path = tftp_root() / BOOT_CHAIN_NAME
-    path.write_text(boot_chain_script_body(get_settings().public_url), encoding="utf-8")
+    try:
+        path.write_text(boot_chain_script_body(get_settings().public_url), encoding="utf-8")
+    except OSError as exc:
+        # Read-only rootfs CI (and a TFTP volume mounted ro) still serves /boot.ipxe over HTTP.
+        LOGGER.warning("cannot write TFTP boot chain %s: %s", path, exc)
     return path
 
 
