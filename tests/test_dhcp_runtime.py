@@ -115,6 +115,43 @@ def test_settings_can_toggle_tftp_separately(client):
     assert "tftp-single-port" in conf_path().read_text(encoding="utf-8")
 
 
+def test_settings_saves_imaging_timeout(client):
+    login(client)
+    page = client.get("/settings")
+    assert "Imaging timeout" in page.text
+    assert 'name="imaging_timeout_minutes"' in page.text
+    assert 'name="default_timezone"' in page.text
+    assert "<select" in page.text
+    saved = client.post(
+        "/settings/machines",
+        data={"imaging_timeout_minutes": "20"},
+        follow_redirects=False,
+    )
+    assert saved.status_code in {302, 303}
+    again = client.get("/settings")
+    assert 'value="20"' in again.text
+    tz = client.post(
+        "/settings/machines",
+        data={"imaging_timeout_minutes": "20", "default_timezone": "Europe/London"},
+        follow_redirects=False,
+    )
+    assert tz.status_code in {302, 303}
+    tz_page = client.get("/settings")
+    assert 'value="Europe/London" selected' in tz_page.text
+    rejected = client.post("/settings/machines", data={"imaging_timeout_minutes": "9999"})
+    assert rejected.status_code == 200
+    assert "between 0 and 1440" in rejected.text
+    bad = client.post("/settings/machines", data={"imaging_timeout_minutes": "nope"})
+    assert bad.status_code == 200
+    assert "whole number" in bad.text.lower()
+    bad_tz = client.post(
+        "/settings/machines",
+        data={"imaging_timeout_minutes": "15", "default_timezone": "Not/AZone"},
+    )
+    assert bad_tz.status_code == 200
+    assert "choose a valid iana timezone" in bad_tz.text.lower()
+
+
 def test_external_dhcp_hints_include_option_60(client):
     from src.dhcp_runtime import external_dhcp_hints
 

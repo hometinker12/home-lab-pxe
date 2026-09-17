@@ -1,3 +1,4 @@
+import yaml
 from tests.conftest import login
 
 from src.inventory.service import (
@@ -40,6 +41,9 @@ def test_cloud_init_injects_root_and_bumps_instance_id(client):
         image_id = int(image.id)
     user_data = client.get(f"/cloud-init/{mid}/user-data").text
     meta = client.get(f"/cloud-init/{mid}/meta-data").text
+    parsed = yaml.safe_load(user_data)
+    assert parsed["autoinstall"]["identity"]["username"] == "ubuntu"
+    assert parsed["autoinstall"]["user-data"]["chpasswd"]["users"][0]["name"] == "root"
     assert "web1" in user_data
     assert "root" in user_data
     assert "root-secret" not in user_data
@@ -129,6 +133,14 @@ def test_guest_init_hidden_until_deploy_and_after_phone_home(client):
     assert "lab-default-secret" not in installing.text
     assert "root" in installing.text
     assert "$6$" in installing.text
+    assert "event=imaging" in installing.text
+
+    imaging = client.post(f"/api/machines/{mid}/events?event=imaging")
+    assert imaging.status_code == 200
+    assert imaging.json()["state"] == "imaging"
+    still = client.get(f"/cloud-init/{mid}/user-data")
+    assert still.status_code == 200
+    assert "event=imaging" in still.text
 
     phone = client.post(f"/api/machines/{mid}/events", json={"event": "deployed"})
     assert phone.status_code == 200

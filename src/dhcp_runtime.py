@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from urllib.parse import urlparse
 
@@ -10,8 +11,12 @@ from sqlmodel import Session, select
 from .dhcp_config import DnsmasqSpec, render_dnsmasq_conf
 from .models import DhcpRuntime, utcnow
 from .settings import get_settings
+from .timezones import is_valid_timezone
 
 DHCP_RUNTIME_ID = 1
+DEFAULT_IMAGING_TIMEOUT_MINUTES = 15
+MAX_IMAGING_TIMEOUT_MINUTES = 1440
+DEFAULT_TIMEZONE = "UTC"
 _IFACE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,31}$")
 _RANGE = re.compile(r"^[0-9A-Za-z.,:/ _-]{3,80}$")
 _IPV4 = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
@@ -158,6 +163,36 @@ def external_dhcp_hints(snapshot=None) -> dict[str, str]:
     }
 
 
+def default_imaging_timeout_minutes() -> int:
+    raw = (os.getenv("PXE_IMAGING_TIMEOUT_MINUTES") or "").strip()
+    if not raw:
+        return DEFAULT_IMAGING_TIMEOUT_MINUTES
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_IMAGING_TIMEOUT_MINUTES
+    return max(0, min(MAX_IMAGING_TIMEOUT_MINUTES, value))
+
+
+def imaging_timeout_minutes(db: Session) -> int:
+    row = get_or_create_runtime(db)
+    minutes = row.imaging_timeout_minutes
+    if minutes is None:
+        return DEFAULT_IMAGING_TIMEOUT_MINUTES
+    return int(minutes)
+
+
+def env_default_timezone() -> str:
+    raw = (os.getenv("PXE_DEFAULT_TIMEZONE") or "").strip() or DEFAULT_TIMEZONE
+    return raw if is_valid_timezone(raw) else DEFAULT_TIMEZONE
+
+
+def default_timezone(db: Session) -> str:
+    row = get_or_create_runtime(db)
+    tz = (row.default_timezone or "").strip() or env_default_timezone()
+    return tz if is_valid_timezone(tz) else DEFAULT_TIMEZONE
+
+
 def get_or_create_runtime(db: Session) -> DhcpRuntime:
     row = db.get(DhcpRuntime, DHCP_RUNTIME_ID)
     if row is not None:
@@ -173,6 +208,8 @@ def get_or_create_runtime(db: Session) -> DhcpRuntime:
         dhcp_router=settings.dhcp_router,
         dhcp_dns=settings.dhcp_dns,
         extra_options="",
+        imaging_timeout_minutes=default_imaging_timeout_minutes(),
+        default_timezone=env_default_timezone(),
     )
     db.add(row)
     db.commit()
@@ -266,6 +303,31 @@ def save_tftp(db: Session, *, tftp_enabled: bool, actor: str) -> DhcpRuntime:
     row = get_or_create_runtime(db)
     row.tftp_enabled = tftp_enabled
     return _commit_runtime(db, row, actor=actor, action="tftp.save", detail=f"enabled={int(tftp_enabled)}")
+
+
+def save_imaging_timeout(db: Session, *, minutes: int, actor: str, timezone: str | None = None) -> DhcpRuntime:
+    from .inventory.service import record_activity
+
+    if minutes < 0 or minutes > MAX_IMAGING_TIMEOUT_MINUTES:
+        raise DhcpConfigError(
+            f"Imaging timeout must be between 0 and {MAX_IMAGING_TIMEOUT_MINUTES} minutes (0 disables the timer)"
+        )
+    row = get_or_create_runtime(db)
+    row.imaging_timeout_minutes = minutes
+    if timezone is not None:
+        tz = timezone.strip() or DEFAULT_TIMEZONE
+        if not is_valid_timezone(tz):
+            raise DhcpConfigError("Choose a valid IANA timezone")
+        row.default_timezone = tz
+    row.updated_at = utcnow()
+    db.add(row)
+    detail = f"minutes={minutes}"
+    if timezone is not None:
+        detail = f"{detail} timezone={row.default_timezone}"
+    record_activity(db, actor=actor, action="machines.settings", detail=detail)
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 def load_runtime(db: Session) -> DhcpRuntime:

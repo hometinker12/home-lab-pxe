@@ -3,14 +3,17 @@
 {% block body %}
 <p class="back"><a href="/machines">← Machines</a></p>
 <header class="page-header">
-  <h1>{{ machine.hostname or "(unnamed)" }} <span class="badge badge-{{ machine.state }}">{{ machine.state }}</span></h1>
+  <h1>{{ machine.hostname or "(unnamed)" }} <span class="badge badge-{{ machine.state }}">{{ state_label(machine.state) }}</span></h1>
   <p class="description"><code>{{ machine.mac }}</code> · UUID {{ machine.uuid or "—" }} · {{ machine.last_ip or "no IP" }}</p>
 </header>
 {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+{% if machine.state == "timeout_error" %}
+<p class="alert alert-error" role="status">Imaging timed out. Deploy again to retry, or mark deployed if the guest finished.</p>
+{% endif %}
 
 <section class="card">
   <h2>Actions</h2>
-  <form class="form" method="post" action="/machines/{{ machine.id }}/deploy">
+  <form id="machine-save" class="form" method="post" action="/machines/{{ machine.id }}/save">
     <label>Image
       <select name="image_id" required>
         {% for opt in image_options %}
@@ -20,17 +23,17 @@
         {% endfor %}
       </select>
     </label>
-    <label>Hostname <input form="machine-save" name="hostname" value="{{ machine.hostname or overlay.hostname or '' }}" placeholder="lab-node-01" {% if deploying %}disabled{% endif %}></label>
+    <label>Hostname <input name="hostname" value="{{ machine.hostname or overlay.hostname or '' }}" placeholder="lab-node-01" {% if deploying %}disabled{% endif %}></label>
     <label>Local user <input name="username" value="{{ account.username }}" placeholder="root or Administrator" {% if deploying %}disabled{% endif %}></label>
     <label>Password <input type="password" name="password" autocomplete="new-password" placeholder="{% if account.set %}set — leave blank to keep{% else %}required to deploy{% endif %}" {% if deploying %}disabled{% endif %}></label>
     <div class="btn-row">
-      <button type="submit" {% if deploying %}disabled{% endif %}>Deploy</button>
-      <button type="submit" form="machine-save" class="btn-secondary" {% if deploying %}disabled{% endif %}>Save</button>
+      <button type="submit" formaction="/machines/{{ machine.id }}/deploy" {% if deploying %}disabled{% endif %}>Deploy</button>
+      <button type="submit" class="btn-secondary" {% if deploying %}disabled{% endif %}>Save</button>
     </div>
   </form>
   <hr class="sep">
   <div class="btn-row">
-    <form method="post" action="/machines/{{ machine.id }}/stage"><button type="submit" class="btn-secondary">Stage reimage</button></form>
+    <form method="post" action="/machines/{{ machine.id }}/stage"><button type="submit" class="btn-secondary" {% if deploying %}disabled{% endif %}>Stage reimage</button></form>
     <form method="post" action="/machines/{{ machine.id }}/mark-deployed"><button type="submit" class="btn-secondary">Mark deployed</button></form>
     {% if machine.state == "disabled" %}
     <form method="post" action="/machines/{{ machine.id }}/enable"><button type="submit" class="btn-secondary">Enable</button></form>
@@ -46,30 +49,45 @@
   {% if overlay.raw_overlay %}
   <p class="alert alert-error" role="status">This machine still has a legacy raw overlay. Saving a machine seed file replaces it.</p>
   {% endif %}
-  <form id="machine-save" class="form" method="post" action="/machines/{{ machine.id }}/save">
-    <label>Timezone <input name="timezone" value="{{ overlay.timezone or 'UTC' }}" {% if deploying %}disabled{% endif %}></label>
-    <label>Packages (comma) <input name="packages" value="{{ overlay.packages|join(', ') if overlay.packages else '' }}" {% if deploying %}disabled{% endif %}></label>
+  <div class="form">
+    <label>Timezone
+      <select form="machine-save" name="timezone" required {% if deploying %}disabled{% endif %}>
+        {% for tz in timezones %}
+        <option value="{{ tz }}" {% if tz == selected_timezone %}selected{% endif %}>{{ tz }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Packages (comma) <input form="machine-save" name="packages" value="{{ overlay.packages|join(', ') if overlay.packages else '' }}" {% if deploying %}disabled{% endif %}></label>
     <label>SSH keys (one per line)
-      <textarea name="ssh_keys" rows="3" {% if deploying %}disabled{% endif %}>{{ overlay.ssh_keys|join('\n') if overlay.ssh_keys else '' }}</textarea>
+      <textarea form="machine-save" name="ssh_keys" rows="3" {% if deploying %}disabled{% endif %}>{{ overlay.ssh_keys|join('\n') if overlay.ssh_keys else '' }}</textarea>
     </label>
     {% if image %}
     {% if family == 'windows' %}
-    <label>Machine unattend.xml
-      <textarea name="unattend_xml" rows="16" class="seed-editor" {% if deploying %}disabled{% endif %}>{{ machine_seed }}</textarea>
+    <label>
+      <span class="seed-label-row">Machine unattend.xml
+        <button type="submit" form="machine-save" formaction="/machines/{{ machine.id }}/seed/copy-default" class="btn-ghost btn-sm" {% if deploying %}disabled{% endif %}>Copy Default</button>
+      </span>
+      <textarea form="machine-save" name="unattend_xml" rows="16" class="seed-editor" {% if deploying %}disabled{% endif %}>{{ machine_seed }}</textarea>
     </label>
     {% else %}
-    <label>Machine user-data
-      <textarea name="user_data" rows="16" class="seed-editor" {% if deploying %}disabled{% endif %}>{{ machine_seed }}</textarea>
+    <label>
+      <span class="seed-label-row">Machine user-data
+        <button type="submit" form="machine-save" formaction="/machines/{{ machine.id }}/seed/copy-default" class="btn-ghost btn-sm" {% if deploying %}disabled{% endif %}>Copy Default</button>
+      </span>
+      <textarea form="machine-save" name="user_data" rows="16" class="seed-editor" {% if deploying %}disabled{% endif %}>{{ machine_seed }}</textarea>
     </label>
     {% endif %}
-    <p class="meta">{{ placeholder_help }} Served file: <code>{{ served_hint }}</code></p>
+    <p class="meta">{{ placeholder_help }} Active seed: <code>{{ served_hint }}</code>. Files → Install snapshots are the unrendered pin from Deploy; Subiquity consumes the HTTP URL above.</p>
     {% else %}
-    <p class="meta">Assign an image to edit a per-machine cloud-init or unattend file.</p>
+    <p class="meta">Assign an image to edit a per-machine cloud-init or unattend file. Copy Default uses the image selected under Actions.</p>
+    <div class="btn-row">
+      <button type="submit" form="machine-save" formaction="/machines/{{ machine.id }}/seed/copy-default" class="btn-ghost btn-sm" {% if deploying %}disabled{% endif %}>Copy Default</button>
+    </div>
     {% endif %}
     <div class="btn-row">
-      <button type="submit" {% if deploying %}disabled{% endif %}>Save</button>
+      <button type="submit" form="machine-save" {% if deploying %}disabled{% endif %}>Save</button>
     </div>
-  </form>
+  </div>
 </section>
 
 <section class="card">

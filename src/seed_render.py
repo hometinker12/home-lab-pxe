@@ -28,6 +28,7 @@ ALLOWED_TOKENS = frozenset(
         "machine_id",
         "public_url",
         "phone_home_url",
+        "imaging_url",
         "timezone",
         "ssh_keys",
         "packages",
@@ -129,15 +130,14 @@ AUTOINSTALL_UNATTENDED = {
     "locale": "en_US.UTF-8",
     "keyboard": {"layout": "us"},
     "refresh-installer": {"update": False},
-    "source": {"id": "ubuntu-server-minimal", "search_drivers": False},
+    "source": {"search_drivers": False},
     "network": {
         "version": 2,
         "ethernets": {
-            "zz-all-en": {"match": {"name": "en*"}, "dhcp4": True},
-            "zz-all-eth": {"match": {"name": "eth*"}, "dhcp4": True},
+            "zz-all-en": {"match": {"name": "en*"}, "dhcp4": True, "optional": True},
+            "zz-all-eth": {"match": {"name": "eth*"}, "dhcp4": True, "optional": True},
         },
     },
-    "proxy": None,
     "apt": {
         "preserve_sources_list": False,
         "geoip": False,
@@ -152,14 +152,45 @@ AUTOINSTALL_UNATTENDED = {
             ]
         },
     },
-    "storage": {"layout": {"name": "lvm"}},
+    "storage": {"layout": {"name": "lvm", "sizing-policy": "all", "match": {"size": "largest"}}},
     "shutdown": "reboot",
     "updates": "security",
-    "early-commands": [
-        "rm -f /etc/apt/sources.list.d/cdrom.list /etc/apt/sources.list.d/cdrom-sources.list",
-        "sed -i.bak -e '/cdrom/d' -e '\\#file:/cdrom#d' /etc/apt/sources.list || true",
-    ],
 }
+
+# Subiquity identity cannot create reserved system accounts (root, nobody, …).
+_RESERVED_IDENTITY_USERS = frozenset(
+    {
+        "root",
+        "daemon",
+        "bin",
+        "sys",
+        "sync",
+        "games",
+        "man",
+        "lp",
+        "mail",
+        "news",
+        "uucp",
+        "proxy",
+        "www-data",
+        "backup",
+        "list",
+        "nobody",
+        "sshd",
+        "_apt",
+        "messagebus",
+        "systemd-network",
+        "systemd-resolve",
+        "uuidd",
+        "dnsmasq",
+        "lxd",
+        "tcpdump",
+        "landscape",
+        "pollinate",
+        "tss",
+    }
+)
+_IDENTITY_FALLBACK_USER = "ubuntu"
 
 
 def _full_line_comments(text: str) -> list[str]:
@@ -192,7 +223,148 @@ def _with_cloud_config_and_comments(dumped: str, comments: list[str]) -> str:
     return body
 
 
-def complete_linux_user_data(rendered: str) -> str:
+def _command_text(cmd: object) -> str:
+    if isinstance(cmd, list):
+        return " ".join(str(part) for part in cmd)
+    return str(cmd)
+
+
+def _has_imaging_callback(cmds: list) -> bool:
+    return any("event=imaging" in _command_text(cmd) or "{{imaging_url}}" in _command_text(cmd) for cmd in cmds)
+
+
+def _shell_wget(url: str) -> str:
+    """Best-effort POST; a failed callback must not abort Subiquity."""
+    token = url if str(url).startswith("{{") else json.dumps(url)
+    return f"wget -q --tries=3 --timeout=10 --post-data= -O /dev/null {token} || true"
+
+
+def _imaging_wget(url: str) -> str:
+    return _shell_wget(url)
+
+
+FORCE_REBOOT_CMD = (
+    "sh -c 'sleep 1; echo 1 > /proc/sys/kernel/sysrq; "
+    "echo s > /proc/sysrq-trigger; echo u > /proc/sysrq-trigger; "
+    "echo b > /proc/sysrq-trigger'"
+)
+
+
+def _has_force_reboot(cmds: list) -> bool:
+    blob = " ".join(_command_text(cmd) for cmd in cmds)
+    return "sysrq-trigger" in blob or "reboot -f" in blob
+
+
+def _ensure_force_reboot_late_command(auto: dict) -> bool:
+    """Casper NFS installs hang on a blank cursor if systemd waits to unmount nfsroot."""
+    cmds = auto.get("late-commands")
+    if not isinstance(cmds, list):
+        auto["late-commands"] = [FORCE_REBOOT_CMD]
+        return True
+    if _has_force_reboot(cmds):
+        return False
+    auto["late-commands"] = [*cmds, FORCE_REBOOT_CMD]
+    return True
+
+
+def _ensure_imaging_early_command(auto: dict, imaging_url: str) -> bool:
+    url = imaging_url or "{{imaging_url}}"
+    cmds = auto.get("early-commands")
+    if not isinstance(cmds, list):
+        auto["early-commands"] = [_imaging_wget(url)]
+        return True
+    if _has_imaging_callback(cmds):
+        return False
+    auto["early-commands"] = [_imaging_wget(url), *cmds]
+    return True
+
+
+def _ensure_optional_catchall_nics(auto: dict) -> bool:
+    """Catch-all en*/eth* match blocks must be optional or first boot waits on cloud-init-network."""
+    net = auto.get("network")
+    if not isinstance(net, dict):
+        return False
+    ethernets = net.get("ethernets")
+    if not isinstance(ethernets, dict):
+        return False
+    changed = False
+    for cfg in ethernets.values():
+        if not isinstance(cfg, dict):
+            continue
+        match = cfg.get("match")
+        if not isinstance(match, dict) or not isinstance(match.get("name"), str):
+            continue
+        if "optional" not in cfg:
+            cfg["optional"] = True
+            changed = True
+    return changed
+
+
+def _drop_autoinstall_timezone(auto: dict) -> bool:
+    """Timezone belongs in cloud-init user-data, not the autoinstall root."""
+    if "timezone" not in auto:
+        return False
+    del auto["timezone"]
+    return True
+
+
+def _safe_identity_username(name: str) -> str:
+    cleaned = str(name or "").strip()
+    if not cleaned or "{{" in cleaned:
+        return cleaned
+    if cleaned.lower() in _RESERVED_IDENTITY_USERS:
+        return _IDENTITY_FALLBACK_USER
+    return cleaned
+
+
+def _sanitize_identity_username(auto: dict) -> bool:
+    """Subiquity rejects identity.username values reserved by the OS (including root)."""
+    existing = auto.get("identity") if isinstance(auto.get("identity"), dict) else None
+    if existing is None:
+        return False
+    current = str(existing.get("username") or "").strip()
+    safe = _safe_identity_username(current)
+    if not safe or safe == current:
+        return False
+    existing["username"] = safe
+    return True
+
+
+def _identity_from_user_data(auto: dict) -> dict[str, str]:
+    ud = auto.get("user-data") if isinstance(auto.get("user-data"), dict) else {}
+    hostname = str(ud.get("hostname") or "").strip()
+    username = ""
+    password = ""
+    chpasswd = ud.get("chpasswd")
+    if isinstance(chpasswd, dict):
+        users = chpasswd.get("users")
+        if isinstance(users, list):
+            for item in users:
+                if isinstance(item, dict) and item.get("name") and item.get("password"):
+                    username = str(item.get("name")).strip()
+                    password = str(item.get("password")).strip()
+                    break
+    return {"hostname": hostname, "username": username, "password": password}
+
+
+def _ensure_identity(auto: dict) -> bool:
+    """Subiquity needs identity or the installer prompts for the first user."""
+    existing = auto.get("identity") if isinstance(auto.get("identity"), dict) else {}
+    if all(str(existing.get(key) or "").strip() for key in ("hostname", "username", "password")):
+        return False
+    found = _identity_from_user_data(auto)
+    merged = {
+        "hostname": str(existing.get("hostname") or found.get("hostname") or "").strip(),
+        "username": _safe_identity_username(str(existing.get("username") or found.get("username") or "").strip()),
+        "password": str(existing.get("password") or found.get("password") or "").strip(),
+    }
+    if not all(merged.values()):
+        return False
+    auto["identity"] = {**existing, **merged}
+    return True
+
+
+def complete_linux_user_data(rendered: str, *, imaging_url: str = "") -> str:
     """Fill missing Subiquity autoinstall keys so NFS installs stay non-interactive."""
     try:
         parsed = yaml.safe_load(rendered)
@@ -213,6 +385,18 @@ def complete_linux_user_data(rendered: str) -> str:
                 if apt_key not in auto["apt"]:
                     auto["apt"][apt_key] = apt_val
                     changed = True
+    if _ensure_imaging_early_command(auto, imaging_url):
+        changed = True
+    if _ensure_optional_catchall_nics(auto):
+        changed = True
+    if _drop_autoinstall_timezone(auto):
+        changed = True
+    if _ensure_identity(auto):
+        changed = True
+    if _sanitize_identity_username(auto):
+        changed = True
+    if _ensure_force_reboot_late_command(auto):
+        changed = True
     if not changed:
         return rendered if rendered.endswith("\n") else rendered + "\n"
     parsed["autoinstall"] = auto
@@ -230,6 +414,7 @@ def dummy_values() -> dict[str, Any]:
         "machine_id": "0",
         "public_url": "http://127.0.0.1:8080",
         "phone_home_url": "http://127.0.0.1:8080/api/machines/0/events",
+        "imaging_url": "http://127.0.0.1:8080/api/machines/0/events?event=imaging",
         "timezone": "UTC",
         "ssh_keys": [],
         "packages": [],
@@ -329,6 +514,8 @@ def placeholder_values(
     wim_index = str((attempt.wim_index if attempt is not None else None) or (image.wim_index if image else 1) or 1)
     packages = overlay.get("packages") or []
     ssh_keys = overlay.get("ssh_keys") or []
+    from .dhcp_runtime import default_timezone
+
     return {
         "hostname": hostname,
         "username": username,
@@ -338,7 +525,8 @@ def placeholder_values(
         "machine_id": str(machine.id),
         "public_url": public,
         "phone_home_url": f"{public}/api/machines/{machine.id}/events",
-        "timezone": str(overlay.get("timezone") or "UTC"),
+        "imaging_url": f"{public}/api/machines/{machine.id}/events?event=imaging",
+        "timezone": str(overlay.get("timezone") or "").strip() or default_timezone(db),
         "ssh_keys": [str(k).strip() for k in ssh_keys if str(k).strip()] if isinstance(ssh_keys, list) else [],
         "packages": [str(p).strip() for p in packages if str(p).strip()] if isinstance(packages, list) else [],
         "wim_index": wim_index,
@@ -375,7 +563,7 @@ def render_selected_seed(
                 raw = str(overlay.get("raw_overlay") or "").strip()
                 if raw:
                     rendered = rendered.rstrip() + "\n" + raw + "\n"
-            rendered = complete_linux_user_data(rendered)
+            rendered = complete_linux_user_data(rendered, imaging_url=str(values.get("imaging_url") or ""))
             yaml.safe_load(rendered)
     except (SeedRenderError, ET.ParseError, yaml.YAMLError) as exc:
         raise SeedRenderError("seed_render_failed") from exc

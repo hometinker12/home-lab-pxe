@@ -49,7 +49,7 @@
       <label>cloud-init user-data
         <textarea name="user_data" rows="24" class="seed-editor">{{ seed_text }}</textarea>
       </label>
-      <p class="meta">Placeholders: <code>{{ placeholder_help }}</code>. Use <code>{{ '{{password_hash}}' }}</code> for Ubuntu autoinstall. Image files cannot be saved empty — reset to factory instead.</p>
+      <p class="meta">Placeholders: {{ placeholder_help }}. This editor is the image template. Deploy copies it onto a machine if that machine file is empty; Copy Default on the machine page pulls the latest. On Deploy a snapshot is pinned under Files → Install snapshots; the installer fetches the filled file from HTTP <code>/cloud-init/&lt;machine-id&gt;/user-data</code>, not that snapshot. Image files cannot be saved empty — reset to factory instead.</p>
     </div>
     <div data-os="windows">
       <label>unattend.xml

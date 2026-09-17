@@ -11,6 +11,7 @@ from ..dhcp_runtime import (
     helper_status,
     load_runtime,
     save_dhcp,
+    save_imaging_timeout,
     save_pxe,
     save_tftp,
 )
@@ -18,6 +19,7 @@ from ..inventory.service import LAB_DEFAULT_MACHINE_ID, local_account_status, up
 from ..models import AccountKind
 from ..netinfo import net_snapshot
 from ..settings import get_settings, smb_password_configured
+from ..timezones import timezone_choices
 from ..tls_store import (
     MAX_PEM_BYTES,
     TlsError,
@@ -48,6 +50,7 @@ def _settings_context(
     settings = get_settings()
     dhcp = load_runtime(db)
     snapshot = net_snapshot(request)
+    selected_timezone = (dhcp.default_timezone or "").strip() or "UTC"
     if open_section is None:
         open_section = (request.query_params.get("section") or "").strip() or None
     try:
@@ -74,6 +77,8 @@ def _settings_context(
         smb_password_set=smb_password_configured(),
         nfs_host=settings.nfs_host,
         nfs_export=settings.nfs_export,
+        timezones=timezone_choices(selected_timezone),
+        selected_timezone=selected_timezone,
         error=error,
         notice=notice,
         open_section=open_section,
@@ -138,6 +143,32 @@ def settings_tftp(
     except DhcpConfigError as exc:
         return _settings_context(request, db, error=str(exc), open_section="tftp")
     return RedirectResponse(url="/settings?section=tftp", status_code=HTTP_303_SEE_OTHER)
+
+
+@router.post("/settings/machines")
+def settings_machines(
+    request: Request,
+    imaging_timeout_minutes: str = Form("15"),
+    default_timezone: str = Form(""),
+    db: Session = Depends(get_db),
+    user: str = Depends(require_user),
+):
+    try:
+        minutes = int((imaging_timeout_minutes or "").strip())
+    except ValueError:
+        return _settings_context(
+            request, db, error="Imaging timeout must be a whole number of minutes", open_section="machines"
+        )
+    try:
+        save_imaging_timeout(
+            db,
+            minutes=minutes,
+            actor=user,
+            timezone=(default_timezone.strip() or None),
+        )
+    except DhcpConfigError as exc:
+        return _settings_context(request, db, error=str(exc), open_section="machines")
+    return RedirectResponse(url="/settings?section=machines", status_code=HTTP_303_SEE_OTHER)
 
 
 @router.post("/settings/accounts")

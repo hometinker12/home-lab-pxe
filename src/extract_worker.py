@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 
 from .db import get_engine, init_db, session_scope
 from .ganesha_exports import request_export_reload
+from .inventory.service import expire_stale_imaging
 from .iso_extract import ArchiveRunner, ExtractError, extract_linux_payloads, extract_windows_media
 from .models import ExtractStatus, Image, InstallAttempt, OsFamily
 from .nfs_media import casper_has_squashfs, linux_http_generation, nfs_generation
@@ -384,6 +385,12 @@ def main() -> None:
     while True:
         job = claim_next_job()
         if job is None:
+            try:
+                with session_scope() as db:
+                    expire_stale_imaging(db)
+                    db.commit()
+            except Exception:
+                LOGGER.exception("imaging timeout expire failed")
             time.sleep(1)
             continue
         image_id, revision = job

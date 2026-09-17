@@ -58,9 +58,16 @@ FAVORITES = (
     {
         "id": "seeds",
         "label": "Machine seeds",
-        "hint": "Per-machine cloud-init and unattend files",
+        "hint": "Optional per-machine override of the image seed",
         "volume": "data",
         "dir": "seeds",
+    },
+    {
+        "id": "install-seeds",
+        "label": "Install snapshots",
+        "hint": "Pinned image seed at Deploy (placeholders filled over HTTP for the installer)",
+        "volume": "data",
+        "dir": "install-seeds",
     },
 )
 
