@@ -18,7 +18,7 @@
 
 ### Fixed
 
-- Starting the container with a read-only rootfs no longer crashes when TFTP cannot receive the generated `boot.ipxe` chain script. HTTP still serves `/boot.ipxe`.
+- Starting the container with a read-only rootfs no longer crashes when TFTP cannot receive the generated `boot.ipxe` chain script. HTTP still serves `/boot.ipxe`. Samba passdb, cache, and `/run` are initialized so SMB, nfs-ganesha, and dnsmasq can start when those paths are empty tmpfs.
 
 ## [0.3.0] - 2026-09-17
 
