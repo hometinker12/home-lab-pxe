@@ -6,6 +6,10 @@
 
 - README troubleshooting for Ubuntu casper `Permission denied` when the `pxe-images` volume is already an NFS mount (Ganesha cannot re-export a NAS/SAN Docker volume). Bind a local directory over `/var/lib/pxe/images/nfs`.
 
+### Fixed
+
+- Compose sets `seccomp:unconfined` (kept with `no-new-privileges`) so nfs-ganesha can use `open_by_handle_at`. Docker's default seccomp profile blocked that syscall and Ubuntu casper failed with `mount: Operation not permitted` after the export was published.
+
 ## [0.3.3] - 2026-09-18
 
 ### Added

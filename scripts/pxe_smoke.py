@@ -142,6 +142,73 @@ def seed_nfs_generation(container: str, image_id: int) -> None:
     expect(proc.returncode == 0, f"sync ganesha exports failed rc={proc.returncode} {detail}")
 
 
+def expect_nfs_fhandle(container: str, path: str) -> None:
+    """Fail if seccomp/caps block open_by_handle_at (casper: Operation not permitted)."""
+    code = f"""
+import ctypes
+import ctypes.util
+import errno
+import os
+import sys
+
+path = {path!r}
+lib = ctypes.util.find_library("c")
+if not lib:
+    raise SystemExit("libc not found")
+libc = ctypes.CDLL(lib, use_errno=True)
+libc.name_to_handle_at.restype = ctypes.c_int
+libc.name_to_handle_at.argtypes = [
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_int),
+    ctypes.c_int,
+]
+libc.open_by_handle_at.restype = ctypes.c_int
+libc.open_by_handle_at.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+
+class FileHandle(ctypes.Structure):
+    _fields_ = [
+        ("handle_bytes", ctypes.c_uint),
+        ("handle_type", ctypes.c_int),
+        ("f_handle", ctypes.c_ubyte * 128),
+    ]
+
+AT_FDCWD = -100
+fh = FileHandle()
+fh.handle_bytes = 128
+mount_id = ctypes.c_int()
+ctypes.set_errno(0)
+rc = libc.name_to_handle_at(AT_FDCWD, path.encode(), ctypes.byref(fh), ctypes.byref(mount_id), 0)
+err = ctypes.get_errno()
+if rc != 0:
+    raise SystemExit(f"name_to_handle_at errno={{err}} ({{errno.errorcode.get(err, err)}})")
+dirfd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+try:
+    ctypes.set_errno(0)
+    got = libc.open_by_handle_at(dirfd, ctypes.byref(fh), os.O_RDONLY)
+finally:
+    os.close(dirfd)
+err = ctypes.get_errno()
+if got < 0:
+    if err == errno.EPERM:
+        raise SystemExit(
+            "open_by_handle_at EPERM: Docker seccomp or missing CAP_DAC_READ_SEARCH "
+            "(casper mount: Operation not permitted)"
+        )
+    raise SystemExit(f"open_by_handle_at errno={{err}} ({{errno.errorcode.get(err, err)}})")
+os.close(got)
+print("ok")
+"""
+    proc = subprocess.run(
+        ["docker", "exec", container, "python", "-c", code],
+        capture_output=True,
+        text=True,
+    )
+    detail = (proc.stderr or proc.stdout or "").strip()
+    expect(proc.returncode == 0, f"nfs fhandle check failed rc={proc.returncode} {detail}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
@@ -696,6 +763,7 @@ def main() -> None:
         expect(conf_proc.returncode == 0, "ganesha generations conf missing")
         expect(f'Path = "/var/lib/pxe/images/nfs/{nfs_image_id}/1"' in (conf_proc.stdout or ""), "generation export Path missing")
         expect("Squash = All" in (conf_proc.stdout or "") and "Anonymous_Uid = 65534" in (conf_proc.stdout or ""), "generation export must squash to nobody")
+        expect_nfs_fhandle(args.container.strip(), f"/var/lib/pxe/images/nfs/{nfs_image_id}/1")
         expect(",vers=" not in nfs_text and "mountport=" not in nfs_text, "nfsroot must not swallow mount options")
         expect("iso-url=" not in nfs_text and "ramdisk_size" not in nfs_text, "nfs install should not wget ISO")
         expect("nfs-smoke-secret" not in nfs_text, "password leaked into nfs iPXE")
