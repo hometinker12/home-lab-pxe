@@ -1,6 +1,7 @@
 # home-lab-pxe
 
-[License: MIT](LICENSE.md) [Release](VERSION) [Docker](https://hub.docker.com/r/hometinker12/home-lab-pxe) [Python](https://www.python.org/) [AI Assisted](https://cursor.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md) [![Release](https://img.shields.io/badge/release-0.3.1-blue)](VERSION) [![CI](https://github.com/hometinker12/home-lab-pxe/actions/workflows/pxe-smoke.yml/badge.svg?branch=develop)](https://github.com/hometinker12/home-lab-pxe/actions/workflows/pxe-smoke.yml) [![Publish](https://github.com/hometinker12/home-lab-pxe/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/hometinker12/home-lab-pxe/actions/workflows/docker-publish.yml) [![Docker](https://img.shields.io/badge/docker-hometinker12%2Fhome--lab--pxe-blue)](https://hub.docker.com/r/hometinker12/home-lab-pxe) [![Python](https://img.shields.io/badge/python-3.12-green)](https://www.python.org/) [![AI Assisted](https://img.shields.io/badge/AI%20Assisted-yes-blue)](https://cursor.com)
+
 
 **One-command Docker PXE/iPXE lab.**
 
