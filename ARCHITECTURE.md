@@ -111,7 +111,7 @@ flowchart LR
 
 Authoritative mode (`PXE_DHCP_MODE=authoritative`) makes dnsmasq own the address range instead. Default is **proxy** so the home-lab router stays the DHCP server.
 
-When the existing LAN DHCP server must point clients at this box (DHCP disabled here), set option 66 to the host LAN IPv4. Default option 67 for a UEFI-only LAN (including UniFi Network Boot) is `ipxe.efi`. Use `undionly.kpxe` for BIOS and `snponly.efi` for ARM64 UEFI. Already-iPXE clients (Proxmox/SeaBIOS) need the HTTP script `/boot.ipxe`, not `ipxe.efi`. Firmware that chainloads `ipxe.efi` then fetches TFTP `autoexec.ipxe` (same handoff as `/boot.ipxe`). Option 60 (`PXEClient`) is required only when that DHCP server and this PXE/TFTP service share the same physical machine. Leave 60/66/67 unset on the other server if this container is already running proxyDHCP.
+When the existing LAN DHCP server must point clients at this box (DHCP disabled here), set option 66 to the host LAN IPv4. Default option 67 for a UEFI-only LAN (including UniFi Network Boot) is `ipxe.efi`. Use `undionly.kpxe` for BIOS and `snponly.efi` for ARM64 UEFI. Already-iPXE clients (Proxmox/SeaBIOS) need the HTTP script `/boot.ipxe`, not `ipxe.efi`. Firmware that chainloads `ipxe.efi` then fetches TFTP `autoexec.ipxe` (same handoff as `/boot.ipxe`). HTTP `/tftp/boot.ipxe` and `/tftp/autoexec.ipxe` still generate that chain when the TFTP root is read-only. Option 60 (`PXEClient`) is required only when that DHCP server and this PXE/TFTP service share the same physical machine. Leave 60/66/67 unset on the other server if this container is already running proxyDHCP.
 
 ---
 

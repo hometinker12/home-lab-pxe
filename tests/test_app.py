@@ -2,12 +2,23 @@ from tests.conftest import login
 
 
 def test_boot_chain_scripts_hand_off_to_ipxe_mac(client):
-    for path in ("/boot.ipxe", "/autoexec.ipxe"):
+    for path in ("/boot.ipxe", "/autoexec.ipxe", "/tftp/boot.ipxe", "/tftp/autoexec.ipxe"):
         response = client.get(path)
         assert response.status_code == 200
         text = response.text
         assert text.startswith("#!ipxe")
         assert "chain --replace http://pxe.test:8080/ipxe/${mac:hexhyp}" in text
+
+
+def test_tftp_http_boot_chain_when_files_missing(client, tmp_path):
+    root = tmp_path / "tftp"
+    (root / "boot.ipxe").unlink(missing_ok=True)
+    (root / "autoexec.ipxe").unlink(missing_ok=True)
+    for path in ("/tftp/boot.ipxe", "/tftp/autoexec.ipxe"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.text.startswith("#!ipxe")
+        assert "chain --replace http://pxe.test:8080/ipxe/${mac:hexhyp}" in response.text
 
 
 def test_console_flow_create_image_and_deploy(client):

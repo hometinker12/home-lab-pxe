@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- iPXE 2.0 UEFI chainloading no longer stops at `autoexec.ipxe not found`. TFTP writes `autoexec.ipxe` next to `boot.ipxe` (same `GET /ipxe/{mac}` handoff), HTTP serves `/autoexec.ipxe`, and proxyDHCP matches user-class `iPXE` as well as option 175 so already-iPXE clients (Proxmox/SeaBIOS) get the HTTP `boot.ipxe` URL instead of `ipxe.efi`.
+- iPXE 2.0 UEFI chainloading no longer stops at `autoexec.ipxe not found`. TFTP writes `autoexec.ipxe` next to `boot.ipxe` (same `GET /ipxe/{mac}` handoff), HTTP serves `/autoexec.ipxe` and `/tftp/autoexec.ipxe` even when the TFTP root is read-only, and proxyDHCP matches user-class `iPXE` as well as option 175 so already-iPXE clients (Proxmox/SeaBIOS) get the HTTP `boot.ipxe` URL instead of `ipxe.efi`.
 - Compose sets `seccomp:unconfined` (kept with `no-new-privileges`) so nfs-ganesha can use `open_by_handle_at`. Docker's default seccomp profile blocked that syscall and Ubuntu casper failed with `mount: Operation not permitted` after the export was published.
 
 ## [0.3.3] - 2026-09-18

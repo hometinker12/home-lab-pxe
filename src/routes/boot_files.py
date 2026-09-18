@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from ..db import session_scope
 from ..inventory.service import get_image, get_machine_for_guest_init, get_open_attempt
 from ..models import InstallAttempt
 from ..paths import UnsafePathError, resolve_under
 from ..settings import get_settings
+from ..tftp_store import AUTOEXEC_CHAIN_NAME, BOOT_CHAIN_NAME, boot_chain_script_body
 
 router = APIRouter(tags=["boot-files"])
 
@@ -76,6 +77,9 @@ def tftp_http(name: str):
         path = resolve_under(get_settings().tftp_root, name)
     except UnsafePathError as exc:
         raise HTTPException(status_code=400, detail="invalid path") from exc
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="file missing")
-    return FileResponse(path)
+    if path.is_file():
+        return FileResponse(path)
+    # Read-only TFTP roots cannot persist boot.ipxe / autoexec.ipxe; HTTP still hands off.
+    if name in {BOOT_CHAIN_NAME, AUTOEXEC_CHAIN_NAME}:
+        return PlainTextResponse(boot_chain_script_body(get_settings().public_url), media_type="text/plain")
+    raise HTTPException(status_code=404, detail="file missing")

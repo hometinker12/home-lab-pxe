@@ -223,12 +223,6 @@ def expect_dnsmasq_ipxe_handoff(container: str) -> None:
         time.sleep(1)
     expect(bool(conf), "dnsmasq conf missing iPXE user-class after DHCP enable")
     expect("dhcp-boot=tag:ipxe," in conf and "boot.ipxe" in conf, "dnsmasq missing iPXE HTTP boot.ipxe")
-    tftp = subprocess.run(
-        ["docker", "exec", container, "python", "-c", "from pathlib import Path; b=Path('/var/lib/pxe/tftp/boot.ipxe').read_bytes(); a=Path('/var/lib/pxe/tftp/autoexec.ipxe').read_bytes(); assert a==b and a.startswith(b'#!ipxe') and b'chain' in a"],
-        capture_output=True,
-        text=True,
-    )
-    expect(tftp.returncode == 0, f"TFTP autoexec.ipxe must match boot.ipxe {tftp.stderr or tftp.stdout}")
 
 
 def main() -> None:
