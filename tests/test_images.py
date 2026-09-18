@@ -313,6 +313,18 @@ def test_image_form_hides_os_specific_fields(client):
     assert page.text.find('name="iso_file"') < page.text.find("Advanced Settings")
 
 
+def test_iso_upload_script_closes_add_dialog(client):
+    login(client)
+    js = client.get("/static/app.js")
+    assert js.status_code == 200
+    text = js.content.decode()
+    assert "uploadIsoWithProgress" in text
+    assert 'form.closest("dialog")' in text
+    assert "dialog.upload-overlay" in text
+    assert "dlg.close" in text
+    assert "showModal" in text
+
+
 def test_edit_blocked_while_extracting(client, tmp_path):
     login(client)
     client.post(

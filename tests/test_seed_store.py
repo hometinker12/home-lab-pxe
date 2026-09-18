@@ -138,6 +138,45 @@ def test_factory_linux_seed_substitutes_lists():
     validate_seed_template(factory_seed_text(OsFamily.linux), OsFamily.linux)
 
 
+def test_factory_linux_seed_omits_empty_ssh_keys():
+    from src.seed_render import dummy_values, substitute_yaml
+
+    rendered = substitute_yaml(factory_seed_text(OsFamily.linux), dummy_values())
+    parsed = yaml.safe_load(rendered)
+    auto = parsed["autoinstall"]
+    assert "authorized-keys" not in auto["ssh"]
+    assert "ssh_authorized_keys" not in auto["user-data"]["users"][0]
+    assert "packages" not in auto
+    assert "[] is too short" not in rendered
+    assert "ssh_authorized_keys: []" not in rendered
+    assert "authorized-keys: []" not in rendered
+
+
+def test_complete_linux_user_data_drops_empty_ssh_authorized_keys():
+    from src.seed_render import complete_linux_user_data
+
+    filled = complete_linux_user_data(
+        "#cloud-config\nautoinstall:\n  version: 1\n  ssh:\n    install-server: true\n"
+        "    authorized-keys: []\n  user-data:\n    users:\n      - name: ubuntu\n"
+        "        ssh_authorized_keys: []\n"
+    )
+    parsed = yaml.safe_load(filled)
+    assert "authorized-keys" not in parsed["autoinstall"]["ssh"]
+    assert "ssh_authorized_keys" not in parsed["autoinstall"]["user-data"]["users"][0]
+
+
+def test_complete_linux_user_data_rewrites_empty_post_data_wget():
+    from src.seed_render import complete_linux_user_data
+
+    url = "http://pxe.test/api/machines/4/events?event=imaging"
+    filled = complete_linux_user_data(
+        "#cloud-config\nautoinstall:\n  version: 1\n  early-commands:\n"
+        f"    - wget -q --tries=3 --timeout=10 --post-data= -O /dev/null {url} || true\n"
+    )
+    assert "--post-file=/dev/null" in filled
+    assert "--post-data=" not in filled
+
+
 def test_complete_linux_user_data_skips_non_autoinstall():
     from src.seed_render import complete_linux_user_data
 
@@ -150,7 +189,7 @@ def test_complete_linux_user_data_appends_force_reboot_once():
 
     filled = complete_linux_user_data(
         "#cloud-config\nautoinstall:\n  version: 1\n  late-commands:\n"
-        "    - wget -q --post-data= -O /dev/null {{phone_home_url}} || true\n"
+        "    - wget -q --post-file=/dev/null -O /dev/null {{phone_home_url}} || true\n"
     )
     assert filled.count("sysrq-trigger") >= 3
     again = complete_linux_user_data(filled)

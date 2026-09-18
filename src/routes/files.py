@@ -11,6 +11,7 @@ from ..file_browser import (
     browser_context,
     delete_entry,
     files_href,
+    is_protected,
     mkdir_volume,
     normalize_volume,
     parse_location,
@@ -63,6 +64,8 @@ def files_page(request: Request, user: str = Depends(require_user)):
 @router.get("/files/download")
 def files_download(path: str, root: str = DEFAULT_VOLUME, user: str = Depends(require_user)):
     volume = normalize_volume(root)
+    if is_protected(volume, path):
+        raise HTTPException(status_code=404, detail="file missing")
     try:
         dest = resolve_volume_path(volume, path)
     except FileBrowserError as extra:

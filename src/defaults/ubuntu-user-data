@@ -71,7 +71,7 @@ autoinstall:
   shutdown: reboot
   updates: security
   early-commands:
-    - wget -q --tries=3 --timeout=10 --post-data= -O /dev/null {{imaging_url}} || true
+    - wget -q --tries=3 --timeout=10 --post-file=/dev/null -O /dev/null {{imaging_url}} || true
   late-commands:
-    - wget -q --tries=3 --timeout=10 --post-data= -O /dev/null {{phone_home_url}} || true
+    - wget -q --tries=3 --timeout=10 --post-file=/dev/null -O /dev/null {{phone_home_url}} || true
     - sh -c 'sleep 1; echo 1 > /proc/sys/kernel/sysrq; echo s > /proc/sysrq-trigger; echo u > /proc/sysrq-trigger; echo b > /proc/sysrq-trigger'

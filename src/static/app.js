@@ -81,25 +81,57 @@
     syncDhcpForm(form);
   });
 
+  function enclosingDialog(form) {
+    return form.closest("dialog");
+  }
+
+  function setImageFormBusy(form, busy) {
+    form.querySelectorAll("button").forEach((btn) => {
+      btn.disabled = busy;
+    });
+  }
+
+  function reopenImageDialog(dlg) {
+    if (dlg && typeof dlg.showModal === "function") {
+      showModalPreservingScroll(dlg);
+    }
+  }
+
+  function failIsoUpload(form, dlg, message) {
+    hideUploadOverlay();
+    setImageFormBusy(form, false);
+    reopenImageDialog(dlg);
+    window.alert(message);
+  }
+
   function uploadOverlay() {
-    let overlay = document.querySelector(".upload-overlay");
+    let overlay = document.querySelector("dialog.upload-overlay");
     if (overlay) {
       return overlay;
     }
-    overlay = document.createElement("div");
+    overlay = document.createElement("dialog");
     overlay.className = "upload-overlay";
-    overlay.hidden = true;
     overlay.setAttribute("role", "alertdialog");
     overlay.setAttribute("aria-live", "polite");
+    overlay.setAttribute("aria-modal", "true");
     overlay.innerHTML =
       '<div class="upload-status"><p data-upload-label>Uploading ISO…</p><progress data-upload-bar max="100" value="0"></progress></div>';
+    overlay.addEventListener("cancel", (event) => {
+      event.preventDefault();
+    });
     document.body.append(overlay);
     return overlay;
   }
 
   function setUploadStatus(percent, label) {
     const overlay = uploadOverlay();
-    overlay.hidden = false;
+    if (typeof overlay.showModal === "function") {
+      if (!overlay.open) {
+        overlay.showModal();
+      }
+    } else {
+      overlay.hidden = false;
+    }
     document.body.setAttribute("aria-busy", "true");
     const text = overlay.querySelector("[data-upload-label]");
     const bar = overlay.querySelector("[data-upload-bar]");
@@ -117,18 +149,27 @@
   }
 
   function hideUploadOverlay() {
-    const overlay = document.querySelector(".upload-overlay");
+    const overlay = document.querySelector("dialog.upload-overlay");
     if (overlay) {
+      if (typeof overlay.close === "function" && overlay.open) {
+        overlay.close();
+      }
       overlay.hidden = true;
     }
     document.body.removeAttribute("aria-busy");
   }
 
   function uploadIsoWithProgress(form) {
+    const payload = new FormData(form);
+    const dlg = enclosingDialog(form);
     const xhr = new XMLHttpRequest();
     const action = form.getAttribute("action") || window.location.pathname;
     xhr.open((form.getAttribute("method") || "POST").toUpperCase(), action);
     xhr.withCredentials = true;
+    setImageFormBusy(form, true);
+    if (dlg && typeof dlg.close === "function" && dlg.open) {
+      dlg.close();
+    }
     setUploadStatus(0, "Uploading ISO… 0%");
     xhr.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable && event.total > 0) {
@@ -142,18 +183,20 @@
       setUploadStatus(100, "Starting extraction…");
     });
     xhr.addEventListener("error", () => {
-      hideUploadOverlay();
-      window.alert("ISO upload failed. Check the connection and try again.");
+      failIsoUpload(form, dlg, "ISO upload failed. Check the connection and try again.");
     });
-    xhr.addEventListener("abort", () => hideUploadOverlay());
+    xhr.addEventListener("abort", () => {
+      hideUploadOverlay();
+      setImageFormBusy(form, false);
+      reopenImageDialog(dlg);
+    });
     xhr.addEventListener("load", () => {
       if (xhr.status === 401 || xhr.status === 403 || /\/login\/?$/.test(xhr.responseURL || "")) {
         window.location.assign("/login");
         return;
       }
       if (xhr.status >= 400) {
-        hideUploadOverlay();
-        window.alert("ISO upload failed.");
+        failIsoUpload(form, dlg, "ISO upload failed.");
         return;
       }
       if ((xhr.responseText || "").includes("alert-error")) {
@@ -164,7 +207,7 @@
       }
       window.location.assign("/images");
     });
-    xhr.send(new FormData(form));
+    xhr.send(payload);
   }
 
   function extractInProgress(status) {

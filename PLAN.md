@@ -201,7 +201,7 @@ Both **username and password** are Fernet-encrypted at rest. Optional lab-wide d
 - **New / pending** highlight so unknown hardware is obvious
 - **Images:** import metadata + paths; Linux vs Windows vs tool; add is a popup; edit is disabled while ISO extract is running; after extract, pick **Install source** (Ubuntu YAML IDs or Windows WIM editions)
 - **Machine detail:** hostname and guest-init (IANA timezone dropdown, packages, SSH keys, cloud-init or unattend) share one form; Deploy saves then starts the install. Local account username + password rotate, staged vs applied, recent boot events
-- **Settings:** HTTPS certificate (self-signed on first start, or upload PEM cert + key), optional default Linux root and Windows Administrator credentials (encrypted), imaging timeout, default timezone for new machines
+- **Settings:** Imaging default local/root account first (encrypted Linux root and Windows Administrator), then Machines (timeout, timezone), HTTPS certificate, Windows SMB share password rotate, PXE/DHCP/TFTP
 - **Activity log:** who deployed what, redacted
 
 ## 9. Data model (sketch)

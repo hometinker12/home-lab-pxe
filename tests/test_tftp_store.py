@@ -231,3 +231,18 @@ def test_files_cannot_delete_data_db(client, tmp_path):
     assert response.status_code == 200
     assert "Cannot delete this path" in response.text
     assert db_path.is_file()
+
+
+def test_files_hides_and_blocks_smb_password(client, tmp_path):
+    login(client)
+    client.post("/settings/smb/rotate", follow_redirects=False)
+    secret_file = tmp_path / "smb.password"
+    assert secret_file.is_file()
+    listing = client.get("/files?root=data")
+    assert listing.status_code == 200
+    assert "smb.password" not in listing.text
+    downloaded = client.get("/files/download", params={"root": "data", "path": "smb.password"})
+    assert downloaded.status_code == 404
+    ciphertext = secret_file.read_text(encoding="utf-8")
+    assert ciphertext
+    assert "test-smb-password-ok" not in ciphertext

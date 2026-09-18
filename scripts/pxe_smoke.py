@@ -253,6 +253,15 @@ def main() -> None:
     expect(b"Already iPXE" in body, "settings already-iPXE TFTP filename hint")
     expect(b"Ubuntu installation media (NFS)" in body, "settings NFS casper export")
     expect(b"netboot=nfs" in body, "settings NFS netboot hint")
+    expect(b"Windows installation media (SMB)" in body, "settings Windows SMB share")
+    expect(b'action="/settings/smb/rotate"' in body, "settings SMB rotate control")
+    expect(b"Rotate password" in body, "settings SMB rotate button")
+    expect(b"Imaging default local/root account" in body, "settings imaging default accounts")
+    expect(b"Lab default local accounts" not in body, "old accounts section title")
+    expect(b'class="nav-alert"' in body, "settings attention badge")
+    expect(b"1 setting needs attention" in body, "unset imaging default accounts badge")
+    expect(body.find(b'data-section="accounts"') < body.find(b'data-section="machines"'), "accounts section should be first")
+    expect(body.find(b'data-section="machines"') < body.find(b'data-section="pxe"'), "machines section should be second")
     expect(b"Imaging timeout" in body, "settings imaging timeout")
     expect(b'name="imaging_timeout_minutes"' in body, "imaging timeout field")
     expect(b'name="default_timezone"' in body, "settings default timezone")
@@ -301,6 +310,11 @@ def main() -> None:
     expect(b"iPXE boot files" in body and b"NFS extracts" in body, "files favorites missing boot/extract shortcuts")
     expect(b"SMB media" in body and b"Machine seeds" in body, "files favorites missing SMB/seeds shortcuts")
     expect(b"Install snapshots" in body, "files favorites missing install snapshots")
+    status, _, body = c.request("GET", "/files?root=data")
+    expect(status == 200, "data volume files")
+    expect(b"smb.password" not in body, "persisted SMB password must not be listed")
+    status, _, _ = c.request("GET", "/files/download?root=data&path=smb.password")
+    expect(status == 404, "smb.password download must 404")
     status, _, body = c.request("GET", "/files?root=images&dir=nfs")
     expect(status == 200 and b"images:/nfs" in body, "files NFS extract folder")
     status, _, body = c.request("GET", "/files/download?path=undionly.kpxe")
@@ -323,6 +337,9 @@ def main() -> None:
     expect(b"data-open-dialog=\"add-image\"" in body, "images Add image control")
     expect(b'id="add-image"' in body, "add image overlay dialog")
     expect(b'<section class="card">' not in body, "add image form should not be an on-page card")
+    status, _, js_body = c.request("GET", "/static/app.js")
+    expect(status == 200 and b'form.closest("dialog")' in js_body, "ISO upload must close the add dialog")
+    expect(b"dialog.upload-overlay" in js_body, "ISO upload progress overlay")
 
     dummy_iso = f"smoke-extract-{int(time.time())}"
     status, _, _ = c.multipart(
@@ -523,7 +540,8 @@ def main() -> None:
         "  ssh:\n"
         "    install-server: true\n"
         "    allow-pw: true\n"
-        "    authorized-keys: []\n"
+        "    authorized-keys:\n"
+        "      {{ssh_keys}}\n"
         "  user-data:\n"
         "    hostname: {{hostname}}\n"
         "    manage_etc_hosts: true\n"
@@ -537,7 +555,7 @@ def main() -> None:
         "          password: {{password_hash}}\n"
         "          type: hash\n"
         "  late-commands:\n"
-        "    - [wget, -q, --post-data=, -O, /dev/null, {{phone_home_url}}]\n"
+        "    - [wget, -q, --post-file=/dev/null, -O, /dev/null, {{phone_home_url}}]\n"
     )
     status, _, _ = c.request(
         "POST",
@@ -744,6 +762,10 @@ def main() -> None:
     expect("America/New_York" in user_data, "deploy timezone missing from rendered user-data")
     expect("ubuntu-server-minimal" in user_data, "linux user-data missing selected source.id")
     expect("sysrq-trigger" in user_data, "autoinstall must force reboot after phone-home")
+    expect("ssh_authorized_keys: []" not in user_data, "empty ssh_authorized_keys fails Subiquity")
+    expect("authorized-keys: []" not in user_data, "empty authorized-keys fails Subiquity")
+    expect("--post-file=/dev/null" in user_data, "imaging wget must POST empty body")
+    expect("--post-data=" not in user_data, "empty --post-data= is a wget error")
     expect("instance-id" in c.request("GET", f"/cloud-init/{mid}/meta-data")[2].decode(), "meta-data")
 
     status, _, body = c.request("GET", f"/api/machines/{mid}")
@@ -890,6 +912,21 @@ def main() -> None:
     expect(status == 200, "cloudbase-init while imaging")
     status, _, body = c.request("GET", f"/ipxe/{win_mac}")
     expect("wimboot" in body.decode(), "windows iPXE while imaging")
+
+    status, _, body = c.request("POST", "/settings/smb/rotate", form={})
+    expect(status in {200, 303, 302}, f"smb rotate {status}")
+    status, _, body = c.request("GET", "/settings?section=smb&notice=smb-rotated")
+    expect(status == 200 and b"Windows SMB password rotated" in body, "smb rotate notice missing")
+    if smb_secret:
+        expect(smb_secret.encode() not in body, "old SMB password leaked after rotate")
+    status, _, body = c.request("GET", f"/windows/{wid}/startnet.cmd")
+    expect(status == 200 and b"pxe-media" in body, "startnet after smb rotate")
+    if smb_secret:
+        expect(smb_secret.encode() not in body, "startnet still has old SMB password after rotate")
+    status, _, body = c.request("GET", "/files?root=data")
+    expect(status == 200 and b"smb.password" not in body, "smb.password listed after rotate")
+    status, _, _ = c.request("GET", "/files/download?root=data&path=smb.password")
+    expect(status == 404, "smb.password download after rotate")
 
     print("SMOKE PASS")
 
