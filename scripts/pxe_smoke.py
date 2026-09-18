@@ -209,6 +209,28 @@ print("ok")
     expect(proc.returncode == 0, f"nfs fhandle check failed rc={proc.returncode} {detail}")
 
 
+def expect_dnsmasq_ipxe_handoff(container: str) -> None:
+    conf = ""
+    for _ in range(15):
+        proc = subprocess.run(
+            ["docker", "exec", container, "cat", "/var/lib/pxe/data/dnsmasq-pxe.conf"],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0 and "dhcp-userclass=set:ipxe,iPXE" in (proc.stdout or ""):
+            conf = proc.stdout
+            break
+        time.sleep(1)
+    expect(bool(conf), "dnsmasq conf missing iPXE user-class after DHCP enable")
+    expect("dhcp-boot=tag:ipxe," in conf and "boot.ipxe" in conf, "dnsmasq missing iPXE HTTP boot.ipxe")
+    tftp = subprocess.run(
+        ["docker", "exec", container, "python", "-c", "from pathlib import Path; b=Path('/var/lib/pxe/tftp/boot.ipxe').read_bytes(); a=Path('/var/lib/pxe/tftp/autoexec.ipxe').read_bytes(); assert a==b and a.startswith(b'#!ipxe') and b'chain' in a"],
+        capture_output=True,
+        text=True,
+    )
+    expect(tftp.returncode == 0, f"TFTP autoexec.ipxe must match boot.ipxe {tftp.stderr or tftp.stdout}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
@@ -240,6 +262,8 @@ def main() -> None:
     status, _, body = c.request("GET", "/boot.ipxe")
     expect(status == 200 and body.startswith(b"#!ipxe"), "/boot.ipxe")
     expect(b"chain" in body, "boot.ipxe missing chain")
+    status, _, autoexec = c.request("GET", "/autoexec.ipxe")
+    expect(status == 200 and autoexec == body, "/autoexec.ipxe must match /boot.ipxe")
 
     mac = "de-ad-be-ef-00-01"
     status, _, body = c.request("GET", f"/ipxe/{mac}")
@@ -318,6 +342,8 @@ def main() -> None:
     expect(b"Host LAN IPv4" in body, "settings host LAN address")
     expect(b"/boot.ipxe" in body, "settings advertised PXE URL")
     expect(b"Already iPXE" in body, "settings already-iPXE TFTP filename hint")
+    expect(b"Default / UEFI" in body, "settings default UEFI filename")
+    expect(b"<code>ipxe.efi</code>" in body, "settings should advertise ipxe.efi")
     expect(b"Ubuntu installation media (NFS)" in body, "settings NFS casper export")
     expect(b"netboot=nfs" in body, "settings NFS netboot hint")
     expect(b"Windows installation media (SMB)" in body, "settings Windows SMB share")
@@ -366,6 +392,12 @@ def main() -> None:
     expect(status in {200, 303, 302}, f"dhcp enable {status}")
     status, _, _ = c.request("POST", "/settings/tftp", form={"tftp_enabled": "1"})
     expect(status in {200, 303, 302}, f"tftp enable {status}")
+    if args.container.strip():
+        expect_dnsmasq_ipxe_handoff(args.container.strip())
+    status, _, chain = c.request("GET", "/tftp/boot.ipxe")
+    expect(status == 200 and chain.startswith(b"#!ipxe") and b"chain" in chain, "TFTP HTTP boot.ipxe")
+    status, _, autoexec_tftp = c.request("GET", "/tftp/autoexec.ipxe")
+    expect(status == 200 and autoexec_tftp == chain, "TFTP HTTP autoexec.ipxe must match boot.ipxe")
     status, _, _ = c.request(
         "POST", "/settings/machines", form={"imaging_timeout_minutes": "15", "default_timezone": "UTC"}
     )
@@ -377,6 +409,9 @@ def main() -> None:
     expect(b"iPXE boot files" in body and b"NFS extracts" in body, "files favorites missing boot/extract shortcuts")
     expect(b"SMB media" in body and b"Machine seeds" in body, "files favorites missing SMB/seeds shortcuts")
     expect(b"Install snapshots" in body, "files favorites missing install snapshots")
+    if b"ipxe-source" in body or b">stub<" in body:
+        expect(b"https://boot.ipxe.org/" in body, "stub iPXE files should link to boot.ipxe.org")
+        expect(b"need replacing" in body or b"needs replacing" in body, "files attention banner")
     status, _, body = c.request("GET", "/files?root=data")
     expect(status == 200, "data volume files")
     expect(b"smb.password" not in body, "persisted SMB password must not be listed")

@@ -84,10 +84,10 @@
       </dd>
       <dt>Option 67 (Boot File Name)</dt>
       <dd>
-        <p class="meta">Specifies the initial file name to download over TFTP. This appliance uses iPXE binaries such as <code>undionly.kpxe</code> (BIOS) or <code>ipxe.efi</code> (UEFI), not WDS names like <code>bootx64\wdsnbp.com</code>. Pick one name per architecture (your DHCP UI may have separate BIOS and UEFI classes). If the client already shows the iPXE banner (Proxmox/SeaBIOS ROM), do not use <code>ipxe.efi</code> — that is a UEFI binary and iPXE fails with exec format error. Use TFTP <code>{{ pxe_hints.ipxe_filename }}</code> instead. After iPXE starts, it chains to the HTTP script.</p>
+        <p class="meta">Default filename for a single-option DHCP server (UniFi Network Boot, option 67) is <code>{{ pxe_hints.default_filename }}</code> when every client is UEFI. Firmware that is not yet iPXE must get a binary, not WDS names like <code>bootx64\wdsnbp.com</code> and not <code>boot.ipxe</code> (Intel PXE cannot execute a script). BIOS/legacy clients still need <code>undionly.kpxe</code>. Proxmox/SeaBIOS already runs iPXE — those VMs must not receive <code>ipxe.efi</code> unless the guest firmware is OVMF/UEFI. If you pin option 67 to <code>ipxe.efi</code> for UEFI boxes, iPXE 2.0 then loads TFTP <code>autoexec.ipxe</code> (written next to <code>boot.ipxe</code>). Leave 66/67 unset on the other server if this box is already running proxyDHCP on the same L2.</p>
         <ul class="option-values">
+          <li><span class="meta">Default / UEFI x86_64</span> <code>{{ pxe_hints.efi_filename }}</code></li>
           <li><span class="meta">BIOS / legacy</span> <code>{{ pxe_hints.bios_filename }}</code></li>
-          <li><span class="meta">UEFI x86_64</span> <code>{{ pxe_hints.efi_filename }}</code></li>
           <li><span class="meta">UEFI ARM64</span> <code>{{ pxe_hints.arm_filename }}</code></li>
           <li><span class="meta">Already iPXE (Proxmox / SeaBIOS)</span> <code>{{ pxe_hints.ipxe_filename }}</code></li>
           <li><span class="meta">iPXE script (HTTP, after iPXE)</span> <code>{{ pxe_hints.ipxe_script }}</code></li>

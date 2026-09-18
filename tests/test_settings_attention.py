@@ -60,7 +60,7 @@ def test_settings_attention_clears_after_accounts_saved(client):
     assert saved.status_code in {302, 303}
     assert "section=accounts" in saved.headers.get("location", "")
     page = client.get("/machines")
-    assert "nav-alert" not in page.text
+    assert 'aria-label="1 setting needs attention"' not in page.text
     settings = client.get("/settings")
     assert "needs-attention" not in settings.text
     assert "linux-default-pass" not in settings.text

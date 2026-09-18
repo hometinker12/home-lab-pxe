@@ -14,6 +14,7 @@ from .models import state_label
 from .security import allow_insecure_defaults
 from .settings import get_settings
 from .settings_attention import empty_settings_attention, load_settings_attention
+from .tftp_store import empty_files_attention, load_files_attention
 from .version import get_app_version
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
@@ -43,10 +44,12 @@ def base_context(request: Request, **extra) -> dict:
         "public_url": get_settings().public_url,
         "insecure_defaults": allow_insecure_defaults(),
         "settings_attention": empty_settings_attention(),
+        "files_attention": empty_files_attention(),
     }
     if user:
         with session_scope() as db:
             ctx["settings_attention"] = load_settings_attention(db)
+        ctx["files_attention"] = load_files_attention()
     ctx.update(extra)
     return ctx
 

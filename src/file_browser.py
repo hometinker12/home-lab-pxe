@@ -10,7 +10,7 @@ from starlette.datastructures import UploadFile
 
 from .paths import UnsafePathError, resolve_under
 from .settings import get_settings
-from .tftp_store import TftpStoreError, format_bytes, is_stub, safe_tftp_name, tftp_root
+from .tftp_store import TftpStoreError, format_bytes, is_stub, safe_tftp_name, source_url_for, tftp_root
 
 DEFAULT_VOLUME = "tftp"
 VOLUME_IDS = ("tftp", "images", "data")
@@ -33,7 +33,7 @@ FAVORITES = (
     {
         "id": "ipxe",
         "label": "iPXE boot files",
-        "hint": "undionly.kpxe, ipxe.efi, snponly.efi, wimboot, boot.ipxe",
+        "hint": "ipxe.efi (default UEFI NBP), undionly.kpxe, snponly.efi, wimboot, boot.ipxe",
         "volume": "tftp",
         "dir": "",
     },
@@ -258,6 +258,7 @@ def list_volume(volume: str, relative: str = "") -> dict:
                 "mtime": _mtime_label(resolved),
                 "mtime_sort": _mtime_sort(resolved),
                 "is_stub": False if is_dir else is_stub(resolved),
+                "source_url": None if is_dir else source_url_for(name),
                 "href": files_href(volume, entry_rel) if is_dir else download_href(volume, entry_rel),
             }
         )

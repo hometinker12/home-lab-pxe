@@ -1,6 +1,15 @@
 from tests.conftest import login
 
 
+def test_boot_chain_scripts_hand_off_to_ipxe_mac(client):
+    for path in ("/boot.ipxe", "/autoexec.ipxe"):
+        response = client.get(path)
+        assert response.status_code == 200
+        text = response.text
+        assert text.startswith("#!ipxe")
+        assert "chain --replace http://pxe.test:8080/ipxe/${mac:hexhyp}" in text
+
+
 def test_console_flow_create_image_and_deploy(client):
     login(client)
     created = client.post(
