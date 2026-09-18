@@ -220,6 +220,14 @@ def main() -> None:
     status, _, body = c.request("GET", "/boot-menu")
     expect(b">Linux/SmokeNested<" not in body, "reparented folder still listed under Linux")
     expect("SmokeNested" in folder_ids_from_tree(body), "reparented folder missing from tree")
+    status, _, _ = c.request(
+        "POST",
+        f"/boot-menu/folders/{nested_folder_id}",
+        form={"name": "SmokeNested", "parent_id": str(linux_folder_id)},
+    )
+    expect(status in {200, 303, 302}, f"restore nested under Linux {status}")
+    status, _, body = c.request("GET", "/boot-menu")
+    expect(b">Linux/SmokeNested<" in body, "nested folder should be under Linux again")
 
     status, _, body = c.request("GET", "/settings")
     expect(status == 200 and b"DHCP" in body, "settings DHCP form")
