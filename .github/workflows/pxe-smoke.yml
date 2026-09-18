@@ -166,8 +166,6 @@ jobs:
           docker exec pxe-smoke testparm -s >/dev/null
           docker exec pxe-smoke pgrep -f ganesha.nfsd >/dev/null
           SMB_PASS=$(awk -F= '/^PXE_SMB_PASSWORD=/{print $2}' ci.env)
-          python3 scripts/pxe_smoke.py --base-url http://127.0.0.1:8080 --user admin --password smokepass --smb-password "$SMB_PASS" --container pxe-smoke
-          docker exec pxe-smoke python -c "from pathlib import Path; p=Path('/var/lib/pxe/tftp/wimboot'); data=p.read_bytes(); assert data.strip()!=b'ipxe-stub' and p.stat().st_size>1024"
           smb_ok=0
           for i in $(seq 1 15); do
             if docker exec pxe-smoke smbclient //127.0.0.1/pxe-media -U "pxemedia%${SMB_PASS}" -c 'ls' >/dev/null; then
@@ -187,6 +185,26 @@ jobs:
           fi
           if docker exec pxe-smoke smbclient //127.0.0.1/pxe-media -N -c 'ls' >/dev/null 2>&1; then
             echo "anonymous SMB unexpectedly succeeded"
+            exit 1
+          fi
+          python3 scripts/pxe_smoke.py --base-url http://127.0.0.1:8080 --user admin --password smokepass --smb-password "$SMB_PASS" --container pxe-smoke
+          docker exec pxe-smoke python -c "from pathlib import Path; p=Path('/var/lib/pxe/tftp/wimboot'); data=p.read_bytes(); assert data.strip()!=b'ipxe-stub' and p.stat().st_size>1024"
+          rotated=0
+          for i in $(seq 1 15); do
+            if docker exec pxe-smoke smbclient //127.0.0.1/pxe-media -U "pxemedia%${SMB_PASS}" -c 'ls' >/dev/null 2>&1; then
+              sleep 1
+              continue
+            fi
+            rotated=1
+            break
+          done
+          if [ "$rotated" != "1" ]; then
+            echo "SMB still accepted the pre-rotate password"
+            docker logs pxe-smoke || true
+            exit 1
+          fi
+          if docker exec pxe-smoke smbclient //127.0.0.1/pxe-media -N -c 'ls' >/dev/null 2>&1; then
+            echo "anonymous SMB unexpectedly succeeded after rotate"
             exit 1
           fi
           echo "PXE HTTP smoke passed (image was not pushed)."

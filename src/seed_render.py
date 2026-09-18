@@ -235,9 +235,9 @@ def _has_imaging_callback(cmds: list) -> bool:
 
 
 def _shell_wget(url: str) -> str:
-    """Best-effort POST; a failed callback must not abort Subiquity."""
+    """Best-effort empty POST; a failed callback must not abort Subiquity."""
     token = url if str(url).startswith("{{") else json.dumps(url)
-    return f"wget -q --tries=3 --timeout=10 --post-data= -O /dev/null {token} || true"
+    return f"wget -q --tries=3 --timeout=10 --post-file=/dev/null -O /dev/null {token} || true"
 
 
 def _imaging_wget(url: str) -> str:
@@ -266,6 +266,78 @@ def _ensure_force_reboot_late_command(auto: dict) -> bool:
         return False
     auto["late-commands"] = [*cmds, FORCE_REBOOT_CMD]
     return True
+
+
+_SSH_KEY_LIST_KEYS = frozenset({"ssh_authorized_keys", "authorized-keys"})
+
+
+def _drop_empty_ssh_key_lists(obj: Any) -> bool:
+    """Cloud-init/Subiquity reject ssh_authorized_keys: [] (minItems: 1)."""
+    changed = False
+    if isinstance(obj, dict):
+        for key in list(obj.keys()):
+            val = obj[key]
+            if key in _SSH_KEY_LIST_KEYS and val == []:
+                del obj[key]
+                changed = True
+            elif isinstance(val, (dict, list)) and _drop_empty_ssh_key_lists(val):
+                changed = True
+    elif isinstance(obj, list):
+        for item in obj:
+            if _drop_empty_ssh_key_lists(item):
+                changed = True
+    return changed
+
+
+def _pop_parent_key_for_empty_block(lines: list[str], item_indent: str) -> None:
+    """Drop `ssh_authorized_keys:` when its {{ssh_keys}} block is empty."""
+    if not lines:
+        return
+    prev = lines[-1]
+    newline = "\n" if prev.endswith("\n") else ""
+    raw = prev[: -len(newline)] if newline else prev
+    stripped = raw.strip()
+    if stripped.startswith("#") or not re.fullmatch(r"[A-Za-z0-9_-]+:\s*", stripped):
+        return
+    prev_indent = raw[: len(raw) - len(raw.lstrip(" \t"))]
+    if len(prev_indent) < len(item_indent):
+        lines.pop()
+
+
+def _normalize_wget_empty_post(cmd: object) -> tuple[object, bool]:
+    """Rewrite `--post-data=` (empty) to `--post-file=/dev/null` for GNU/BusyBox wget."""
+    if isinstance(cmd, str):
+        new = re.sub(r"--post-data=(?=\s|$)", "--post-file=/dev/null", cmd)
+        return new, new != cmd
+    if isinstance(cmd, list):
+        out: list[object] = []
+        changed = False
+        for part in cmd:
+            if part in {"--post-data=", "--post-data"}:
+                out.append("--post-file=/dev/null")
+                changed = True
+            else:
+                out.append(part)
+        return out, changed
+    return cmd, False
+
+
+def _normalize_callback_wgets(auto: dict) -> bool:
+    changed = False
+    for key in ("early-commands", "late-commands"):
+        cmds = auto.get(key)
+        if not isinstance(cmds, list):
+            continue
+        rewritten: list[object] = []
+        key_changed = False
+        for cmd in cmds:
+            new, did = _normalize_wget_empty_post(cmd)
+            rewritten.append(new)
+            key_changed = key_changed or did
+        if key_changed:
+            auto[key] = rewritten
+            changed = True
+    return changed
 
 
 def _ensure_imaging_early_command(auto: dict, imaging_url: str) -> bool:
@@ -404,6 +476,8 @@ def complete_linux_user_data(rendered: str, *, imaging_url: str = "", source_id:
                     changed = True
     if _ensure_imaging_early_command(auto, imaging_url):
         changed = True
+    if _normalize_callback_wgets(auto):
+        changed = True
     if _ensure_optional_catchall_nics(auto):
         changed = True
     if _drop_autoinstall_timezone(auto):
@@ -415,6 +489,8 @@ def complete_linux_user_data(rendered: str, *, imaging_url: str = "", source_id:
     if _sanitize_identity_username(auto):
         changed = True
     if _ensure_force_reboot_late_command(auto):
+        changed = True
+    if _drop_empty_ssh_key_lists(parsed):
         changed = True
     if not changed:
         return rendered if rendered.endswith("\n") else rendered + "\n"
@@ -454,7 +530,7 @@ def substitute_yaml(template: str, values: dict[str, Any]) -> str:
             indent = raw[: len(raw) - len(raw.lstrip(" \t"))]
             items = values.get(block.group(1)) or []
             if not isinstance(items, list) or not items:
-                lines.append(f"{indent}[]{newline}")
+                _pop_parent_key_for_empty_block(lines, indent)
                 continue
             for item in items:
                 lines.append(f"{indent}- {json.dumps(str(item))}{newline}")

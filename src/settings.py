@@ -173,7 +173,9 @@ def get_settings() -> Settings:
 
 
 def smb_password_configured() -> bool:
-    return bool(get_settings().smb_password)
+    from .smb_runtime import smb_password_configured as _configured
+
+    return _configured()
 
 
 def clear_settings_cache() -> None:

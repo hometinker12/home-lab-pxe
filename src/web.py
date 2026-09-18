@@ -9,9 +9,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.status import HTTP_303_SEE_OTHER
 
+from .db import session_scope
 from .models import state_label
 from .security import allow_insecure_defaults
 from .settings import get_settings
+from .settings_attention import empty_settings_attention, load_settings_attention
 from .version import get_app_version
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
@@ -40,7 +42,11 @@ def base_context(request: Request, **extra) -> dict:
         "user": user,
         "public_url": get_settings().public_url,
         "insecure_defaults": allow_insecure_defaults(),
+        "settings_attention": empty_settings_attention(),
     }
+    if user:
+        with session_scope() as db:
+            ctx["settings_attention"] = load_settings_attention(db)
     ctx.update(extra)
     return ctx
 

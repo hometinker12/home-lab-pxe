@@ -24,6 +24,9 @@ _PROTECTED_DATA = frozenset(
         "dnsmasq-pxe.conf",
         "dhcp.cmd",
         "dhcp.status",
+        "smb.password",
+        "smb.password.tmp",
+        "smb.cmd",
     }
 )
 FAVORITES = (
@@ -233,6 +236,8 @@ def list_volume(volume: str, relative: str = "") -> dict:
         if name in {".", ".."}:
             continue
         rel = f"{dir_rel}/{name}" if dir_rel else name
+        if is_protected(volume, rel):
+            continue
         try:
             resolved = resolve_volume_path(volume, rel)
         except FileBrowserError:

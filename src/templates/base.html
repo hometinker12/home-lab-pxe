@@ -24,7 +24,7 @@
         <a href="/boot-menu"{% if request.url.path.startswith("/boot-menu") %} class="current" aria-current="page"{% endif %}>Boot menu</a>
         <a href="/files"{% if request.url.path.startswith("/files") %} class="current" aria-current="page"{% endif %}>Files</a>
         <a href="/activity"{% if request.url.path.startswith("/activity") %} class="current" aria-current="page"{% endif %}>Activity</a>
-        <a href="/settings"{% if request.url.path.startswith("/settings") %} class="current" aria-current="page"{% endif %}>Settings</a>
+        <a href="/settings"{% if request.url.path.startswith("/settings") %} class="current" aria-current="page"{% endif %}>Settings{% if settings_attention.count %}<span class="nav-alert" aria-label="{{ settings_attention.label }}">{{ settings_attention.count }}</span>{% endif %}</a>
       </nav>
       <form class="logout" method="post" action="/logout">
         <span class="who">{{ user }}</span>
