@@ -4,7 +4,9 @@ from src.boot.policy import ScriptKind, decide_script
 from src.inventory.boot_menu import (
     create_folder,
     delete_folder,
+    get_folder,
     list_folders,
+    parent_folder_options,
     rename_folder,
 )
 from src.inventory.service import create_image, deploy_machine, disable_machine, find_by_mac, mark_ready
@@ -31,6 +33,17 @@ def test_seed_default_folders(client):
     assert ">Move down<" not in page.text
     assert "Move Windows up" in page.text
     assert "Move Windows down" in page.text
+    assert "autofocus" not in page.text
+    assert "pxe:boot-menu-scroll" in page.text
+    assert 'id="folder-edit"' in page.text
+    assert ">Root<" in page.text
+    assert ">Top level<" not in page.text
+    edit = page.text.split('id="folder-edit"', 1)[1].split("</form>", 1)[0]
+    assert edit.index(">Root<") < edit.index(">Linux<")
+    js = client.get("/static/app.js")
+    assert js.status_code == 200
+    assert b"pxe:boot-menu-scroll" in js.content
+    assert b"showModalPreservingScroll" in js.content
 
 
 def test_last_folder_cannot_be_deleted(client):
@@ -68,6 +81,87 @@ def test_nested_folder_create_and_rename(client):
         "/boot-menu/folders", data={"name": "Rescue", "parent_id": str(child_id)}, follow_redirects=False
     )
     assert created.status_code in {302, 303}
+
+
+def test_edit_folder_can_change_parent(client):
+    login(client)
+    from src.db import session_scope
+
+    with session_scope() as db:
+        linux = next(row for row in list_folders(db) if row.name == "Linux")
+        windows = next(row for row in list_folders(db) if row.name == "Windows")
+        child = create_folder(db, name="Ubuntu", parent_id=linux.id, actor="admin")
+        db.commit()
+        linux_id = linux.id
+        windows_id = windows.id
+        child_id = child.id
+        options = parent_folder_options(db, linux)
+        assert all(fid != linux_id for fid, _ in options)
+        assert all(not path.endswith("/Ubuntu") for _, path in options)
+    page = client.get(f"/boot-menu?folder={child_id}")
+    edit = page.text.split('id="folder-edit"', 1)[1].split("</form>", 1)[0]
+    assert 'name="parent_id"' in edit
+    assert edit.index(">Root<") < edit.index(">Windows<")
+    assert f'value="{linux_id}"' in edit
+    assert f'value="{child_id}"' not in edit
+    to_root = client.post(
+        f"/boot-menu/folders/{child_id}",
+        data={"name": "Ubuntu", "parent_id": ""},
+        follow_redirects=False,
+    )
+    assert to_root.status_code in {302, 303}
+    with session_scope() as db:
+        row = get_folder(db, child_id)
+        assert row is not None
+        assert row.parent_id is None
+        assert row.name == "Ubuntu"
+    under_windows = client.post(
+        f"/boot-menu/folders/{child_id}",
+        data={"name": "Ubuntu LTS", "parent_id": str(windows_id)},
+        follow_redirects=False,
+    )
+    assert under_windows.status_code in {302, 303}
+    with session_scope() as db:
+        row = get_folder(db, child_id)
+        assert row is not None
+        assert row.parent_id == windows_id
+        assert row.name == "Ubuntu LTS"
+
+
+def test_cannot_reparent_folder_into_self_or_child(client):
+    login(client)
+    from src.db import session_scope
+
+    with session_scope() as db:
+        linux = next(row for row in list_folders(db) if row.name == "Linux")
+        child = create_folder(db, name="Ubuntu", parent_id=linux.id, actor="admin")
+        db.commit()
+        linux_id = linux.id
+        child_id = child.id
+    into_self = client.post(
+        f"/boot-menu/folders/{linux_id}",
+        data={"name": "Linux", "parent_id": str(linux_id)},
+    )
+    assert into_self.status_code == 200
+    assert "cannot be moved into itself or a nested folder" in into_self.text
+    assert 'id="edit-folder" open' in into_self.text
+    into_child = client.post(
+        f"/boot-menu/folders/{linux_id}",
+        data={"name": "Linux", "parent_id": str(child_id)},
+    )
+    assert into_child.status_code == 200
+    assert "cannot be moved into itself or a nested folder" in into_child.text
+    clash = client.post(
+        f"/boot-menu/folders/{child_id}",
+        data={"name": "Windows", "parent_id": ""},
+    )
+    assert clash.status_code == 200
+    assert "already exists" in clash.text
+    with session_scope() as db:
+        linux = get_folder(db, linux_id)
+        child = get_folder(db, child_id)
+        assert linux is not None and linux.parent_id is None
+        assert child is not None and child.parent_id == linux_id
 
 
 def test_image_requires_folder_assignment(client):

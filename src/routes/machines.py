@@ -60,7 +60,8 @@ _PLACEHOLDER_HELP = (
     "Saving a non-empty file replaces the image document for this machine only. "
     "Deploy copies the image template here if this field is still empty. Copy Default pulls the latest image file. "
     "Placeholders: {{hostname}} {{username}} {{password}} {{password_hash}} {{instance_id}} {{machine_id}} "
-    "{{public_url}} {{phone_home_url}} {{imaging_url}} {{timezone}} {{ssh_keys}} {{packages}} {{wim_index}} {{install_media_path}}"
+    "{{public_url}} {{phone_home_url}} {{imaging_url}} {{timezone}} {{ssh_keys}} {{packages}} "
+    "{{source_id}} {{wim_index}} {{install_media_path}}"
 )
 
 

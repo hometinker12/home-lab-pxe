@@ -14,11 +14,12 @@ from ..inventory.boot_menu import (
     get_or_create_settings,
     list_folders,
     list_images_in_folder,
-    rename_folder,
+    parent_folder_options,
     reorder_folder,
     reorder_image,
     save_settings,
     set_image_folder,
+    update_folder,
 )
 from ..inventory.service import get_image, image_deploy_reason
 from ..web import render
@@ -86,6 +87,7 @@ def _page(
         selected=selected,
         image_rows=image_rows,
         folder_options=folder_options(db),
+        parent_options=parent_folder_options(db, selected),
         delete_blocked=folder_delete_blocked(db, selected) if selected is not None else "",
         edit_open=edit_open,
         error=error,
@@ -154,10 +156,11 @@ def boot_menu_create_folder(
 
 
 @router.post("/boot-menu/folders/{folder_id}")
-def boot_menu_rename_folder(
+def boot_menu_update_folder(
     request: Request,
     folder_id: int,
     name: str = Form(""),
+    parent_id: str = Form(""),
     db: Session = Depends(get_db),
     user: str = Depends(require_user),
 ):
@@ -165,7 +168,14 @@ def boot_menu_rename_folder(
     if folder is None:
         return _page(request, db, error="Unknown folder")
     try:
-        rename_folder(db, folder, name=name, actor=user)
+        update_folder(
+            db,
+            folder,
+            name=name,
+            parent_id=_optional_id(parent_id),
+            actor=user,
+            parent_specified=True,
+        )
         db.commit()
     except ValueError as extra:
         db.rollback()

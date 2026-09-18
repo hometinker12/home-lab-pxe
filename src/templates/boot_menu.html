@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block title %}Boot menu — home-lab-pxe{% endblock %}
 {% block body %}
+<script>
+  (function () {
+    try {
+      var y = sessionStorage.getItem("pxe:boot-menu-scroll");
+      if (y !== null) {
+        history.scrollRestoration = "manual";
+        window.scrollTo(0, Number(y));
+      }
+    } catch (e) {}
+  })();
+</script>
 <header class="page-header">
   <h1>Boot menu</h1>
   <p class="description">Folders and timeouts for the iPXE menu on the client. Unknown and disabled machines skip this menu and continue to the next boot device. Named or ready machines see these folders and can start an install from the keyboard.</p>
@@ -57,7 +68,7 @@
       </label>
       <label>Parent
         <select name="parent_id">
-          <option value="">Top level</option>
+          <option value="">Root</option>
           {% for fid, path in folder_options %}
           <option value="{{ fid }}" {% if selected and selected.id == fid %}selected{% endif %}>{{ path }}</option>
           {% endfor %}
@@ -114,16 +125,24 @@
 {% if selected %}
 <dialog class="modal" id="edit-folder"{% if edit_open %} open{% endif %}>
   <h2>Edit {{ selected.name }}</h2>
-  <p class="meta">Rename this folder or delete it when it is empty.</p>
+  <p class="meta">Rename this folder, move it in the tree, or delete it when it is empty.</p>
   {% if error and edit_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
-  <form id="folder-rename" method="post" action="/boot-menu/folders/{{ selected.id }}" class="form">
-    <label>Rename <input name="name" value="{{ selected.name }}" required autocomplete="off" autofocus></label>
+  <form id="folder-edit" method="post" action="/boot-menu/folders/{{ selected.id }}" class="form">
+    <label>Name <input name="name" value="{{ selected.name }}" required autocomplete="off"></label>
+    <label>Parent
+      <select name="parent_id">
+        <option value="" {% if not selected.parent_id %}selected{% endif %}>Root</option>
+        {% for fid, path in parent_options %}
+        <option value="{{ fid }}" {% if selected.parent_id == fid %}selected{% endif %}>{{ path }}</option>
+        {% endfor %}
+      </select>
+    </label>
   </form>
   <form id="folder-delete" method="post" action="/boot-menu/folders/{{ selected.id }}/delete" onsubmit="return confirm('Delete this folder? Nested folders and images must be empty.');"></form>
   <div class="modal-actions">
     <button type="button" class="btn-secondary" data-close-dialog>Cancel</button>
     <button type="submit" form="folder-delete" class="btn-danger"{% if delete_blocked %} disabled title="{{ delete_blocked }}"{% endif %}>Delete folder</button>
-    <button type="submit" form="folder-rename">Rename</button>
+    <button type="submit" form="folder-edit">Save</button>
   </div>
 </dialog>
 {% endif %}

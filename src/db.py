@@ -95,8 +95,12 @@ def _migrate_schema() -> None:
             _add_column_if_missing(conn, "image", "extract_revision", "extract_revision INTEGER DEFAULT 0")
             _add_column_if_missing(conn, "image", "extract_generation", "extract_generation VARCHAR DEFAULT ''")
             _add_column_if_missing(conn, "image", "wim_index", "wim_index INTEGER DEFAULT 1")
+            _add_column_if_missing(conn, "image", "source_id", "source_id VARCHAR DEFAULT ''")
+            _add_column_if_missing(conn, "image", "source_options", "source_options VARCHAR DEFAULT ''")
             _add_column_if_missing(conn, "image", "folder_id", "folder_id INTEGER")
             _add_column_if_missing(conn, "image", "sort_order", "sort_order INTEGER DEFAULT 0")
+        if "installattempt" in tables:
+            _add_column_if_missing(conn, "installattempt", "source_id", "source_id VARCHAR DEFAULT ''")
         if "dhcpruntime" in tables:
             _add_column_if_missing(conn, "dhcpruntime", "tftp_enabled", "tftp_enabled BOOLEAN DEFAULT 1")
             _add_column_if_missing(

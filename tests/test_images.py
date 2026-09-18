@@ -2,6 +2,7 @@ import shutil
 from pathlib import Path
 
 from tests.conftest import login
+from tests.test_install_sources import minimal_wim_bytes
 
 from src.extract_worker import run_one_job
 from src.models import ExtractStatus
@@ -45,6 +46,12 @@ def test_create_and_edit_image_metadata(client):
     detail = client.get("/images/1")
     assert detail.status_code == 200
     assert "ubuntu/vmlinuz" in detail.text
+    assert "Choose file" in detail.text
+    assert "data-iso-path-display" in detail.text
+    assert 'name="iso_path"' in detail.text
+    assert 'data-os="linux,tool" open' not in detail.text
+    assert "Install source" in detail.text
+    assert "Available after extract" in detail.text
     updated = client.post(
         "/images/1",
         data={
@@ -64,6 +71,46 @@ def test_create_and_edit_image_metadata(client):
     payload = client.get("/api/images").json()
     assert payload[0]["initrd_path"] == "ubuntu/initrd-new"
     assert payload[0]["extract_status"] == "idle"
+
+
+def test_edit_image_iso_path_disabled_and_advanced_collapsed(client):
+    login(client)
+    created = client.post(
+        "/images",
+        data={
+            "name": "iso-row",
+            "os_family": "linux",
+            "arch": "x86_64",
+            "kernel_path": "ubuntu/vmlinuz",
+            "initrd_path": "ubuntu/initrd",
+            "iso_path": "uploads/9/server.iso",
+        },
+        follow_redirects=False,
+    )
+    assert created.status_code in {302, 303}
+    page = client.get("/images/1")
+    assert page.status_code == 200
+    assert "data-iso-path-display" in page.text
+    assert 'class="path-file-row"' in page.text
+    assert 'value="uploads/9/server.iso" disabled' in page.text
+    assert "Choose file" in page.text
+    assert 'name="iso_file"' in page.text
+    assert page.text.find("data-iso-path-display") < page.text.find("Choose file")
+    assert 'data-os="linux,tool" open' not in page.text
+    saved = client.post(
+        "/images/1",
+        data={
+            "name": "iso-row",
+            "os_family": "linux",
+            "arch": "x86_64",
+            "iso_path": "uploads/9/server.iso",
+            "kernel_path": "ubuntu/vmlinuz",
+            "initrd_path": "ubuntu/initrd",
+        },
+        follow_redirects=False,
+    )
+    assert saved.status_code in {302, 303}
+    assert client.get("/api/images").json()[0]["iso_path"] == "uploads/9/server.iso"
 
 
 def test_image_upload_writes_under_image_root(client, tmp_path):
@@ -412,6 +459,17 @@ class _LinuxNfsRunner:
         (casper / "vmlinuz").write_bytes(b"kern")
         (casper / "initrd").write_bytes(b"ird")
         (casper / "filesystem.squashfs").write_bytes(b"squashok")
+        (casper / "install-sources.yaml").write_text(
+            "sources:\n"
+            "- id: ubuntu-server-minimal\n"
+            "  name:\n"
+            "    en: Ubuntu Server (minimized)\n"
+            "- default: true\n"
+            "  id: ubuntu-server\n"
+            "  name:\n"
+            "    en: Ubuntu Server\n",
+            encoding="utf-8",
+        )
         (disk / "casper-uuid-generic").write_bytes(b"uuid")
         release = dest / "dists" / "resolute" / "Release"
         release.parent.mkdir(parents=True, exist_ok=True)
@@ -442,8 +500,28 @@ def test_linux_iso_publishes_nfs_casper(client, tmp_path):
         image = db.get(Image, 1)
         assert image.extract_generation == "nfs/1/1"
         assert image.iso_path == ""
+        assert image.source_id == "ubuntu-server"
+        assert "ubuntu-server-minimal" in (image.source_options or "")
     squash = tmp_path / "images" / "nfs" / "1" / "1" / "casper" / "filesystem.squashfs"
     assert squash.read_bytes() == b"squashok"
+    page = client.get("/images/1")
+    assert 'name="source_id"' in page.text
+    assert "ubuntu-server-minimal" in page.text
+    assert "Ubuntu Server (minimized)" in page.text
+    saved = client.post(
+        "/images/1",
+        data={
+            "name": "ubuntu-nfs",
+            "os_family": "linux",
+            "arch": "x86_64",
+            "source_id": "ubuntu-server-minimal",
+            "kernel_path": api[0]["kernel_path"],
+            "initrd_path": api[0]["initrd_path"],
+        },
+        follow_redirects=False,
+    )
+    assert saved.status_code in {302, 303}
+    assert client.get("/api/images").json()[0]["source_id"] == "ubuntu-server-minimal"
     assert (tmp_path / "images" / "nfs" / "1" / "1" / "dists" / "resolute" / "Release").read_bytes() == b"rel"
     kernel = tmp_path / "images" / "uploads" / "1" / "extracts" / "1" / "kernel"
     assert kernel.read_bytes() == b"kern"
@@ -549,7 +627,14 @@ class _WindowsRunner:
         sources = dest / "sources"
         sources.mkdir(parents=True, exist_ok=True)
         (sources / "boot.wim").write_bytes(b"boot")
-        (sources / "install.wim").write_bytes(b"install")
+        (sources / "install.wim").write_bytes(
+            minimal_wim_bytes(
+                [
+                    (1, "Windows Server 2022 SERVERSTANDARDCORE", "Standard Core"),
+                    (2, "Windows Server 2022 SERVERDATACENTER", "Datacenter"),
+                ]
+            )
+        )
 
 
 def test_windows_iso_extract_deletes_uploaded_iso(client, tmp_path):
@@ -572,6 +657,9 @@ def test_windows_iso_extract_deletes_uploaded_iso(client, tmp_path):
         assert image.extract_status == ExtractStatus.ready.value
         assert image.iso_path == ""
         assert image.boot_wim_path.endswith("boot.wim")
+        assert image.source_id == "Windows Server 2022 SERVERSTANDARDCORE"
+        assert "SERVERDATACENTER" in (image.source_options or "")
+        assert int(image.wim_index or 0) == 1
     assert not iso.exists()
     assert (tmp_path / "images" / "smb" / "1" / "1" / "setup.exe").is_file()
 

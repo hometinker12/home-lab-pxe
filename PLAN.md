@@ -197,9 +197,9 @@ Both **username and password** are Fernet-encrypted at rest. Optional lab-wide d
 
 - Login
 - **Machines:** last seen, MAC, UUID, IP, state, OS family, assigned image; actions Deploy, Stage reimage, Mark deployed, Disable. Add machine is a popup.
-- **Boot menu:** nested iPXE folders, timeouts, image placement and reorder
+- **Boot menu:** nested iPXE folders, timeouts, image placement and reorder; edit folder can reparent (Root listed first)
 - **New / pending** highlight so unknown hardware is obvious
-- **Images:** import metadata + paths; Linux vs Windows vs tool; add is a popup; edit is disabled while ISO extract is running
+- **Images:** import metadata + paths; Linux vs Windows vs tool; add is a popup; edit is disabled while ISO extract is running; after extract, pick **Install source** (Ubuntu YAML IDs or Windows WIM editions)
 - **Machine detail:** hostname and guest-init (IANA timezone dropdown, packages, SSH keys, cloud-init or unattend) share one form; Deploy saves then starts the install. Local account username + password rotate, staged vs applied, recent boot events
 - **Settings:** HTTPS certificate (self-signed on first start, or upload PEM cert + key), optional default Linux root and Windows Administrator credentials (encrypted), imaging timeout, default timezone for new machines
 - **Activity log:** who deployed what, redacted
@@ -207,7 +207,7 @@ Both **username and password** are Fernet-encrypted at rest. Optional lab-wide d
 ## 9. Data model (sketch)
 
 - `Machine` — mac, uuid, hostname, state, last_seen_at, last_ip, assigned_image_id, instance_id
-- `Image` — name, os_family (`linux` \| `windows` \| `tool`), arch, `folder_id`, payload paths, cmdline/unattend template
+- `Image` — name, os_family (`linux` \| `windows` \| `tool`), arch, `folder_id`, payload paths, cmdline/unattend template, `source_id` / `source_options` (catalog from Ubuntu `install-sources.yaml` or `install.wim`)
 - `BootMenuFolder` / `BootMenuSettings` — nested iPXE menu tree and timeouts
 - `LocalAccount` — machine_id (nullable for lab defaults), kind (`linux_root` \| `windows_administrator`), `encrypted_username`, `encrypted_password`
 - `StagedJob` — machine_id, image_id, guest_overlay (no plaintext passwords), created_by, created_at, applied_at
@@ -225,7 +225,7 @@ SQLite only. Idempotent `_migrate_*` helpers in `src/db.py`, no Alembic.
 - Redact user-data, unattend, passwords, usernames of privileged accounts, and SSH keys in logs and HTML
 - Bind DHCP to `PXE_BIND_INTERFACE`
 - Path-safe image/TFTP serving (no `../` escape from `PXE_IMAGE_ROOT`)
-- Residual risk: anyone on the LAN who can PXE can also fetch that machine’s guest seed URLs if they spoof the MAC — accept for home lab, keep privileged passwords out of iPXE, document in README
+- Residual risk: anyone on the LAN who can PXE can also fetch that machine’s guest seed URLs if they spoof the MAC — accept for home lab, keep privileged passwords out of iPXE, document in `SECURITY.md`
 
 ## 11. Testing and CI
 

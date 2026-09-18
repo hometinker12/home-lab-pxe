@@ -160,6 +160,50 @@ def folder_options(db: Session) -> list[tuple[int, str]]:
     return options
 
 
+def _descendant_ids(db: Session, folder_id: int) -> set[int]:
+    ids: set[int] = set()
+
+    def walk(parent_id: int) -> None:
+        for child in list_child_folders(db, parent_id):
+            if child.id is None:
+                continue
+            ids.add(int(child.id))
+            walk(int(child.id))
+
+    walk(folder_id)
+    return ids
+
+
+def _subtree_extra_depth(db: Session, folder: BootMenuFolder) -> int:
+    children = list_child_folders(db, folder.id)
+    if not children:
+        return 0
+    return 1 + max(_subtree_extra_depth(db, child) for child in children)
+
+
+def _is_self_or_descendant(db: Session, node: BootMenuFolder, folder_id: int) -> bool:
+    current: BootMenuFolder | None = node
+    seen: set[int] = set()
+    while current is not None:
+        if current.id == folder_id:
+            return True
+        if current.id is not None:
+            if current.id in seen:
+                break
+            seen.add(current.id)
+        if not current.parent_id:
+            break
+        current = get_folder(db, current.parent_id)
+    return False
+
+
+def parent_folder_options(db: Session, folder: BootMenuFolder | None) -> list[tuple[int, str]]:
+    if folder is None or folder.id is None:
+        return folder_options(db)
+    blocked = {int(folder.id)} | _descendant_ids(db, int(folder.id))
+    return [(fid, path) for fid, path in folder_options(db) if fid not in blocked]
+
+
 def _normalize_name(name: str) -> str:
     text = " ".join((name or "").split())
     if not text:
@@ -241,14 +285,49 @@ def create_folder(db: Session, *, name: str, parent_id: int | None, actor: str) 
     return row
 
 
-def rename_folder(db: Session, folder: BootMenuFolder, *, name: str, actor: str) -> BootMenuFolder:
+def update_folder(
+    db: Session,
+    folder: BootMenuFolder,
+    *,
+    name: str,
+    parent_id: int | None,
+    actor: str,
+    parent_specified: bool = True,
+) -> BootMenuFolder:
     trimmed = _normalize_name(name)
-    if _sibling_clash(db, parent_id=folder.parent_id, name=trimmed, exclude_id=folder.id):
+    target_parent_id = parent_id if parent_specified else folder.parent_id
+    parent: BootMenuFolder | None = None
+    if target_parent_id:
+        parent = get_folder(db, target_parent_id)
+        if parent is None:
+            raise ValueError("Unknown parent folder")
+        if folder.id is not None and _is_self_or_descendant(db, parent, int(folder.id)):
+            raise ValueError("A folder cannot be moved into itself or a nested folder")
+        extra = _subtree_extra_depth(db, folder)
+        if folder_depth(db, parent) + 1 + extra >= MAX_FOLDER_DEPTH:
+            raise ValueError("Folder nesting is too deep")
+        target_parent_id = parent.id
+    else:
+        target_parent_id = None
+    if _sibling_clash(db, parent_id=target_parent_id, name=trimmed, exclude_id=folder.id):
         raise ValueError("A folder with that name already exists here")
+    parent_changed = target_parent_id != folder.parent_id
+    name_changed = trimmed != folder.name
     folder.name = trimmed
+    if parent_changed:
+        folder.parent_id = target_parent_id
+        folder.sort_order = _next_folder_sort(db, target_parent_id)
     db.add(folder)
-    record_activity(db, actor=actor, action="boot-menu.folder-rename", detail=folder_path(db, folder))
+    detail = folder_path(db, folder)
+    if parent_changed:
+        record_activity(db, actor=actor, action="boot-menu.folder-reparent", detail=detail)
+    elif name_changed:
+        record_activity(db, actor=actor, action="boot-menu.folder-rename", detail=detail)
     return folder
+
+
+def rename_folder(db: Session, folder: BootMenuFolder, *, name: str, actor: str) -> BootMenuFolder:
+    return update_folder(db, folder, name=name, parent_id=None, actor=actor, parent_specified=False)
 
 
 def folder_delete_blocked(db: Session, folder: BootMenuFolder | None) -> str:
