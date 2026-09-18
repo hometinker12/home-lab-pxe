@@ -418,6 +418,46 @@ label > textarea {
   font-weight: 400;
 }
 
+.path-file-field {
+  margin: 0 0 0.9rem;
+}
+.path-file-field .field-label {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+.path-file-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+.path-file-row > input[type="text"] {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  margin: 0;
+  text-overflow: ellipsis;
+}
+.path-file-row > input:disabled {
+  color: var(--muted);
+  background: var(--surface-2);
+  cursor: default;
+}
+.path-file-choose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  position: relative;
+  margin: 0;
+  width: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
 input,
 select,
 textarea {
@@ -439,6 +479,16 @@ textarea:focus {
 input[type="checkbox"],
 input[type="file"] { width: auto; }
 input[type="file"] { padding: 0.3rem 0; border: 0; background: transparent; }
+.path-file-choose > input.path-file-input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
 
 textarea { resize: vertical; }
 textarea.seed-editor {

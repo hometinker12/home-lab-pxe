@@ -61,6 +61,13 @@
         <option value="tool" {% if add.os_family == "tool" %}selected{% endif %}>tool</option>
       </select>
     </label>
+    <div data-os="linux,windows">
+      <label>Install source
+        <select disabled aria-label="Install source">
+          <option>Available after extract</option>
+        </select>
+      </label>
+    </div>
     <label>Folder
       <select name="folder_id" required{% if add.folder_id %} data-user-picked="1"{% endif %}>
         {% for fid, path in folder_options %}

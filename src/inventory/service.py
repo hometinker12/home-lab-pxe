@@ -256,6 +256,7 @@ def create_install_attempt(db: Session, machine: Machine, image: Image) -> Insta
         iso_path=image.iso_path or "",
         cmdline=image.cmdline or "",
         wim_index=int(image.wim_index or 1),
+        source_id=(image.source_id or "").strip(),
         media_relative=media,
         seed_snapshot_path=relative,
     )
@@ -573,6 +574,7 @@ def create_image(
     iso_path: str = "",
     cmdline: str = "",
     wim_index: int = 1,
+    source_id: str = "",
     folder_id: int | None = None,
     actor: str,
 ) -> Image:
@@ -592,6 +594,7 @@ def create_image(
         iso_path=iso_path.strip(),
         cmdline=cmdline.strip(),
         wim_index=max(1, int(wim_index or 1)),
+        source_id=(source_id or "").strip(),
     )
     db.add(image)
     db.flush()
@@ -618,6 +621,7 @@ def update_image(
     iso_path: str | None = None,
     cmdline: str | None = None,
     wim_index: int | None = None,
+    source_id: str | None = None,
     folder_id: int | None = None,
     actor: str,
 ) -> Image:
@@ -644,6 +648,22 @@ def update_image(
         image.cmdline = cmdline.strip()
     if wim_index is not None:
         image.wim_index = max(1, int(wim_index))
+    if source_id is not None:
+        from ..install_sources import catalog_from_json, pick_source_id, wim_index_for_source
+
+        options = catalog_from_json(image.source_options or "")
+        chosen = (source_id or "").strip()
+        if options:
+            ids = {item.source_id for item in options}
+            if chosen and chosen not in ids:
+                raise ValueError("Install source is not available on this image")
+            chosen = pick_source_id(options, chosen)
+            image.source_id = chosen
+            mapped = wim_index_for_source(options, chosen)
+            if mapped is not None:
+                image.wim_index = int(mapped)
+        else:
+            image.source_id = chosen
     if folder_id is not None:
         from .boot_menu import get_folder, set_image_folder
 

@@ -28,8 +28,40 @@ def test_windows_unattend_has_setup_and_password(client):
     assert "windowsPE" in body
     assert "WinSecret!" in body
     assert "WINBOX1" in body
+    assert "/IMAGE/INDEX" in body
+    assert "/IMAGE/NAME" not in body
     pending = client.get("/windows/99999/unattend.xml")
     assert pending.status_code == 404
+
+
+def test_windows_unattend_includes_source_name(client):
+    login(client)
+    from src.db import session_scope
+    from src.inventory.service import upsert_local_account
+
+    with session_scope() as db:
+        machine = touch_machine(db, mac="02:00:00:00:00:23", uuid=None, client_ip="10.0.0.8")
+        machine.hostname = "WINBOX2"
+        image = create_image(
+            db, name="ws-src", os_family=OsFamily.windows, boot_wim_path="windows/boot.wim", actor="admin"
+        )
+        image.source_id = "Windows Server 2022 SERVERSTANDARDCORE"
+        image.wim_index = 2
+        db.add(image)
+        upsert_local_account(
+            db,
+            machine_id=int(machine.id),
+            kind=AccountKind.windows_administrator,
+            username="Administrator",
+            password="WinSecret!",
+        )
+        deploy_machine(db, machine, image=image, actor="admin")
+        db.commit()
+        mid = machine.id
+    body = client.get(f"/windows/{mid}/unattend.xml").text
+    assert "/IMAGE/NAME" in body
+    assert "Windows Server 2022 SERVERSTANDARDCORE" in body
+    assert "<Value>2</Value>" in body
 
 
 def test_windows_startnet_uses_generated_share(client):

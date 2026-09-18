@@ -34,6 +34,7 @@ ALLOWED_TOKENS = frozenset(
         "packages",
         "wim_index",
         "install_media_path",
+        "source_id",
     }
 )
 BLOCK_TOKENS = frozenset({"ssh_keys", "packages"})
@@ -347,6 +348,22 @@ def _identity_from_user_data(auto: dict) -> dict[str, str]:
     return {"hostname": hostname, "username": username, "password": password}
 
 
+def _ensure_source(auto: dict, source_id: str = "") -> bool:
+    """Pin Subiquity source.id from the image catalog when the seed omits it."""
+    existing = auto.get("source") if isinstance(auto.get("source"), dict) else {}
+    current = str(existing.get("id") or "").strip()
+    wanted = current or str(source_id or "").strip()
+    merged = {**{"search_drivers": False}, **existing}
+    if wanted:
+        merged["id"] = wanted
+    elif "id" in merged and not str(merged.get("id") or "").strip():
+        merged.pop("id", None)
+    if auto.get("source") == merged:
+        return False
+    auto["source"] = merged
+    return True
+
+
 def _ensure_identity(auto: dict) -> bool:
     """Subiquity needs identity or the installer prompts for the first user."""
     existing = auto.get("identity") if isinstance(auto.get("identity"), dict) else {}
@@ -364,7 +381,7 @@ def _ensure_identity(auto: dict) -> bool:
     return True
 
 
-def complete_linux_user_data(rendered: str, *, imaging_url: str = "") -> str:
+def complete_linux_user_data(rendered: str, *, imaging_url: str = "", source_id: str = "") -> str:
     """Fill missing Subiquity autoinstall keys so NFS installs stay non-interactive."""
     try:
         parsed = yaml.safe_load(rendered)
@@ -390,6 +407,8 @@ def complete_linux_user_data(rendered: str, *, imaging_url: str = "") -> str:
     if _ensure_optional_catchall_nics(auto):
         changed = True
     if _drop_autoinstall_timezone(auto):
+        changed = True
+    if _ensure_source(auto, source_id):
         changed = True
     if _ensure_identity(auto):
         changed = True
@@ -420,6 +439,7 @@ def dummy_values() -> dict[str, Any]:
         "packages": [],
         "wim_index": "1",
         "install_media_path": r"sources\install.wim",
+        "source_id": "ubuntu-server",
     }
 
 
@@ -460,6 +480,17 @@ def substitute_xml(template: str, values: dict[str, Any]) -> str:
         return html.escape(str(values.get(name, "")), quote=True)
 
     return TOKEN_RE.sub(repl, template or "")
+
+
+_EMPTY_IMAGE_NAME = re.compile(
+    r"\s*<MetaData\b[^>]*>\s*<Key>\s*/IMAGE/NAME\s*</Key>\s*<Value>\s*</Value>\s*</MetaData>",
+    flags=re.IGNORECASE,
+)
+
+
+def drop_empty_image_name_metadata(xml_text: str) -> str:
+    """Windows Setup treats INDEX+NAME as AND; drop NAME when {{source_id}} is empty."""
+    return _EMPTY_IMAGE_NAME.sub("", xml_text or "")
 
 
 def select_seed_text(image: Image | None, machine: Machine, os_family: OsFamily | str) -> str:
@@ -512,6 +543,11 @@ def placeholder_values(
     else:
         install_media = r"sources\install.wim"
     wim_index = str((attempt.wim_index if attempt is not None else None) or (image.wim_index if image else 1) or 1)
+    source_id = ""
+    if attempt is not None and (attempt.source_id or "").strip():
+        source_id = attempt.source_id.strip()
+    elif image is not None:
+        source_id = (image.source_id or "").strip()
     packages = overlay.get("packages") or []
     ssh_keys = overlay.get("ssh_keys") or []
     from .dhcp_runtime import default_timezone
@@ -531,6 +567,7 @@ def placeholder_values(
         "packages": [str(p).strip() for p in packages if str(p).strip()] if isinstance(packages, list) else [],
         "wim_index": wim_index,
         "install_media_path": install_media,
+        "source_id": source_id,
     }
 
 
@@ -555,7 +592,7 @@ def render_selected_seed(
     values = placeholder_values(db, machine, image, attempt)
     try:
         if family == OsFamily.windows:
-            rendered = substitute_xml(text, values)
+            rendered = drop_empty_image_name_metadata(substitute_xml(text, values))
             ET.fromstring(rendered)
         else:
             rendered = substitute_yaml(text, values)
@@ -563,7 +600,11 @@ def render_selected_seed(
                 raw = str(overlay.get("raw_overlay") or "").strip()
                 if raw:
                     rendered = rendered.rstrip() + "\n" + raw + "\n"
-            rendered = complete_linux_user_data(rendered, imaging_url=str(values.get("imaging_url") or ""))
+            rendered = complete_linux_user_data(
+                rendered,
+                imaging_url=str(values.get("imaging_url") or ""),
+                source_id=str(values.get("source_id") or ""),
+            )
             yaml.safe_load(rendered)
     except (SeedRenderError, ET.ParseError, yaml.YAMLError) as exc:
         raise SeedRenderError("seed_render_failed") from exc

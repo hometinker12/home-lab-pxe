@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-17
+
+### Added
+
+- Edit folder can change the parent folder, with **Root** listed first as the top of the tree.
+- After ISO extract, Images → Edit lists Ubuntu `casper/install-sources.yaml` IDs (for example `ubuntu-server-minimal`) and Windows `install.wim` editions under **Install source**. Cloud-init `source.id` and unattend `/IMAGE/NAME` use `{{source_id}}`; Windows also keeps `/IMAGE/INDEX` as `{{wim_index}}` from the same catalog.
+
+### Changed
+
+- Image edit keeps Advanced Settings collapsed. ISO path is a disabled current-path field with Choose file on the right to upload a replacement.
+- README is a short product intro, step-by-step install with the full environment reference, and a console user guide with screenshots of each tab.
+
+### Fixed
+
+- Boot menu folder clicks, up/down actions, and edit/move popups keep the current scroll position instead of jumping to the top of the page.
+
 ## [0.3.1] - 2026-09-17
 
 ### Added

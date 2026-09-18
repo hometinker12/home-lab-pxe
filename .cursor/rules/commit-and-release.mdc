@@ -41,9 +41,9 @@ No Cosign key is stored in GitHub. Signing uses GitHub Actions OIDC (`id-token: 
 
 1. Run `git status`, `git diff`, and `git log --oneline -5` in parallel.
 2. **Local test gate (changed files)** — before staging, run scoped checks. See [Local test gate](#local-test-gate-changed-files) below. **Do not stage, commit, or push until this gate passes.**
-3. **Docs alignment** — when the diff touches user-facing behavior, config, or APIs, verify `README.md`, `CHANGELOG.md` `[Unreleased]`, `.env.example`, and `VERSION` stay aligned. See [Docs alignment review](#docs-alignment-review) below.
+3. **Docs alignment** — when the diff touches user-facing behavior, config, or APIs, verify `CHANGELOG.md` `[Unreleased]`, `.env.example`, and `VERSION` stay aligned. See [Docs alignment review](#docs-alignment-review) below. **Do not update `README.md` unless the user explicitly asked to change it in this request.**
 4. **Smoke coverage review** — when the diff touches production-facing PXE/API/auth behavior, verify CI smoke tests still cover it. See [Smoke test coverage review](#smoke-test-coverage-review) below.
-5. Stage all relevant source changes (exclude `__pycache__/`, `.pytest_cache/`, build artifacts, secrets, ISOs/images, and `.cursor/*.log`). Include README/CHANGELOG/VERSION/.env.example fixes from step 3 in the same commit.
+5. Stage all relevant source changes (exclude `__pycache__/`, `.pytest_cache/`, build artifacts, secrets, ISOs/images, and `.cursor/*.log`). Include CHANGELOG/VERSION/.env.example fixes from step 3 in the same commit. Include `README.md` only when the user explicitly requested a README update.
 6. Write a concise commit message focused on **why**; match recent repo style.
 7. Commit and verify with `git status`.
 8. **Local Trivy gate** — before push, scan the Docker image on this machine. See [Local Trivy gate](#local-trivy-gate-before-push) below. **Do not push until this gate passes.**
@@ -114,7 +114,7 @@ Checklist:
 
 | Artifact | Update when… |
 |----------|--------------|
-| `README.md` | Install/run or operator-facing capabilities only (ports, `.env`, Compose, what the app does). See `.cursor/rules/readme.mdc`. Not CI, secrets, promotion, or publish internals. |
+| `README.md` | **Never**, unless the user explicitly asked to update `README.md` in this request. See `.cursor/rules/readme.mdc`. Capability and install deltas go in CHANGELOG / `.env.example` / PLAN / ARCHITECTURE instead. |
 | `CHANGELOG.md` | Any user-visible fix, feature, or breaking change |
 | `.env.example` | New or renamed environment variables |
 | `VERSION` | Release-bound changes (usually when preparing a release merge, not every commit) |

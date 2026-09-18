@@ -179,7 +179,7 @@ sequenceDiagram
   OS->>API: GET /cloud-init/{id}/user-data
   API->>Vault: decrypt linux_root
   Vault-->>API: username + password in memory
-  API-->>OS: rendered user-data
+  API-->>OS: rendered user-data (source.id from image catalog)
   OS->>API: phone_home deployed
 ```
 
@@ -198,7 +198,7 @@ sequenceDiagram
   API-->>IPXE: wimboot + boot.wim / install.wim
   PE->>API: GET /windows/{id}/unattend.xml
   API->>Vault: decrypt windows_administrator
-  API-->>PE: unattend.xml (not cached plaintext)
+  API-->>PE: unattend.xml (IMAGE NAME/INDEX from catalog; not cached plaintext)
   PE->>CBI: first boot of sysprep’d image
   CBI->>API: GET /cloudbase-init/{id}/
   CBI->>API: callback deployed
@@ -256,7 +256,7 @@ flowchart TB
   subgraph chrome["Browser — operator on LAN"]
     subgraph bar["Top bar"]
       Brand["home-lab-pxe"]
-      Nav["Machines    Images    Activity    Settings"]
+      Nav["Machines    Images    Boot menu    Files    Activity    Settings"]
       User["operator  Log out"]
     end
     subgraph flash["Flash"]
@@ -321,8 +321,8 @@ Password fields never round-trip. After save the UI shows **set** vs **not set**
 ```mermaid
 flowchart LR
   subgraph images["Images"]
-    Limg["ubuntu-24.04   linux    x86_64   kernel+initrd or ISO"]
-    Wimg["ws2022         windows  x86_64   boot.wim + install.wim"]
+    Limg["ubuntu-24.04   linux    x86_64   ISO extract + source.id"]
+    Wimg["ws2022         windows  x86_64   WIM edition + wim_index"]
   end
   subgraph files["Files"]
     Browser["TFTP / Images / Data volume browser"]
@@ -364,7 +364,7 @@ sequenceDiagram
 
 ### 3.6 iPXE folder menu (client screen)
 
-Named hosts see folders from the console **Boot menu** page. Unknown and disabled hosts skip it.
+Named hosts see folders from the console **Boot menu** page. Operators can reparent a folder (Root is the top of the tree). Unknown and disabled hosts skip the menu.
 
 ```mermaid
 flowchart TB
@@ -584,7 +584,8 @@ flowchart LR
 | `src/boot/` | Policy + `#!ipxe` |
 | `src/cloudinit/` | Linux nocloud |
 | `src/windows/` | `unattend.xml` + Cloudbase-Init |
-| `src/inventory/` | Machines, states, `LocalAccount` |
+| `src/inventory/` | Machines, states, `LocalAccount`, boot-menu tree |
+| `src/install_sources.py` | Ubuntu YAML / Windows WIM install-source catalogs |
 | `src/security.py` | Fernet, hashing, cookie flags |
 
 Implementation milestones stay in [`PLAN.md`](PLAN.md).
