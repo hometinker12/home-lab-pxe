@@ -18,7 +18,8 @@ from ..dhcp_runtime import (
 from ..inventory.service import LAB_DEFAULT_MACHINE_ID, local_account_status, upsert_local_account
 from ..models import AccountKind
 from ..netinfo import net_snapshot
-from ..settings import get_settings, smb_password_configured
+from ..settings import get_settings
+from ..smb_runtime import rotate_smb_password, smb_password_configured
 from ..timezones import timezone_choices
 from ..tls_store import (
     MAX_PEM_BYTES,
@@ -53,6 +54,9 @@ def _settings_context(
     selected_timezone = (dhcp.default_timezone or "").strip() or "UTC"
     if open_section is None:
         open_section = (request.query_params.get("section") or "").strip() or None
+    notice_flag = (request.query_params.get("notice") or "").strip()
+    if notice is None and notice_flag == "smb-rotated":
+        notice = "Windows SMB password rotated. It is not displayed. New WinPE boots use the new password."
     try:
         tls = ensure_tls_material()
         tls_error = None
@@ -171,6 +175,19 @@ def settings_machines(
     return RedirectResponse(url="/settings?section=machines", status_code=HTTP_303_SEE_OTHER)
 
 
+@router.post("/settings/smb/rotate")
+def settings_smb_rotate(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_user),
+):
+    try:
+        rotate_smb_password(db, actor=user)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return _settings_context(request, db, error=str(exc), open_section="smb")
+    return RedirectResponse(url="/settings?section=smb&notice=smb-rotated", status_code=HTTP_303_SEE_OTHER)
+
+
 @router.post("/settings/accounts")
 def settings_accounts(
     linux_username: str = Form("root"),
@@ -203,7 +220,7 @@ def settings_accounts(
         except ValueError:
             pass
     db.commit()
-    return RedirectResponse(url="/settings", status_code=HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?section=accounts", status_code=HTTP_303_SEE_OTHER)
 
 
 async def _read_pem_file(upload: UploadFile | None, *, label: str) -> bytes:

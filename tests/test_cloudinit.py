@@ -44,6 +44,10 @@ def test_cloud_init_injects_root_and_bumps_instance_id(client):
     parsed = yaml.safe_load(user_data)
     assert parsed["autoinstall"]["identity"]["username"] == "ubuntu"
     assert parsed["autoinstall"]["user-data"]["chpasswd"]["users"][0]["name"] == "root"
+    assert "ssh_authorized_keys" not in parsed["autoinstall"]["user-data"]["users"][0]
+    assert "authorized-keys" not in parsed["autoinstall"]["ssh"]
+    assert "ssh_authorized_keys: []" not in user_data
+    assert "--post-file=/dev/null" in user_data
     assert "web1" in user_data
     assert "root" in user_data
     assert "root-secret" not in user_data

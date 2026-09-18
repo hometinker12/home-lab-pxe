@@ -328,12 +328,13 @@ flowchart LR
     Browser["TFTP / Images / Data volume browser"]
   end
   subgraph settings["Settings"]
+    Acc["Imaging default local/root account"]
+    Mach["Machines  timeout  timezone"]
     Pxe["PXE  public URL  bind  extra options  next-server hints"]
     Dhcp["DHCP  enable  proxy or authoritative"]
     Tftp["TFTP  enable  tftp-root"]
     Tls["HTTPS  self-signed or uploaded PEM"]
-    DefL["Default linux_root   user set   password set"]
-    DefW["Default windows_administrator   user set   password set"]
+    Smb["Windows SMB  pxe-media password rotate"]
   end
 ```
 

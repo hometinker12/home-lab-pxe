@@ -10,6 +10,7 @@ CONF="$DATA_DIR/dnsmasq-pxe.conf"
 ENABLED_FILE="$DATA_DIR/dhcp.enabled"
 TFTP_ENABLED_FILE="$DATA_DIR/tftp.enabled"
 CMD_FILE="$DATA_DIR/dhcp.cmd"
+SMB_CMD_FILE="$DATA_DIR/smb.cmd"
 STATUS_FILE="$DATA_DIR/dhcp.status"
 PID_FILE="/tmp/dnsmasq-pxe.pid"
 
@@ -161,24 +162,25 @@ fi
 
 SMB_PID_FILE="/run/samba/smbd.pid"
 start_smbd() {
-  if [ -z "${PXE_SMB_PASSWORD:-}" ]; then
-    echo "SMB skipped: PXE_SMB_PASSWORD unset" >&2
-    return 0
-  fi
-  python - <<'PY' || { echo "WARN: PXE_SMB_PASSWORD rejected" >&2; return 0; }
-import os, re, sys
-pw = os.environ.get("PXE_SMB_PASSWORD") or ""
-sys.exit(0 if re.fullmatch(r"[A-Za-z0-9._~-]{20,128}", pw) else 1)
-PY
   mkdir -p /var/log/samba /run/samba /var/lib/samba/private /var/cache/samba "$IMAGE_ROOT/smb" || true
   chmod 0755 /run/samba /var/lib/samba /var/lib/samba/private /var/cache/samba 2>/dev/null || true
   if ! id pxemedia >/dev/null 2>&1; then
     useradd --system --no-create-home --shell /usr/sbin/nologin --uid 10002 --gid 10001 pxemedia >/dev/null 2>&1 || true
   fi
-  printf '%s\n%s\n' "$PXE_SMB_PASSWORD" "$PXE_SMB_PASSWORD" | smbpasswd -s -a pxemedia >/dev/null 2>&1 || {
+  python -m src.smb_runtime apply
+  rc=$?
+  if [ "$rc" = "2" ]; then
+    echo "SMB skipped: password unset" >&2
+    return 0
+  fi
+  if [ "$rc" != "0" ]; then
     echo "WARN: smbpasswd failed" >&2
     return 0
-  }
+  fi
+  if pgrep -x smbd >/dev/null 2>&1; then
+    echo "smbd password updated"
+    return 0
+  fi
   if smbd -D -s /etc/samba/smb.conf; then
     echo "smbd started"
   else
@@ -197,15 +199,21 @@ stop_smbd() {
 }
 
 start_smbd || true
+has_smb_secret() {
+  [ -f "$DATA_DIR/smb.password" ] && return 0
+  [ -n "${PXE_SMB_PASSWORD:-}" ] && return 0
+  return 1
+}
 (
   trap '' HUP
   while true; do
-    if [ -n "${PXE_SMB_PASSWORD:-}" ]; then
-      if ! pgrep -x smbd >/dev/null 2>&1; then
-        start_smbd || true
-      fi
+    if [ -f "$SMB_CMD_FILE" ]; then
+      rm -f "$SMB_CMD_FILE"
+      start_smbd || true
+    elif has_smb_secret && ! pgrep -x smbd >/dev/null 2>&1; then
+      start_smbd || true
     fi
-    sleep 5
+    sleep 1
   done
 ) &
 

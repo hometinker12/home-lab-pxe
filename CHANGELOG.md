@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-18
+
+### Added
+
+- Settings → Windows installation media (SMB) can rotate the `pxe-media` share password. The secret is write-only (never shown), stored encrypted, and applied to Samba. `PXE_SMB_PASSWORD` remains the first-boot default.
+- Settings shows an orange attention count in the header when the SMB password or imaging default local/root account is unset. Matching sections are marked.
+
+### Changed
+
+- Renamed **Lab default local accounts** to **Imaging default local/root account** and moved it to the top of Settings, with **Machines** second.
+
+### Fixed
+
+- Ubuntu autoinstall no longer emits empty `ssh_authorized_keys: []` / `authorized-keys: []` when no SSH keys are set. Subiquity treated that as a schema error (`[] is too short`) and dropped to a shell.
+- Imaging and phone-home wget callbacks POST an empty body with `--post-file=/dev/null` instead of `--post-data=` (which some wget builds treat as a bad argument).
+- Add image closes the popup and shows the ISO upload progress bar. The add dialog stayed in front of the overlay, so the form never left the screen during the upload.
+
 ## [0.3.2] - 2026-09-17
 
 ### Added

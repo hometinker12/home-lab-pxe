@@ -11,6 +11,7 @@ from ..inventory.service import get_image, get_open_attempt, load_overlay, resol
 from ..models import AccountKind, Image, InstallAttempt, Machine
 from ..seed_render import SeedRenderError, render_selected_seed
 from ..settings import get_settings
+from ..smb_runtime import effective_smb_password
 
 _SAFE_CMD = re.compile(r"^[A-Za-z0-9._~\\:/-]+$")
 
@@ -82,7 +83,7 @@ def render_startnet(db: Session, machine: Machine) -> str:
     image_id, revision, install_name = _media_coords(attempt, image)
     host = _cmd_safe(settings.smb_host)
     user = _cmd_safe(settings.smb_user)
-    password = settings.smb_password
+    password = effective_smb_password()
     if not _cmd_safe(password):
         password = ""
     media = f"{image_id}\\{revision}" if image_id and revision else ""

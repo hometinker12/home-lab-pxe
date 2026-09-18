@@ -37,6 +37,8 @@ Unknown and disabled hosts wait a few seconds, then continue to local disk — t
   - [Settings](#settings)
   - [Initial Setup](#initial-setup)
 - [Documentation](#documentation)
+- [Troubleshooting](#troubleshooting)
+  - [Docker Error: Port 111 already in use (rpcbind)](#docker-error-port-111-already-in-use-rpcbind)
 - [License](#license)
 
 
@@ -175,6 +177,8 @@ With `network_mode: host`, the `ports:` list is ignored. Keep `PXE_BIND_INTERFAC
 
 
 Note: Docker Desktop cannot reliably publish host TCP `445` for Windows Setup. Use Linux `network_mode: host` for Windows PXE.
+
+If Compose fails with `0.0.0.0:111` already in use, see [Troubleshooting](#docker-error-port-111-already-in-use-rpcbind).
 
 ---
 
@@ -405,6 +409,96 @@ PXE, DHCP, TFTP, HTTPS, Windows SMB, Ubuntu NFS, machine defaults, and lab local
 - [`SECURITY.md`](SECURITY.md) — private vulnerability reporting
 - [`CHANGELOG.md`](CHANGELOG.md) — user-visible changes
 - [`.env.example`](.env.example) — environment variable template
+
+## Troubleshooting
+
+### Docker Error: Port 111 already in use (rpcbind)
+
+Compose may fail with:
+
+```text
+failed to bind host port 0.0.0.0:111/tcp: address already in use
+```
+
+TCP/UDP **111** is rpcbind (portmapper). Ubuntu casper NFS looks up mountd there, so this stack publishes 111 (and 2049 / 20048) on the host. An NFS **client** mount to another server does **not** listen on 111. Host **rpcbind** does — often pulled in with `nfs-common` even when this machine is only a client.
+
+`network_mode: host` does not avoid the clash: the container still needs 111 on the same namespace.
+
+#### 1. See what owns 111
+
+```bash
+sudo ss -tulpn | grep ':111'
+sudo rpcinfo -p localhost
+systemctl status nfs-server nfs-kernel-server rpcbind rpcbind.socket --no-pager
+```
+
+Typical result: `rpcbind` (and systemd socket activation) on `0.0.0.0:111`. If `rpcinfo` lists only **portmapper**, there is no local NFS **server**. A kernel NFS server would also show `nfs` and `mountd`.
+
+See whether this host is only mounting remote shares:
+
+```bash
+findmnt -t nfs,nfs4 -o TARGET,SOURCE,FSTYPE,OPTIONS
+```
+
+Look for `vers=4` vs `vers=3`. Do not stop `nfs-client.target` or unmount those shares.
+
+Also check NFS data ports, which collide next if a host NFS server is present:
+
+```bash
+sudo ss -tulpn | grep -E ':2049|:20048'
+```
+
+#### 2. NFSv4 client (typical NAS) — stop host rpcbind
+
+Existing NFSv4 mounts keep working without a local mapper. Free 111 for the container:
+
+```bash
+sudo systemctl stop rpcbind.socket rpcbind.service
+sudo systemctl disable rpcbind.socket rpcbind.service
+sudo ss -tulpn | grep ':111'
+```
+
+If systemd brings the socket back:
+
+```bash
+sudo systemctl mask rpcbind.socket rpcbind.service
+```
+
+Then start the stack again:
+
+```bash
+docker compose up -d
+```
+
+#### 3. NFSv3 client — keep rpcbind on localhost only
+
+NFSv3 client locking often needs a local mapper. Do not disable rpcbind. Bind it to loopback so Docker can publish 111 on the LAN address:
+
+```bash
+sudo mkdir -p /etc/systemd/system/rpcbind.socket.d
+sudo tee /etc/systemd/system/rpcbind.socket.d/localhost.conf >/dev/null <<'EOF'
+[Socket]
+ListenStream=
+ListenDatagram=
+ListenStream=127.0.0.1:111
+ListenDatagram=127.0.0.1:111
+ListenStream=[::1]:111
+ListenDatagram=[::1]:111
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart rpcbind.socket rpcbind.service
+sudo ss -tulpn | grep ':111'
+```
+
+You want `127.0.0.1:111` / `[::1]:111` only, not `0.0.0.0:111`. Publish the container on the LAN IP (`PXE_HOST_LAN_IPV4`), not all interfaces:
+
+```yaml
+ports:
+  - "${PXE_HOST_LAN_IPV4}:111:111/tcp"
+  - "${PXE_HOST_LAN_IPV4}:111:111/udp"
+```
+
+`"111:111/tcp"` still fails while anything (including rpcbind) holds `0.0.0.0:111`.
 
 ## License
 

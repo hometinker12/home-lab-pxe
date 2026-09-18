@@ -3,11 +3,52 @@
 {% block body %}
 <header class="page-header">
   <h1>Settings</h1>
-  <p class="description">Network boot services (PXE, DHCP, TFTP), imaging timeout, HTTPS for the console, and lab default local accounts.</p>
+  <p class="description">Imaging defaults, machine timeout, network boot services (PXE, DHCP, TFTP), HTTPS, and installation media.</p>
 </header>
 {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 {% if notice %}<p class="alert alert-ok" role="status">{{ notice }}</p>{% endif %}
-<details class="card" {% if open_section == "pxe" %}open{% endif %}>
+<details class="card{% if settings_attention.accounts %} needs-attention{% endif %}" data-section="accounts" {% if open_section == "accounts" %}open{% endif %}>
+  <summary>Imaging default local/root account{% if settings_attention.accounts %}<span class="section-alert" aria-label="Needs attention"></span>{% endif %}</summary>
+  <div class="card-body">
+    <p class="meta">Used when a machine is imaged and has no password of its own. Stored encrypted. Passwords are write-only.</p>
+    <form method="post" action="/settings/accounts" class="form">
+      <h3>Linux root</h3>
+      <p>{% if linux.set %}<span class="badge badge-deployed">set</span>{% else %}<span class="badge badge-attention">not set</span>{% endif %}</p>
+      <label>Username <input name="linux_username" value="{{ linux.username or 'root' }}"></label>
+      <label>Password <input type="password" name="linux_password" autocomplete="new-password"></label>
+      <hr class="sep">
+      <h3>Windows Administrator</h3>
+      <p>{% if windows.set %}<span class="badge badge-deployed">set</span>{% else %}<span class="badge badge-attention">not set</span>{% endif %}</p>
+      <label>Username <input name="windows_username" value="{{ windows.username or 'Administrator' }}"></label>
+      <label>Password <input type="password" name="windows_password" autocomplete="new-password"></label>
+      <div class="btn-row">
+        <button type="submit">Save defaults</button>
+      </div>
+    </form>
+  </div>
+</details>
+<details class="card" data-section="machines" {% if open_section == "machines" %}open{% endif %}>
+  <summary>Machines</summary>
+  <div class="card-body">
+    <p class="meta">If a machine stays <strong>Imaging</strong> longer than this, it moves to <strong>Timeout Error</strong> and the wait menu. Set 0 to disable the timer. New and discovered machines inherit the default timezone until you change it on the machine.</p>
+    <form method="post" action="/settings/machines" class="form">
+      <label>Imaging timeout (minutes)
+        <input type="number" name="imaging_timeout_minutes" min="0" max="1440" step="1" value="{{ dhcp.imaging_timeout_minutes if dhcp.imaging_timeout_minutes is not none else 15 }}" required>
+      </label>
+      <label>Default timezone
+        <select name="default_timezone" required>
+          {% for tz in timezones %}
+          <option value="{{ tz }}" {% if tz == selected_timezone %}selected{% endif %}>{{ tz }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="btn-row">
+        <button type="submit">Save</button>
+      </div>
+    </form>
+  </div>
+</details>
+<details class="card" data-section="pxe" {% if open_section == "pxe" %}open{% endif %}>
   <summary>PXE</summary>
   <div class="card-body">
     <dl class="hints">
@@ -65,7 +106,7 @@
     </form>
   </div>
 </details>
-<details class="card" {% if open_section == "dhcp" %}open{% endif %}>
+<details class="card" data-section="dhcp" {% if open_section == "dhcp" %}open{% endif %}>
   <summary>DHCP</summary>
   <div class="card-body">
     <p class="meta">Helper status: <code>{{ dhcp_status }}</code>. Saving writes dnsmasq.conf and asks the container helper to start, stop, or reload. Env values in <code>.env</code> are only the first-boot defaults. TFTP is configured separately below.</p>
@@ -92,7 +133,7 @@
     </form>
   </div>
 </details>
-<details class="card" {% if open_section == "tftp" %}open{% endif %}>
+<details class="card" data-section="tftp" {% if open_section == "tftp" %}open{% endif %}>
   <summary>TFTP</summary>
   <div class="card-body">
     <p class="meta">First-stage iPXE binaries are served from the TFTP volume over TFTP (and also over HTTP at <code>/tftp/</code>). Browse iPXE files, image extracts, and machine seeds under <a href="/files">Files</a>. Disable TFTP if another server on the LAN already hosts the iPXE binaries.</p>
@@ -108,7 +149,7 @@
     </form>
   </div>
 </details>
-<details class="card" {% if open_section == "ssl" %}open{% endif %}>
+<details class="card" data-section="ssl" {% if open_section == "ssl" %}open{% endif %}>
   <summary>HTTPS</summary>
   <div class="card-body">
     <p class="meta">The console is also served over HTTPS. iPXE, cloud-init, and Windows seeds stay on HTTP so a self-signed certificate does not break network boot. Keep <code>PXE_PUBLIC_URL</code> as <code>http://</code>.</p>
@@ -150,21 +191,27 @@
     </form>
   </div>
 </details>
-<details class="card" {% if open_section == "smb" %}open{% endif %}>
-  <summary>Windows installation media (SMB)</summary>
+<details class="card{% if settings_attention.smb_password %} needs-attention{% endif %}" data-section="smb" {% if open_section == "smb" %}open{% endif %}>
+  <summary>Windows installation media (SMB){% if settings_attention.smb_password %}<span class="section-alert" aria-label="Needs attention"></span>{% endif %}</summary>
   <div class="card-body">
-    <p class="meta">WinPE maps the authenticated read-only share <code>pxe-media</code> for Setup files. Set <code>PXE_SMB_PASSWORD</code> in <code>.env</code> (20–128 URL-safe characters). Do not publish host TCP 445 from Docker Desktop; LAN Windows PXE needs Linux <code>network_mode: host</code>.</p>
+    <p class="meta">WinPE maps the authenticated read-only share <code>pxe-media</code> for Setup files. Rotate generates a new share password; it is write-only and never shown. <code>PXE_SMB_PASSWORD</code> in <code>.env</code> is only the first-boot default. Do not publish host TCP 445 from Docker Desktop; LAN Windows PXE needs Linux <code>network_mode: host</code>.</p>
     <dl class="hints">
       <dt>SMB host</dt>
       <dd><code>{{ smb_host }}</code></dd>
       <dt>SMB user</dt>
       <dd><code>{{ smb_user }}</code></dd>
       <dt>Password</dt>
-      <dd>{% if smb_password_set %}<span class="badge badge-deployed">set</span>{% else %}<span class="badge badge-disabled">not set</span>{% endif %}</dd>
+      <dd class="setting-secret">
+        {% if smb_password_set %}<span class="badge badge-deployed">set</span>{% else %}<span class="badge badge-attention">not set</span>{% endif %}
+        <form method="post" action="/settings/smb/rotate" class="inline-form"
+              onsubmit="return confirm('Generate a new password for the pxe-media share? The password is never shown. Windows installs that already mapped the share must PXE again.');">
+          <button type="submit" class="btn-secondary btn-sm">Rotate password</button>
+        </form>
+      </dd>
     </dl>
   </div>
 </details>
-<details class="card" {% if open_section == "nfs" %}open{% endif %}>
+<details class="card" data-section="nfs" {% if open_section == "nfs" %}open{% endif %}>
   <summary>Ubuntu installation media (NFS)</summary>
   <div class="card-body">
     <p class="meta">Ubuntu live-server casper media is exported read-only over NFS (userspace). Each ISO extract under <code>images/nfs/{id}/{rev}</code> gets its own Ganesha export; clients boot with <code>netboot=nfs</code> and mount that directory (where <code>casper/</code> lives). Compose publishes TCP/UDP 111, 2049, and 20048. Linux <code>network_mode: host</code> is the supported LAN path. If the VM is on another VLAN, allow those ports to this host.</p>
@@ -174,47 +221,6 @@
       <dt>Export</dt>
       <dd><code>{{ nfs_export }}</code></dd>
     </dl>
-  </div>
-</details>
-<details class="card" {% if open_section == "machines" %}open{% endif %}>
-  <summary>Machines</summary>
-  <div class="card-body">
-    <p class="meta">If a machine stays <strong>Imaging</strong> longer than this, it moves to <strong>Timeout Error</strong> and the wait menu. Set 0 to disable the timer. New and discovered machines inherit the default timezone until you change it on the machine.</p>
-    <form method="post" action="/settings/machines" class="form">
-      <label>Imaging timeout (minutes)
-        <input type="number" name="imaging_timeout_minutes" min="0" max="1440" step="1" value="{{ dhcp.imaging_timeout_minutes if dhcp.imaging_timeout_minutes is not none else 15 }}" required>
-      </label>
-      <label>Default timezone
-        <select name="default_timezone" required>
-          {% for tz in timezones %}
-          <option value="{{ tz }}" {% if tz == selected_timezone %}selected{% endif %}>{{ tz }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <div class="btn-row">
-        <button type="submit">Save</button>
-      </div>
-    </form>
-  </div>
-</details>
-<details class="card" {% if open_section == "accounts" %}open{% endif %}>
-  <summary>Lab default local accounts</summary>
-  <div class="card-body">
-    <p class="meta">Stored encrypted. Passwords are write-only.</p>
-    <form method="post" action="/settings/accounts" class="form">
-      <h3>Linux root</h3>
-      <p>{% if linux.set %}<span class="badge badge-deployed">set</span>{% else %}<span class="badge badge-disabled">not set</span>{% endif %}</p>
-      <label>Username <input name="linux_username" value="{{ linux.username or 'root' }}"></label>
-      <label>Password <input type="password" name="linux_password" autocomplete="new-password"></label>
-      <hr class="sep">
-      <h3>Windows Administrator</h3>
-      <p>{% if windows.set %}<span class="badge badge-deployed">set</span>{% else %}<span class="badge badge-disabled">not set</span>{% endif %}</p>
-      <label>Username <input name="windows_username" value="{{ windows.username or 'Administrator' }}"></label>
-      <label>Password <input type="password" name="windows_password" autocomplete="new-password"></label>
-      <div class="btn-row">
-        <button type="submit">Save defaults</button>
-      </div>
-    </form>
   </div>
 </details>
 {% endblock %}
