@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- README troubleshooting for Ubuntu casper `Permission denied` when the `pxe-images` volume is already an NFS mount (Ganesha cannot re-export a NAS/SAN Docker volume). Bind a local directory over `/var/lib/pxe/images/nfs`.
+
 ## [0.3.3] - 2026-09-18
 
 ### Added
