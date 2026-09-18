@@ -31,6 +31,22 @@
         <option value="tool" {% if image.os_family == "tool" %}selected{% endif %}>tool</option>
       </select>
     </label>
+    <div data-os="linux,windows">
+      <label>Install source
+        {% if source_options %}
+        <select name="source_id">
+          {% for src in source_options %}
+          <option value="{{ src.source_id }}" {% if image.source_id == src.source_id %}selected{% endif %}{% if src.wim_index %} data-wim-index="{{ src.wim_index }}"{% endif %}>{{ src.label }}</option>
+          {% endfor %}
+        </select>
+        {% else %}
+        <select disabled aria-label="Install source">
+          <option>Available after extract</option>
+        </select>
+        <input type="hidden" name="source_id" value="{{ image.source_id }}">
+        {% endif %}
+      </label>
+    </div>
     <label>Folder
       <select name="folder_id" required>
         {% for fid, path in folder_options %}
@@ -44,12 +60,24 @@
       <label>Replace boot.wim <input type="file" name="boot_wim_file"></label>
       <label>install.wim path <input name="install_wim_path" value="{{ image.install_wim_path }}"></label>
       <label>Replace install.wim <input type="file" name="install_wim_file"></label>
+      {% if source_options %}
+      <input type="hidden" name="wim_index" value="{{ image.wim_index or 1 }}" data-wim-index-field>
+      {% else %}
       <label>WIM index <input name="wim_index" type="number" min="1" value="{{ image.wim_index or 1 }}"></label>
+      {% endif %}
     </div>
-    <label>ISO path <input name="iso_path" value="{{ image.iso_path }}"></label>
-    <label>Replace ISO <input type="file" name="iso_file" accept=".iso,.img"></label>
+    <div class="path-file-field">
+      <span class="field-label">ISO path</span>
+      <div class="path-file-row">
+        <input type="text" value="{{ image.iso_path }}" disabled placeholder="No ISO on disk" data-iso-path-display aria-label="Current ISO path" title="{{ image.iso_path }}">
+        <input type="hidden" name="iso_path" value="{{ image.iso_path }}">
+        <label class="btn btn-secondary path-file-choose">Choose file
+          <input type="file" name="iso_file" accept=".iso,.img" class="path-file-input">
+        </label>
+      </div>
+    </div>
     <label>Extra cmdline <input name="cmdline" value="{{ image.cmdline }}"></label>
-    <details class="advanced-settings" data-os="linux,tool"{% if image.kernel_path or image.initrd_path %} open{% endif %}>
+    <details class="advanced-settings" data-os="linux,tool">
       <summary>Advanced Settings</summary>
       <div class="advanced-settings-body">
         <label>Kernel path <input name="kernel_path" value="{{ image.kernel_path }}"></label>

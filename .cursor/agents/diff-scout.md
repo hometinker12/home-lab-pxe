@@ -37,7 +37,7 @@ You run in an isolated context window. The parent agent has no prior conversatio
 | `tests/` | pytest suite |
 | `Dockerfile`, `docker-compose.yml`, `scripts/` | Container packaging, dnsmasq, TFTP |
 | `.github/workflows/` | CI (pytest, PXE/Docker smoke, Docker publish) |
-| `README.md`, `CHANGELOG.md`, `.env.example`, `VERSION`, `PLAN.md` | Docs and release metadata |
+| `CHANGELOG.md`, `.env.example`, `VERSION`, `PLAN.md`, `ARCHITECTURE.md` | Docs and release metadata (`README.md` only if the parent task explicitly asked to change it) |
 
 ## Analysis Strategy
 

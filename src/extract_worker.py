@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 
 from .db import get_engine, init_db, session_scope
 from .ganesha_exports import request_export_reload
+from .install_sources import refresh_image_sources
 from .inventory.service import expire_stale_imaging
 from .iso_extract import ArchiveRunner, ExtractError, extract_linux_payloads, extract_windows_media
 from .models import ExtractStatus, Image, InstallAttempt, OsFamily
@@ -300,6 +301,7 @@ def run_one_job(image_id: int, revision: int, runner: ArchiveRunner | None = Non
             image.extract_generation = media_rel
         image.extract_status = ExtractStatus.ready.value
         image.extract_error = ""
+        refresh_image_sources(image, image_root=root)
         if media_replaces_uploaded_iso(family, media_rel):
             discard_uploaded_iso(image)
         db.add(image)
@@ -376,11 +378,23 @@ def discard_isos_for_extracted_media() -> None:
             db.commit()
 
 
+def backfill_image_sources() -> None:
+    with session_scope() as db:
+        changed = False
+        for image in db.exec(select(Image)).all():
+            if refresh_image_sources(image):
+                db.add(image)
+                changed = True
+        if changed:
+            db.commit()
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     init_db()
     requeue_stale_extracting()
     backfill_image_seeds()
+    backfill_image_sources()
     requeue_linux_nfs_backfill()
     discard_isos_for_extracted_media()
     LOGGER.info("extract worker ready")

@@ -60,6 +60,38 @@ def test_cloud_init_injects_root_and_bumps_instance_id(client):
     assert "root-secret" not in str(detail)
 
 
+def test_cloud_init_uses_image_source_id(client):
+    login(client)
+    from src.db import session_scope
+
+    with session_scope() as db:
+        machine = touch_machine(db, mac="02:00:00:00:00:16", uuid=None, client_ip="10.0.0.8")
+        machine.hostname = "src1"
+        image = create_image(
+            db,
+            name="u24-source",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
+        image.source_id = "ubuntu-server-minimal"
+        db.add(image)
+        upsert_local_account(
+            db,
+            machine_id=int(machine.id),
+            kind=AccountKind.linux_root,
+            username="root",
+            password="root-secret",
+        )
+        deploy_machine(db, machine, image=image, actor="admin")
+        db.commit()
+        mid = machine.id
+    parsed = yaml.safe_load(client.get(f"/cloud-init/{mid}/user-data").text)
+    assert parsed["autoinstall"]["source"]["id"] == "ubuntu-server-minimal"
+    assert parsed["autoinstall"]["source"]["search_drivers"] is False
+
+
 def test_machine_seed_override_replaces_image(client):
     login(client)
     from src.db import session_scope

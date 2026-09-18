@@ -98,6 +98,8 @@ class Image(SQLModel, table=True):
     extract_revision: int = 0
     extract_generation: str = ""
     wim_index: int = 1
+    source_id: str = ""
+    source_options: str = ""
     folder_id: int | None = Field(default=None, foreign_key="bootmenufolder.id")
     sort_order: int = 0
 
@@ -149,6 +151,7 @@ class InstallAttempt(SQLModel, table=True):
     iso_path: str = ""
     cmdline: str = ""
     wim_index: int = 1
+    source_id: str = ""
     media_relative: str = ""
     seed_snapshot_path: str = ""
     created_at: datetime = Field(default_factory=utcnow)

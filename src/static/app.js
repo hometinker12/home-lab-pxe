@@ -42,6 +42,26 @@
       });
     }
     syncImageForm(form);
+    const sourceSelect = form.querySelector("select[name='source_id']");
+    const wimIndex = form.querySelector("[name='wim_index']");
+    if (sourceSelect && wimIndex) {
+      sourceSelect.addEventListener("change", () => {
+        const selected = sourceSelect.options[sourceSelect.selectedIndex];
+        const index = selected && selected.getAttribute("data-wim-index");
+        if (index) {
+          wimIndex.value = index;
+        }
+      });
+    }
+    const isoDisplay = form.querySelector("[data-iso-path-display]");
+    const isoFile = form.querySelector("input[name='iso_file']");
+    if (isoDisplay && isoFile) {
+      isoFile.addEventListener("change", () => {
+        if (isoFile.files && isoFile.files[0]) {
+          isoDisplay.value = isoFile.files[0].name;
+        }
+      });
+    }
     form.addEventListener("submit", (event) => {
       const iso = form.querySelector("input[name='iso_file']");
       if (!iso || !iso.files || !iso.files.length) {
@@ -398,6 +418,68 @@
     });
   }
 
+  const BOOT_MENU_SCROLL_KEY = "pxe:boot-menu-scroll";
+
+  function onBootMenuPage() {
+    return window.location.pathname === "/boot-menu";
+  }
+
+  function rememberBootMenuScroll() {
+    if (!onBootMenuPage()) {
+      return;
+    }
+    try {
+      sessionStorage.setItem(BOOT_MENU_SCROLL_KEY, String(window.scrollY));
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function takeBootMenuScroll() {
+    if (!onBootMenuPage()) {
+      return null;
+    }
+    try {
+      const raw = sessionStorage.getItem(BOOT_MENU_SCROLL_KEY);
+      if (raw === null) {
+        return null;
+      }
+      sessionStorage.removeItem(BOOT_MENU_SCROLL_KEY);
+      const y = Number(raw);
+      return Number.isNaN(y) ? null : y;
+    } catch {
+      return null;
+    }
+  }
+
+  function applyScrollY(y) {
+    history.scrollRestoration = "manual";
+    const go = () => window.scrollTo(0, y);
+    go();
+    requestAnimationFrame(() => {
+      go();
+      requestAnimationFrame(go);
+    });
+    window.addEventListener("load", go, { once: true });
+    window.addEventListener("pageshow", go, { once: true });
+  }
+
+  function showModalPreservingScroll(dlg) {
+    const x = window.scrollX;
+    const y = window.scrollY;
+    dlg.showModal();
+    const restore = () => window.scrollTo(x, y);
+    restore();
+    requestAnimationFrame(() => {
+      restore();
+      requestAnimationFrame(restore);
+    });
+    const focus = dlg.querySelector("[autofocus], select, input:not([type=hidden])");
+    if (focus) {
+      focus.focus({ preventScroll: true });
+    }
+  }
+
   function wireDialogs() {
     document.querySelectorAll("[data-open-dialog]").forEach((btn) => {
       btn.addEventListener("click", (event) => {
@@ -420,11 +502,7 @@
               label.textContent = btn.getAttribute("data-move-name") || "";
             }
           }
-          dlg.showModal();
-          const focus = dlg.querySelector("[autofocus], select, input:not([type=hidden])");
-          if (focus) {
-            focus.focus();
-          }
+          showModalPreservingScroll(dlg);
         }
       });
     });
@@ -439,9 +517,63 @@
       });
       if (dlg.hasAttribute("open") && typeof dlg.showModal === "function") {
         dlg.close();
-        dlg.showModal();
+        showModalPreservingScroll(dlg);
       }
     });
   }
+  const pendingBootMenuScroll = takeBootMenuScroll();
   wireDialogs();
+  if (pendingBootMenuScroll !== null) {
+    applyScrollY(pendingBootMenuScroll);
+  }
+
+  document.addEventListener("click", (event) => {
+    if (!onBootMenuPage() || event.defaultPrevented || event.button !== 0) {
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    const link = event.target.closest("a[href]");
+    if (!link) {
+      return;
+    }
+    let dest;
+    try {
+      dest = new URL(link.href, window.location.href);
+    } catch {
+      return;
+    }
+    if (dest.origin !== window.location.origin || dest.pathname !== "/boot-menu") {
+      return;
+    }
+    if (link.classList.contains("is-active")) {
+      event.preventDefault();
+      return;
+    }
+    rememberBootMenuScroll();
+  });
+
+  document.addEventListener("submit", (event) => {
+    if (!onBootMenuPage()) {
+      return;
+    }
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+    const action = form.getAttribute("action") || window.location.href;
+    let dest;
+    try {
+      dest = new URL(action, window.location.href);
+    } catch {
+      return;
+    }
+    if (dest.origin !== window.location.origin) {
+      return;
+    }
+    if (dest.pathname === "/boot-menu" || dest.pathname.startsWith("/boot-menu/")) {
+      rememberBootMenuScroll();
+    }
+  });
 })();

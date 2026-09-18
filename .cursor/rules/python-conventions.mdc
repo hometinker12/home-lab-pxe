@@ -35,3 +35,4 @@ alwaysApply: false
 
 - User-visible changes need `CHANGELOG.md` `[Unreleased]` entries.
 - New env vars need `.env.example` entries with safe placeholders.
+- Do not edit `README.md` unless the user explicitly asked to update it in this request.

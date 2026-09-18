@@ -8,6 +8,7 @@ from ..auth import require_user
 from ..db import get_db
 from ..extract_worker import schedule_extract
 from ..image_store import UploadError, has_upload, relative_slot_path, remove_image_tree, save_upload_file
+from ..install_sources import catalog_from_json, refresh_image_sources, sanitize_source_id
 from ..inventory.boot_menu import default_folder_ids, folder_options, folder_path, get_folder
 from ..inventory.service import (
     create_image,
@@ -28,7 +29,8 @@ router = APIRouter(tags=["console"], include_in_schema=False)
 
 _PLACEHOLDER_HELP = (
     "{{hostname}} {{username}} {{password}} {{password_hash}} {{instance_id}} {{machine_id}} "
-    "{{public_url}} {{phone_home_url}} {{imaging_url}} {{timezone}} {{ssh_keys}} {{packages}} {{wim_index}} {{install_media_path}}"
+    "{{public_url}} {{phone_home_url}} {{imaging_url}} {{timezone}} {{ssh_keys}} {{packages}} "
+    "{{source_id}} {{wim_index}} {{install_media_path}}"
 )
 
 
@@ -74,6 +76,10 @@ def _wim_index(form) -> int:
     if value < 1:
         raise ValueError("WIM index must be a positive integer")
     return value
+
+
+def _source_id(form) -> str:
+    return sanitize_source_id(_form_str(form, "source_id"))
 
 
 def _relative_path(value: str) -> str:
@@ -169,6 +175,18 @@ def _image_list_context(request: Request, db: Session, *, error=None, add_open: 
     )
 
 
+def _image_source_options(db: Session, image) -> list:
+    options = catalog_from_json(image.source_options or "")
+    if options:
+        return options
+    if refresh_image_sources(image):
+        db.add(image)
+        db.commit()
+        db.refresh(image)
+        return catalog_from_json(image.source_options or "")
+    return []
+
+
 def _image_detail_context(request: Request, db: Session, image, *, error=None):
     family = OsFamily(image.os_family) if image.os_family in {e.value for e in OsFamily} else OsFamily.linux
     seed = "" if family == OsFamily.tool else read_image_seed(int(image.id), family)
@@ -181,6 +199,7 @@ def _image_detail_context(request: Request, db: Session, image, *, error=None):
         placeholder_help=_PLACEHOLDER_HELP,
         folder_options=folder_options(db),
         folder_defaults=default_folder_ids(db),
+        source_options=_image_source_options(db, image),
         extract_busy=image_extract_in_progress(image),
         error=error,
     )
@@ -202,6 +221,8 @@ def api_images(db: Session = Depends(get_db), user: str = Depends(require_user))
             "extract_status": img.extract_status or "idle",
             "extract_error": img.extract_error or "",
             "wim_index": img.wim_index or 1,
+            "source_id": img.source_id or "",
+            "source_options": [item.as_dict() for item in catalog_from_json(img.source_options or "")],
             "folder_id": img.folder_id,
         }
         for img in list_images(db)
@@ -289,6 +310,7 @@ async def images_update(
             iso_path=paths["iso_path"],
             cmdline=_form_str(form, "cmdline"),
             wim_index=_wim_index(form),
+            source_id=_source_id(form),
             folder_id=_folder_id(form),
             actor=user,
         )

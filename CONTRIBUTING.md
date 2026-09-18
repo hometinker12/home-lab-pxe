@@ -136,7 +136,7 @@ Security-sensitive changes may receive an additional adversarial review before r
 
 Update documentation alongside behavior changes:
 
-- Update `README.md` only when install/run steps or operator-facing capabilities change. Keep CI, GitHub secrets, branch promotion, and publish internals out of the README (see `CONTRIBUTING.md` and `.github/workflows/` instead).
+- Do **not** update `README.md` unless a maintainer explicitly asked for a README change in the issue or pull request. Keep CI, GitHub secrets, branch promotion, and publish internals out of the README (see this file and `.github/workflows/` instead).
 - Add user-visible changes to the `[Unreleased]` section of `CHANGELOG.md`.
 - Update `.env.example` when environment variables are added or renamed.
 - Update `PLAN.md` when architecture or milestone status changes.
@@ -147,7 +147,6 @@ Release version changes must remain synchronized across:
 - `VERSION`
 - `pyproject.toml`
 - `Dockerfile`
-- The README release badge
 - Version-related tests
 
 ## Pull request checklist
@@ -161,7 +160,7 @@ Before opening a pull request, confirm that:
 - [ ] New behavior has test coverage.
 - [ ] Secrets and generated files are excluded.
 - [ ] Security implications were considered.
-- [ ] README and configuration examples are updated when needed.
+- [ ] Configuration examples are updated when needed (`README.md` only if explicitly requested).
 - [ ] `CHANGELOG.md` is updated for user-visible changes.
 - [ ] The pull request explains what changed and why.
 

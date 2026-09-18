@@ -90,22 +90,41 @@ def folder_ids_from_tree(body: bytes) -> dict[str, int]:
 def seed_nfs_generation(container: str, image_id: int) -> None:
     iid = int(image_id)
     code = (
-        "from src.db import session_scope\n"
-        "from src.models import Image\n"
-        f"iid = {iid}\n"
-        "with session_scope() as db:\n"
-        "    img = db.get(Image, iid)\n"
-        "    if img is None:\n"
-        "        raise SystemExit('missing image')\n"
-        "    img.extract_generation = f'nfs/{iid}/1'\n"
-        "    db.add(img)\n"
-        "    db.commit()\n"
         "from pathlib import Path\n"
+        "from src.db import session_scope\n"
+        "from src.install_sources import refresh_image_sources\n"
+        "from src.models import ExtractStatus, Image\n"
+        f"iid = {iid}\n"
         f"dest = Path('/var/lib/pxe/images/nfs/{iid}/1')\n"
         "casper = dest / 'casper'\n"
         "casper.mkdir(parents=True, exist_ok=True)\n"
         "(dest / '.disk').mkdir(exist_ok=True)\n"
         "(casper / 'filesystem.squashfs').write_bytes(b'sqsh')\n"
+        "yaml = '\\n'.join([\n"
+        "    'sources:',\n"
+        "    '- id: ubuntu-server-minimal',\n"
+        "    '  name:',\n"
+        "    '    en: Minimal',\n"
+        "    '- default: true',\n"
+        "    '  id: ubuntu-server',\n"
+        "    '  name:',\n"
+        "    '    en: Server',\n"
+        "    '',\n"
+        "])\n"
+        "(casper / 'install-sources.yaml').write_text(yaml, encoding='utf-8')\n"
+        "with session_scope() as db:\n"
+        "    img = db.get(Image, iid)\n"
+        "    if img is None:\n"
+        "        raise SystemExit('missing image')\n"
+        "    img.extract_generation = f'nfs/{iid}/1'\n"
+        "    img.extract_status = ExtractStatus.ready.value\n"
+        "    db.add(img)\n"
+        "    db.commit()\n"
+        "    db.refresh(img)\n"
+        "    if not refresh_image_sources(img):\n"
+        "        raise SystemExit(f'catalog refresh failed status={img.extract_status!r} gen={img.extract_generation!r}')\n"
+        "    db.add(img)\n"
+        "    db.commit()\n"
     )
     proc = subprocess.run(
         ["docker", "exec", container, "python", "-c", code],
@@ -181,6 +200,8 @@ def main() -> None:
     expect(b"unknown_timeout_seconds" in body, "unknown/disabled timeout field")
     expect(b'id="edit-folder"' in body, "folder editor overlay")
     expect(b'data-open-dialog="edit-folder"' in body, "edit folder control")
+    expect(b'id="folder-edit"' in body, "edit folder form")
+    expect(b">Root<" in body, "root parent option")
     expect(b'id="move-image"' in body, "move image overlay")
     expect(b">Move up<" not in body, "folder editor should not list Move up")
     folder_ids = folder_ids_from_tree(body)
@@ -196,6 +217,23 @@ def main() -> None:
     folder_ids = folder_ids_from_tree(body)
     expect("SmokeNested" in folder_ids, "nested folder missing from tree")
     nested_folder_id = folder_ids["SmokeNested"]
+    status, _, _ = c.request(
+        "POST",
+        f"/boot-menu/folders/{nested_folder_id}",
+        form={"name": "SmokeNested", "parent_id": ""},
+    )
+    expect(status in {200, 303, 302}, f"reparent nested to root {status}")
+    status, _, body = c.request("GET", "/boot-menu")
+    expect(b">Linux/SmokeNested<" not in body, "reparented folder still listed under Linux")
+    expect("SmokeNested" in folder_ids_from_tree(body), "reparented folder missing from tree")
+    status, _, _ = c.request(
+        "POST",
+        f"/boot-menu/folders/{nested_folder_id}",
+        form={"name": "SmokeNested", "parent_id": str(linux_folder_id)},
+    )
+    expect(status in {200, 303, 302}, f"restore nested under Linux {status}")
+    status, _, body = c.request("GET", "/boot-menu")
+    expect(b">Linux/SmokeNested<" in body, "nested folder should be under Linux again")
 
     status, _, body = c.request("GET", "/settings")
     expect(status == 200 and b"DHCP" in body, "settings DHCP form")
@@ -453,6 +491,10 @@ def main() -> None:
 
     status, _, body = c.request("GET", f"/images/{linux_image_id}")
     expect(status == 200 and b"Save image" in body, "image edit page")
+    expect(b"Choose file" in body and b"data-iso-path-display" in body, "image edit ISO path should be disabled with Choose file")
+    expect(b"Install source" in body, "image edit install source")
+    expect(b"Advanced Settings" in body, "image edit advanced settings")
+    expect(b'data-os="linux,tool" open' not in body, "image edit advanced settings should be collapsed")
     status, _, _ = c.request(
         "POST",
         f"/images/{linux_image_id}",
@@ -463,6 +505,7 @@ def main() -> None:
             "kernel_path": "ubuntu/vmlinuz",
             "initrd_path": "ubuntu/initrd",
             "cmdline": "smoke-edit",
+            "source_id": "ubuntu-server-minimal",
         },
     )
     expect(status in {200, 303, 302}, f"edit image {status}")
@@ -474,6 +517,9 @@ def main() -> None:
         f"# {token}\n"
         "autoinstall:\n"
         "  version: 1\n"
+        "  source:\n"
+        "    id: {{source_id}}\n"
+        "    search_drivers: false\n"
         "  ssh:\n"
         "    install-server: true\n"
         "    allow-pw: true\n"
@@ -503,12 +549,18 @@ def main() -> None:
             "kernel_path": "ubuntu/vmlinuz",
             "initrd_path": "ubuntu/initrd",
             "cmdline": "smoke-edit",
+            "source_id": "ubuntu-server-minimal",
             "user_data": seed,
         },
     )
     expect(status in {200, 303, 302}, f"edit image seed {status}")
+    status, _, body = c.request("GET", f"/images/{linux_image_id}")
     expect(b'data-os="linux,tool"' in body or b'data-os="linux"' in body, "linux image fields")
     expect(b'data-os="windows"' in body, "windows image fields")
+    status, _, body = c.request("GET", "/api/images")
+    saved_linux = next((img for img in json.loads(body) if img.get("id") == linux_image_id), None)
+    expect(saved_linux is not None, "linux image missing after source save")
+    expect(saved_linux.get("source_id") == "ubuntu-server-minimal", "linux image source_id did not persist")
 
     iso_name = f"smoke-iso-{int(time.time())}"
     status, _, _ = c.request(
@@ -564,6 +616,35 @@ def main() -> None:
         expect(nfs_image is not None, "nfs linux image missing after create")
         nfs_image_id = int(nfs_image["id"])
         seed_nfs_generation(args.container.strip(), nfs_image_id)
+        status, _, body = c.request("GET", "/api/images")
+        nfs_image = next((img for img in json.loads(body) if img.get("id") == nfs_image_id), None)
+        expect(nfs_image is not None, "nfs linux image missing after catalog seed")
+        expect(nfs_image.get("source_id") == "ubuntu-server", "nfs extract catalog should pick default source")
+        expect(
+            any(opt.get("id") == "ubuntu-server-minimal" for opt in (nfs_image.get("source_options") or [])),
+            "nfs extract catalog missing ubuntu-server-minimal",
+        )
+        status, _, body = c.request("GET", f"/images/{nfs_image_id}")
+        expect(b'name="source_id"' in body and b"ubuntu-server-minimal" in body, "nfs image edit missing install sources")
+        status, _, _ = c.request(
+            "POST",
+            f"/images/{nfs_image_id}",
+            form={
+                "name": nfs_name,
+                "os_family": "linux",
+                "arch": "x86_64",
+                "kernel_path": "ubuntu/vmlinuz",
+                "initrd_path": "ubuntu/initrd",
+                "source_id": "ubuntu-server-minimal",
+            },
+        )
+        expect(status in {200, 303, 302}, f"nfs source save {status}")
+        status, _, body = c.request("GET", "/api/images")
+        nfs_image = next((img for img in json.loads(body) if img.get("id") == nfs_image_id), None)
+        expect(
+            nfs_image is not None and nfs_image.get("source_id") == "ubuntu-server-minimal",
+            "nfs image source_id did not persist",
+        )
         nfs_mac = "de-ad-be-ef-00-cc"
         status, _, body = c.request("GET", f"/ipxe/{nfs_mac}")
         expect("Continuing to next boot device" in body.decode(), "nfs MAC should continue to disk first")
@@ -600,6 +681,9 @@ def main() -> None:
         expect(",vers=" not in nfs_text and "mountport=" not in nfs_text, "nfsroot must not swallow mount options")
         expect("iso-url=" not in nfs_text and "ramdisk_size" not in nfs_text, "nfs install should not wget ISO")
         expect("nfs-smoke-secret" not in nfs_text, "password leaked into nfs iPXE")
+        status, _, body = c.request("GET", f"/cloud-init/{nfs_machine['id']}/user-data")
+        expect(status == 200, f"nfs user-data {status}")
+        expect("ubuntu-server-minimal" in body.decode(), "nfs user-data missing selected source.id")
 
     status, _, body = c.request("GET", "/api/machines")
     expect(status == 200, f"/api/machines {status} {body[:200]!r}")
@@ -658,6 +742,7 @@ def main() -> None:
     expect("\n  identity:" in user_data, "autoinstall must include identity")
     expect("\n  timezone:" not in user_data, "timezone must not be an autoinstall root key")
     expect("America/New_York" in user_data, "deploy timezone missing from rendered user-data")
+    expect("ubuntu-server-minimal" in user_data, "linux user-data missing selected source.id")
     expect("sysrq-trigger" in user_data, "autoinstall must force reboot after phone-home")
     expect("instance-id" in c.request("GET", f"/cloud-init/{mid}/meta-data")[2].decode(), "meta-data")
 
@@ -735,6 +820,28 @@ def main() -> None:
         },
     )
     expect(status in {200, 303, 302}, f"create windows image {status}")
+    status, _, body = c.request("GET", "/api/images")
+    win_created = next((img for img in json.loads(body) if img.get("os_family") == "windows"), None)
+    expect(win_created is not None, "windows image missing after create")
+    status, _, _ = c.request(
+        "POST",
+        f"/images/{win_created['id']}",
+        form={
+            "name": win_created["name"],
+            "os_family": "windows",
+            "arch": "x86_64",
+            "boot_wim_path": "windows/boot.wim",
+            "install_wim_path": "windows/install.wim",
+            "source_id": "Windows Server 2022 SERVERSTANDARD",
+            "wim_index": "2",
+        },
+    )
+    expect(status in {200, 303, 302}, f"windows source save {status}")
+    status, _, body = c.request("GET", "/api/images")
+    win_saved = next((img for img in json.loads(body) if img.get("id") == win_created["id"]), None)
+    expect(win_saved is not None, "windows image missing after source save")
+    expect(win_saved.get("source_id") == "Windows Server 2022 SERVERSTANDARD", "windows source_id did not persist")
+    expect(int(win_saved.get("wim_index") or 0) == 2, "windows wim_index did not persist")
 
     status, _, body = c.request("GET", "/api/machines")
     machines = json.loads(body)
@@ -760,6 +867,8 @@ def main() -> None:
     status, _, body = c.request("GET", f"/windows/{win_machine['id']}/unattend.xml")
     expect(status == 200 and b"Win-smoke-secret" in body, "unattend missing Administrator password")
     expect(b"windowsPE" in body, "unattend missing windowsPE")
+    expect(b"/IMAGE/NAME" in body and b"Windows Server 2022 SERVERSTANDARD" in body, "unattend missing selected image name")
+    expect(b"<Value>2</Value>" in body, "unattend missing selected wim index")
     status, _, body = c.request("GET", f"/windows/{win_machine['id']}/startnet.cmd")
     expect(status == 200 and b"pxe-media" in body, "startnet missing SMB share")
     expect(b"event=imaging" in body, "WinPE startnet must ping imaging")

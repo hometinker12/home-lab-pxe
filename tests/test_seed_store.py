@@ -113,6 +113,7 @@ def test_factory_linux_seed_has_imaging_callback():
     assert "{{packages}}" in text
     assert "|| true" in text
     assert "cdrom.list" not in text
+    assert "{{source_id}}" in text
     assert "ubuntu-server-minimal" not in text
     assert "optional: true" in text
     assert 'name: "en*"' in text
@@ -131,6 +132,8 @@ def test_factory_linux_seed_substitutes_lists():
     auto = parsed["autoinstall"]
     assert auto["ssh"]["authorized-keys"] == ["ssh-ed25519 AAAA lab@host"]
     assert auto["packages"] == ["qemu-guest-agent"]
+    assert auto["source"]["id"] == "ubuntu-server"
+    assert auto["source"]["search_drivers"] is False
     assert auto["user-data"]["users"][0]["ssh_authorized_keys"] == ["ssh-ed25519 AAAA lab@host"]
     validate_seed_template(factory_seed_text(OsFamily.linux), OsFamily.linux)
 
@@ -152,6 +155,28 @@ def test_complete_linux_user_data_appends_force_reboot_once():
     assert filled.count("sysrq-trigger") >= 3
     again = complete_linux_user_data(filled)
     assert again.count("sysrq-trigger") == filled.count("sysrq-trigger")
+
+
+def test_complete_linux_user_data_injects_source_id():
+    from src.seed_render import complete_linux_user_data
+
+    filled = complete_linux_user_data(
+        "#cloud-config\nautoinstall:\n  version: 1\n  ssh:\n    install-server: true\n",
+        source_id="ubuntu-server-minimal",
+    )
+    parsed = yaml.safe_load(filled)
+    assert parsed["autoinstall"]["source"]["id"] == "ubuntu-server-minimal"
+    assert parsed["autoinstall"]["source"]["search_drivers"] is False
+
+
+def test_complete_linux_user_data_strips_empty_source_id():
+    from src.seed_render import complete_linux_user_data
+
+    filled = complete_linux_user_data(
+        "#cloud-config\nautoinstall:\n  version: 1\n  source:\n    id: ''\n    search_drivers: false\n"
+    )
+    parsed = yaml.safe_load(filled)
+    assert "id" not in parsed["autoinstall"]["source"]
 
 
 def test_complete_linux_user_data_keeps_seed_comments():
