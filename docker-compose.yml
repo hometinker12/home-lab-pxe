@@ -32,8 +32,11 @@ services:
       - DAC_OVERRIDE
       - DAC_READ_SEARCH
       - SETFCAP
+    # Default Docker seccomp blocks open_by_handle_at (Ganesha FSAL_VFS). Casper
+    # then gets "mount: Operation not permitted" even when showmount lists the export.
     security_opt:
       - no-new-privileges:true
+      - seccomp:unconfined
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:

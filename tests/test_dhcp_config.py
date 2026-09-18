@@ -43,6 +43,8 @@ def test_proxy_dnsmasq_has_no_secrets(tmp_path: Path):
     assert "tftp-single-port" in text
     assert "proxy" in text
     assert "boot.ipxe" in text
+    assert "dhcp-userclass=set:ipxe,iPXE" in text
+    assert "dhcp-boot=tag:ipxe,http://192.168.1.10:8080/boot.ipxe" in text
     assert "should-not-appear" not in text
 
 

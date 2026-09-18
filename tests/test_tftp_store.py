@@ -9,23 +9,27 @@ from src.tftp_store import TftpStoreError, format_bytes, is_stub, resolve_tftp, 
 
 def test_client_writes_tftp_boot_chain_script(client, tmp_path):
     path = tmp_path / "tftp" / "boot.ipxe"
+    autoexec = tmp_path / "tftp" / "autoexec.ipxe"
     assert path.is_file()
     text = path.read_text(encoding="utf-8")
     assert text.startswith("#!ipxe")
     assert "chain --replace http://pxe.test:8080/ipxe/${mac:hexhyp}" in text
+    assert autoexec.read_text(encoding="utf-8") == text
 
 
 def test_write_boot_chain_script_uses_public_url(client, tmp_path):
     path = write_boot_chain_script()
     assert path.name == "boot.ipxe"
-    assert "http://pxe.test:8080/ipxe/" in path.read_text(encoding="utf-8")
+    body = path.read_text(encoding="utf-8")
+    assert "http://pxe.test:8080/ipxe/" in body
+    assert (tmp_path / "tftp" / "autoexec.ipxe").read_text(encoding="utf-8") == body
 
 
 def test_write_boot_chain_script_tolerates_read_only_tftp(client, tmp_path, monkeypatch):
     original = Path.write_text
 
     def wrapped(self, data, *args, **kwargs):
-        if self.name == "boot.ipxe":
+        if self.name in {"boot.ipxe", "autoexec.ipxe"}:
             raise OSError(30, "Read-only file system")
         return original(self, data, *args, **kwargs)
 
@@ -57,6 +61,11 @@ def test_settings_lists_tftp_files_and_stubs(client, tmp_path):
     assert "tftp-browser" not in page.text
     assert "undionly.kpxe" in page.text
     assert "stub" in page.text
+    assert 'href="https://boot.ipxe.org/undionly.kpxe"' in page.text
+    assert "https://boot.ipxe.org/" in page.text
+    assert "iPXE file" in page.text
+    assert 'aria-label="' in page.text
+    assert "need replacing" in page.text or "needs replacing" in page.text
     assert "Volumes" in page.text
     assert "Date Modified" in page.text
 
@@ -182,6 +191,22 @@ def test_is_stub_detects_placeholder(client, tmp_path):
     assert is_stub(path) is True
     path.write_bytes(b"MZ" + b"\x00" * 80)
     assert is_stub(path) is False
+
+
+def test_files_attention_counts_stubs_and_missing(client, tmp_path):
+    from src.tftp_store import load_files_attention, source_url_for
+
+    login(client)
+    (tmp_path / "tftp" / "undionly.kpxe").write_bytes(b"ipxe-stub\n")
+    flags = load_files_attention()
+    assert flags.count >= 1
+    assert "replacing" in flags.label
+    names = {item["name"] for item in flags.items}
+    assert "undionly.kpxe" in names or "snponly.efi" in names
+    assert source_url_for("ipxe.efi") == "https://boot.ipxe.org/ipxe.efi"
+    page = client.get("/machines")
+    assert "iPXE file" in page.text
+    assert 'href="/files"' in page.text
 
 
 def test_files_favorites_and_image_volume(client, tmp_path):

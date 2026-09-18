@@ -1,6 +1,7 @@
 # home-lab-pxe
 
-[License: MIT](LICENSE.md) [Release](VERSION) [Docker](https://hub.docker.com/r/hometinker12/home-lab-pxe) [Python](https://www.python.org/) [AI Assisted](https://cursor.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md) [![Release](https://img.shields.io/badge/release-0.3.1-blue)](VERSION) [![CI](https://github.com/hometinker12/home-lab-pxe/actions/workflows/pxe-smoke.yml/badge.svg?branch=develop)](https://github.com/hometinker12/home-lab-pxe/actions/workflows/pxe-smoke.yml) [![Publish](https://github.com/hometinker12/home-lab-pxe/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/hometinker12/home-lab-pxe/actions/workflows/docker-publish.yml) [![Docker](https://img.shields.io/badge/docker-hometinker12%2Fhome--lab--pxe-blue)](https://hub.docker.com/r/hometinker12/home-lab-pxe) [![Python](https://img.shields.io/badge/python-3.12-green)](https://www.python.org/) [![AI Assisted](https://img.shields.io/badge/AI%20Assisted-yes-blue)](https://cursor.com)
+
 
 **One-command Docker PXE/iPXE lab.**
 
@@ -39,6 +40,7 @@ Unknown and disabled hosts wait a few seconds, then continue to local disk — t
 - [Documentation](#documentation)
 - [Troubleshooting](#troubleshooting)
   - [Docker Error: Port 111 already in use (rpcbind)](#docker-error-port-111-already-in-use-rpcbind)
+  - [Ubuntu casper NFS: Permission denied](#ubuntu-casper-nfs-permission-denied)
 - [License](#license)
 
 
@@ -256,7 +258,7 @@ proxyDHCP does not use range/router/DNS. Those fields stay on your existing DHCP
 | `PXE_NFS_EXPORT` | `/var/lib/pxe/images/nfs` | Parent of per-image extract paths `/{id}/{rev}` |
 
 
-Each successful Ubuntu ISO extract becomes its own NFS export so casper can mount squashfs instead of downloading the ISO into RAM.
+Each successful Ubuntu ISO extract becomes its own NFS export so casper can mount squashfs instead of downloading the ISO into RAM. The extract directory must be a **local** filesystem inside the container (ext4, xfs, zfs, overlay). Ganesha cannot re-export a path that is already NFS — see [Ubuntu casper NFS: Permission denied](#ubuntu-casper-nfs-permission-denied).
 
 ### First-boot console defaults
 
@@ -499,6 +501,74 @@ ports:
 ```
 
 `"111:111/tcp"` still fails while anything (including rpcbind) holds `0.0.0.0:111`.
+
+### Ubuntu casper NFS: Permission denied
+
+The installer reaches the PXE host, then casper loops on:
+
+```text
+mount call failed - server replied: Permission denied
+```
+
+Inside the container, `/var/log/ganesha/ganesha.log` typically has:
+
+```text
+resolve_posix_filesystem(/var/lib/pxe/images/nfs/1/1) returned No such file or directory
+No export entries found in configuration file !!!
+```
+
+`ls` of that same path can still succeed. Ubuntu casper mounts the extract with **nfs-ganesha** (FSAL VFS). That server needs a local POSIX filesystem so it can take file handles. `ls` only uses the container's NFS **client**. If the `pxe-images` volume is itself an NFS mount (Docker volume on a NAS/SAN), Ganesha refuses the export and NFSv3 MNT returns `Permission denied`.
+
+#### 1. Confirm the extract sits on NFS
+
+```bash
+docker compose exec pxe findmnt /var/lib/pxe/images
+docker compose exec pxe findmnt /var/lib/pxe/images/nfs
+docker compose exec pxe ls -la /var/lib/pxe/images/nfs/1/1/casper
+```
+
+If `FSTYPE` is `nfs` or `nfs4` (for example a SAN path under `.../volumes/..._pxe-images/_data`), that is the failure. Pull logs with `docker compose logs pxe` and `docker compose exec pxe tail -n 200 /var/log/ganesha/ganesha.log`.
+
+#### 2. Bind a local disk over the casper export
+
+Keep `pxe-images` on the NAS if you want. Only `/var/lib/pxe/images/nfs` must be local.
+
+On the PXE **host** (not in the container), pick a directory whose `df -hT` fstype is **not** `nfs`:
+
+```bash
+df -hT / /var /var/lib
+sudo mkdir -p /var/lib/pxe-nfs
+df -hT /var/lib/pxe-nfs
+```
+
+If `/var/lib` is on the SAN too, use a mountpoint on local disk instead (for example `/data/pxe-nfs`).
+
+Copy any existing extract, then bind-mount it. A new Compose named volume is **not** enough when Docker's volume directory already lives on NFS — Ganesha would still see `nfs4`.
+
+```bash
+docker compose exec pxe tar -C /var/lib/pxe/images/nfs -cf - . \
+  | sudo tar -C /var/lib/pxe-nfs -xf -
+```
+
+In `docker-compose.override.yml` on that host:
+
+```yaml
+services:
+  pxe:
+    volumes:
+      - /var/lib/pxe-nfs:/var/lib/pxe/images/nfs
+```
+
+Recreate and check that the export path is local and published:
+
+```bash
+docker compose up -d --force-recreate
+docker compose exec pxe findmnt /var/lib/pxe/images/nfs
+docker compose exec pxe tail -n 30 /var/log/ganesha/ganesha.log
+showmount -e "${PXE_NFS_HOST:-127.0.0.1}"
+```
+
+`findmnt` for `/var/lib/pxe/images/nfs` should be ext4, xfs, zfs, or overlay — not `nfs4`. `showmount` should list `/var/lib/pxe/images/nfs/{id}/{rev}` (for example `/var/lib/pxe/images/nfs/1/1`). If the bind hid an empty directory, re-upload the Ubuntu ISO so extract can populate local disk.
 
 ## License
 
