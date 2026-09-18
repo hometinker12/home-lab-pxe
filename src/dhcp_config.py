@@ -58,6 +58,7 @@ def render_dnsmasq_conf(spec: Settings | DnsmasqSpec, *, tftp_root: Path, conf_p
                 "dhcp-no-override",
                 "dhcp-option=vendor:PXEClient,6,2b",
                 "dhcp-match=set:ipxe,175",
+                "dhcp-userclass=set:ipxe,iPXE",
                 "dhcp-match=set:efi-x86_64,option:client-arch,7",
                 "dhcp-match=set:efi-x86_64,option:client-arch,9",
                 "dhcp-match=set:efi-arm64,option:client-arch,11",

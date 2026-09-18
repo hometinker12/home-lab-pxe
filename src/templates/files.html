@@ -60,6 +60,16 @@
       </label>
     </div>
     {% if error or fm.error %}<p class="fm-error">{{ error or fm.error }}</p>{% endif %}
+    {% if files_attention.count %}
+    <div class="fm-attention" role="status">
+      <p>Replace placeholder iPXE binaries. Download from <a href="https://boot.ipxe.org/" rel="noopener noreferrer">boot.ipxe.org</a> and upload them here. Default TFTP filename is <code>ipxe.efi</code> (UEFI).</p>
+      <ul>
+        {% for item in files_attention.items %}
+        <li><a href="{{ item.source_url }}" rel="noopener noreferrer">{{ item.name }}</a> — {{ item.state }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
     <div class="fm-list-wrap">
       <table class="fm-list">
         <thead>
@@ -79,11 +89,15 @@
                 {{ entry.name }}
               </a>
               {% else %}
-              <a class="fm-name" href="{{ entry.href }}">
-                <svg class="fm-icon-file" viewBox="0 0 24 24" aria-hidden="true"><path fill="#c5cdd6" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm1 7V3.5L19.5 9H15z"/></svg>
-                {{ entry.name }}
-                {% if entry.is_stub %}<span class="badge badge-pending">stub</span>{% endif %}
-              </a>
+              <span class="fm-name-row">
+                <a class="fm-name" href="{{ entry.href }}">
+                  <svg class="fm-icon-file" viewBox="0 0 24 24" aria-hidden="true"><path fill="#c5cdd6" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm1 7V3.5L19.5 9H15z"/></svg>
+                  {{ entry.name }}
+                </a>
+                {% if entry.is_stub %}
+                <a class="badge badge-attention" href="{{ entry.source_url }}" data-fm="ipxe-source" rel="noopener noreferrer">stub</a>
+                {% endif %}
+              </span>
               {% endif %}
             </td>
             <td>{{ entry.mtime }}</td>

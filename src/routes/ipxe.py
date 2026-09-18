@@ -22,16 +22,24 @@ from ..inventory.service import (
 )
 from ..models import Machine, MachineState, OsFamily
 from ..settings import get_settings
+from ..tftp_store import boot_chain_script_body
 from ..web import client_ip
 
 router = APIRouter(tags=["ipxe"])
 
 
+def _boot_chain_response() -> PlainTextResponse:
+    return PlainTextResponse(boot_chain_script_body(get_settings().public_url), media_type="text/plain")
+
+
 @router.get("/boot.ipxe", include_in_schema=False)
 def boot_ipxe():
-    base = get_settings().public_url
-    body = f"#!ipxe\nchain --replace {base}/ipxe/${{mac:hexhyp}}?uuid=${{uuid}}&ip=${{ip}}\n"
-    return PlainTextResponse(body, media_type="text/plain")
+    return _boot_chain_response()
+
+
+@router.get("/autoexec.ipxe", include_in_schema=False)
+def autoexec_ipxe():
+    return _boot_chain_response()
 
 
 def _invalid_mac() -> PlainTextResponse:

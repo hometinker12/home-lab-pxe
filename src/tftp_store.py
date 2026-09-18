@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -17,8 +18,15 @@ _SAFE_NAME = re.compile(r"^[A-Za-z0-9._+-]{1,120}$")
 _MAX_ENTRIES = 500
 _MAX_PARTS = 8
 _STUB_MARK = b"ipxe-stub"
-EXPECTED_FILES = ("undionly.kpxe", "ipxe.efi", "snponly.efi", "wimboot")
+EXPECTED_FILES = ("ipxe.efi", "undionly.kpxe", "snponly.efi", "wimboot")
 BOOT_CHAIN_NAME = "boot.ipxe"
+AUTOEXEC_CHAIN_NAME = "autoexec.ipxe"
+IPXE_SITE = "https://boot.ipxe.org/"
+IPXE_DOWNLOADS = {
+    "ipxe.efi": "https://boot.ipxe.org/ipxe.efi",
+    "undionly.kpxe": "https://boot.ipxe.org/undionly.kpxe",
+    "snponly.efi": "https://boot.ipxe.org/snponly.efi",
+}
 
 
 class TftpStoreError(ValueError):
@@ -40,12 +48,19 @@ def boot_chain_script_body(public_url: str) -> str:
 
 
 def write_boot_chain_script() -> Path:
-    path = tftp_root() / BOOT_CHAIN_NAME
-    try:
-        path.write_text(boot_chain_script_body(get_settings().public_url), encoding="utf-8")
-    except OSError as exc:
-        # Read-only rootfs CI (and a TFTP volume mounted ro) still serves /boot.ipxe over HTTP.
-        LOGGER.warning("cannot write TFTP boot chain %s: %s", path, exc)
+    body = boot_chain_script_body(get_settings().public_url)
+    root = tftp_root()
+    path = root / BOOT_CHAIN_NAME
+    # iPXE 2.0+ (boot.ipxe.org) looks for autoexec.ipxe after it chainloads ipxe.efi.
+    # Keep that name in lockstep with boot.ipxe so a firmware NBP of ipxe.efi still
+    # hands off to GET /ipxe/{mac} instead of stopping at "autoexec.ipxe not found".
+    for name in (BOOT_CHAIN_NAME, AUTOEXEC_CHAIN_NAME):
+        dest = root / name
+        try:
+            dest.write_text(body, encoding="utf-8")
+        except OSError as exc:
+            # Read-only rootfs CI (and a TFTP volume mounted ro) still serves /boot.ipxe over HTTP.
+            LOGGER.warning("cannot write TFTP boot chain %s: %s", dest, exc)
     return path
 
 
@@ -80,6 +95,10 @@ def join_relative(directory: str, name: str) -> str:
     parent = relative_from_root(resolve_tftp(directory))
     leaf = safe_tftp_name(name)
     return f"{parent}/{leaf}" if parent else leaf
+
+
+def source_url_for(name: str) -> str:
+    return IPXE_DOWNLOADS.get(name, IPXE_SITE)
 
 
 def format_bytes(n: int) -> str:
@@ -151,8 +170,36 @@ def expected_files() -> list[dict]:
             state = "stub"
         else:
             state = "ok"
-        rows.append({"name": name, "state": state, "size_label": format_bytes(size) if exists else "—"})
+        rows.append(
+            {
+                "name": name,
+                "state": state,
+                "size_label": format_bytes(size) if exists else "—",
+                "source_url": source_url_for(name),
+            }
+        )
     return rows
+
+
+@dataclass(frozen=True)
+class FilesAttention:
+    count: int
+    label: str
+    items: tuple[dict, ...]
+
+
+def empty_files_attention() -> FilesAttention:
+    return FilesAttention(count=0, label="", items=())
+
+
+def load_files_attention() -> FilesAttention:
+    items = tuple(row for row in expected_files() if row["state"] in {"stub", "missing"})
+    n = len(items)
+    if n == 1:
+        label = "1 iPXE file needs replacing"
+    else:
+        label = f"{n} iPXE files need replacing"
+    return FilesAttention(count=n, label=label, items=items)
 
 
 def breadcrumbs(relative: str) -> list[dict]:

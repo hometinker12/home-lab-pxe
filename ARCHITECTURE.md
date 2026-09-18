@@ -94,7 +94,7 @@ flowchart TB
 
   V1 --> DB["SQLite inventory + vault"]
   V2 --> PAY["Ubuntu kernel/initrd, Windows WIMs"]
-  V3 --> BIN["ipxe.efi, snponly.efi, undionly.kpxe"]
+  V3 --> BIN["ipxe.efi (default UEFI NBP), snponly.efi, undionly.kpxe, boot.ipxe, autoexec.ipxe"]
   V4 --> TLS["self-signed or operator PEM"]
 ```
 
@@ -111,7 +111,7 @@ flowchart LR
 
 Authoritative mode (`PXE_DHCP_MODE=authoritative`) makes dnsmasq own the address range instead. Default is **proxy** so the home-lab router stays the DHCP server.
 
-When the existing LAN DHCP server must point clients at this box (DHCP disabled here), set option 66 to the host LAN IPv4 and option 67 to `undionly.kpxe` / `ipxe.efi` / `snponly.efi`. Option 60 (`PXEClient`) is required only when that DHCP server and this PXE/TFTP service share the same physical machine. Leave 60/66/67 unset on the other server if this container is already running proxyDHCP.
+When the existing LAN DHCP server must point clients at this box (DHCP disabled here), set option 66 to the host LAN IPv4. Default option 67 for a UEFI-only LAN (including UniFi Network Boot) is `ipxe.efi`. Use `undionly.kpxe` for BIOS and `snponly.efi` for ARM64 UEFI. Already-iPXE clients (Proxmox/SeaBIOS) need the HTTP script `/boot.ipxe`, not `ipxe.efi`. Firmware that chainloads `ipxe.efi` then fetches TFTP `autoexec.ipxe` (same handoff as `/boot.ipxe`). HTTP `/tftp/boot.ipxe` and `/tftp/autoexec.ipxe` still generate that chain when the TFTP root is read-only. Option 60 (`PXEClient`) is required only when that DHCP server and this PXE/TFTP service share the same physical machine. Leave 60/66/67 unset on the other server if this container is already running proxyDHCP.
 
 ---
 
@@ -129,8 +129,8 @@ sequenceDiagram
 
   FW->>DHCP: DHCP discover
   DHCP-->>FW: IP lease
-  PXE-->>FW: proxyDHCP: TFTP iPXE
-  FW->>PXE: TFTP iPXE binary
+  PXE-->>FW: proxyDHCP: TFTP ipxe.efi (UEFI) or HTTP boot.ipxe (already iPXE)
+  FW->>PXE: TFTP iPXE binary or autoexec.ipxe
   FW->>PXE: GET /ipxe/{mac}
   alt unknown / pending unnamed / disabled
     PXE-->>FW: sleep timeout + exit / sanboot
@@ -256,7 +256,7 @@ flowchart TB
   subgraph chrome["Browser — operator on LAN"]
     subgraph bar["Top bar"]
       Brand["home-lab-pxe"]
-      Nav["Machines    Images    Boot menu    Files    Activity    Settings"]
+      Nav["Machines    Images    Boot menu    Files (stub count)    Activity    Settings (attention)"]
       User["operator  Log out"]
     end
     subgraph flash["Flash"]
@@ -326,6 +326,7 @@ flowchart LR
   end
   subgraph files["Files"]
     Browser["TFTP / Images / Data volume browser"]
+    Stubs["Orange count when ipxe.efi / undionly.kpxe / snponly.efi / wimboot are stub or missing"]
   end
   subgraph settings["Settings"]
     Acc["Imaging default local/root account"]

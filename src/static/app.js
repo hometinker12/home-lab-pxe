@@ -367,6 +367,9 @@
       if (!row) {
         return;
       }
+      if (event.target.closest("[data-fm='ipxe-source']")) {
+        return;
+      }
       if (row.getAttribute("data-kind") === "dir") {
         const href = row.getAttribute("data-href");
         if (href) {

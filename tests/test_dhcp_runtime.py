@@ -16,8 +16,11 @@ def test_settings_saves_dhcp_toggle_and_options(client, tmp_path):
     assert "same physical machine" in page.text
     assert "mandatory" in page.text
     assert "undionly.kpxe" in page.text
+    assert "Default / UEFI" in page.text
     assert "Already iPXE" in page.text
-    assert "exec format error" in page.text
+    assert "autoexec.ipxe" in page.text
+    assert "proxyDHCP" in page.text
+    assert "Proxmox/SeaBIOS already runs iPXE" in page.text
     assert 'data-dhcp-mode="authoritative"' in page.text
     assert "dhcp-form" in page.text
     pxe = client.post(
@@ -157,6 +160,7 @@ def test_external_dhcp_hints_include_option_60(client):
 
     hints = external_dhcp_hints()
     assert hints["vendor_class"] == "PXEClient"
+    assert hints["default_filename"] == "ipxe.efi"
     assert hints["bios_filename"] == "undionly.kpxe"
     assert hints["efi_filename"] == "ipxe.efi"
     assert hints["arm_filename"] == "snponly.efi"

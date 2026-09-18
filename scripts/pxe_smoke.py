@@ -142,6 +142,89 @@ def seed_nfs_generation(container: str, image_id: int) -> None:
     expect(proc.returncode == 0, f"sync ganesha exports failed rc={proc.returncode} {detail}")
 
 
+def expect_nfs_fhandle(container: str, path: str) -> None:
+    """Fail if seccomp/caps block open_by_handle_at (casper: Operation not permitted)."""
+    code = f"""
+import ctypes
+import ctypes.util
+import errno
+import os
+import sys
+
+path = {path!r}
+lib = ctypes.util.find_library("c")
+if not lib:
+    raise SystemExit("libc not found")
+libc = ctypes.CDLL(lib, use_errno=True)
+libc.name_to_handle_at.restype = ctypes.c_int
+libc.name_to_handle_at.argtypes = [
+    ctypes.c_int,
+    ctypes.c_char_p,
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_int),
+    ctypes.c_int,
+]
+libc.open_by_handle_at.restype = ctypes.c_int
+libc.open_by_handle_at.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+
+class FileHandle(ctypes.Structure):
+    _fields_ = [
+        ("handle_bytes", ctypes.c_uint),
+        ("handle_type", ctypes.c_int),
+        ("f_handle", ctypes.c_ubyte * 128),
+    ]
+
+AT_FDCWD = -100
+fh = FileHandle()
+fh.handle_bytes = 128
+mount_id = ctypes.c_int()
+ctypes.set_errno(0)
+rc = libc.name_to_handle_at(AT_FDCWD, path.encode(), ctypes.byref(fh), ctypes.byref(mount_id), 0)
+err = ctypes.get_errno()
+if rc != 0:
+    raise SystemExit(f"name_to_handle_at errno={{err}} ({{errno.errorcode.get(err, err)}})")
+dirfd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+try:
+    ctypes.set_errno(0)
+    got = libc.open_by_handle_at(dirfd, ctypes.byref(fh), os.O_RDONLY)
+finally:
+    os.close(dirfd)
+err = ctypes.get_errno()
+if got < 0:
+    if err == errno.EPERM:
+        raise SystemExit(
+            "open_by_handle_at EPERM: Docker seccomp or missing CAP_DAC_READ_SEARCH "
+            "(casper mount: Operation not permitted)"
+        )
+    raise SystemExit(f"open_by_handle_at errno={{err}} ({{errno.errorcode.get(err, err)}})")
+os.close(got)
+print("ok")
+"""
+    proc = subprocess.run(
+        ["docker", "exec", container, "python", "-c", code],
+        capture_output=True,
+        text=True,
+    )
+    detail = (proc.stderr or proc.stdout or "").strip()
+    expect(proc.returncode == 0, f"nfs fhandle check failed rc={proc.returncode} {detail}")
+
+
+def expect_dnsmasq_ipxe_handoff(container: str) -> None:
+    conf = ""
+    for _ in range(15):
+        proc = subprocess.run(
+            ["docker", "exec", container, "cat", "/var/lib/pxe/data/dnsmasq-pxe.conf"],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0 and "dhcp-userclass=set:ipxe,iPXE" in (proc.stdout or ""):
+            conf = proc.stdout
+            break
+        time.sleep(1)
+    expect(bool(conf), "dnsmasq conf missing iPXE user-class after DHCP enable")
+    expect("dhcp-boot=tag:ipxe," in conf and "boot.ipxe" in conf, "dnsmasq missing iPXE HTTP boot.ipxe")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
@@ -173,6 +256,8 @@ def main() -> None:
     status, _, body = c.request("GET", "/boot.ipxe")
     expect(status == 200 and body.startswith(b"#!ipxe"), "/boot.ipxe")
     expect(b"chain" in body, "boot.ipxe missing chain")
+    status, _, autoexec = c.request("GET", "/autoexec.ipxe")
+    expect(status == 200 and autoexec == body, "/autoexec.ipxe must match /boot.ipxe")
 
     mac = "de-ad-be-ef-00-01"
     status, _, body = c.request("GET", f"/ipxe/{mac}")
@@ -251,6 +336,8 @@ def main() -> None:
     expect(b"Host LAN IPv4" in body, "settings host LAN address")
     expect(b"/boot.ipxe" in body, "settings advertised PXE URL")
     expect(b"Already iPXE" in body, "settings already-iPXE TFTP filename hint")
+    expect(b"Default / UEFI" in body, "settings default UEFI filename")
+    expect(b"<code>ipxe.efi</code>" in body, "settings should advertise ipxe.efi")
     expect(b"Ubuntu installation media (NFS)" in body, "settings NFS casper export")
     expect(b"netboot=nfs" in body, "settings NFS netboot hint")
     expect(b"Windows installation media (SMB)" in body, "settings Windows SMB share")
@@ -299,6 +386,12 @@ def main() -> None:
     expect(status in {200, 303, 302}, f"dhcp enable {status}")
     status, _, _ = c.request("POST", "/settings/tftp", form={"tftp_enabled": "1"})
     expect(status in {200, 303, 302}, f"tftp enable {status}")
+    if args.container.strip():
+        expect_dnsmasq_ipxe_handoff(args.container.strip())
+    status, _, chain = c.request("GET", "/tftp/boot.ipxe")
+    expect(status == 200 and chain.startswith(b"#!ipxe") and b"chain" in chain, "TFTP HTTP boot.ipxe")
+    status, _, autoexec_tftp = c.request("GET", "/tftp/autoexec.ipxe")
+    expect(status == 200 and autoexec_tftp == chain, "TFTP HTTP autoexec.ipxe must match boot.ipxe")
     status, _, _ = c.request(
         "POST", "/settings/machines", form={"imaging_timeout_minutes": "15", "default_timezone": "UTC"}
     )
@@ -310,6 +403,9 @@ def main() -> None:
     expect(b"iPXE boot files" in body and b"NFS extracts" in body, "files favorites missing boot/extract shortcuts")
     expect(b"SMB media" in body and b"Machine seeds" in body, "files favorites missing SMB/seeds shortcuts")
     expect(b"Install snapshots" in body, "files favorites missing install snapshots")
+    if b"ipxe-source" in body or b">stub<" in body:
+        expect(b"https://boot.ipxe.org/" in body, "stub iPXE files should link to boot.ipxe.org")
+        expect(b"need replacing" in body or b"needs replacing" in body, "files attention banner")
     status, _, body = c.request("GET", "/files?root=data")
     expect(status == 200, "data volume files")
     expect(b"smb.password" not in body, "persisted SMB password must not be listed")
@@ -696,6 +792,7 @@ def main() -> None:
         expect(conf_proc.returncode == 0, "ganesha generations conf missing")
         expect(f'Path = "/var/lib/pxe/images/nfs/{nfs_image_id}/1"' in (conf_proc.stdout or ""), "generation export Path missing")
         expect("Squash = All" in (conf_proc.stdout or "") and "Anonymous_Uid = 65534" in (conf_proc.stdout or ""), "generation export must squash to nobody")
+        expect_nfs_fhandle(args.container.strip(), f"/var/lib/pxe/images/nfs/{nfs_image_id}/1")
         expect(",vers=" not in nfs_text and "mountport=" not in nfs_text, "nfsroot must not swallow mount options")
         expect("iso-url=" not in nfs_text and "ramdisk_size" not in nfs_text, "nfs install should not wget ISO")
         expect("nfs-smoke-secret" not in nfs_text, "password leaked into nfs iPXE")

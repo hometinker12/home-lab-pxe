@@ -155,6 +155,7 @@ def external_dhcp_hints(snapshot=None) -> dict[str, str]:
     return {
         "vendor_class": "PXEClient",
         "next_server": next_server,
+        "default_filename": "ipxe.efi",
         "bios_filename": "undionly.kpxe",
         "efi_filename": "ipxe.efi",
         "arm_filename": "snponly.efi",
