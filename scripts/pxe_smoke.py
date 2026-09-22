@@ -77,6 +77,16 @@ def expect(cond: bool, message: str) -> None:
         fail(message)
 
 
+def machine_record(client, machine_id: int) -> dict:
+    status, _, body = client.request("GET", "/api/machines")
+    expect(status == 200, "machine list for seed URL")
+    return next(row for row in json.loads(body) if row["id"] == machine_id)
+
+
+def guest_path(machine: dict, family: str, leaf: str) -> str:
+    return f"/{family}/{machine['id']}/{machine['instance_id']}/{leaf}"
+
+
 def folder_ids_from_tree(body: bytes) -> dict[str, int]:
     found: dict[str, int] = {}
     for match in re.finditer(
@@ -259,6 +269,13 @@ def main() -> None:
     status, _, autoexec = c.request("GET", "/autoexec.ipxe")
     expect(status == 200 and autoexec == body, "/autoexec.ipxe must match /boot.ipxe")
 
+    status, _, body = c.request("GET", "/boot-files/autoinstall-confirm.py")
+    expect(status == 200 and b"/meta/confirm" in body, "autoinstall confirm helper")
+    try:
+        compile(body.decode(), "autoinstall-confirm.py", "exec")
+    except SyntaxError as exc:
+        fail(f"autoinstall confirm helper is not valid Python: {exc}")
+
     mac = "de-ad-be-ef-00-01"
     status, _, body = c.request("GET", f"/ipxe/{mac}")
     text = body.decode()
@@ -269,9 +286,18 @@ def main() -> None:
     expect("sleep" in text, "unknown continue should honor timeout")
     expect("smokepass" not in text, "password leaked into iPXE")
     expect(not smb_secret or smb_secret not in text, "SMB password leaked into pending iPXE")
+    status, _, body = c.request(
+        "GET",
+        f"/ipxe/{mac}?manufacturer=Dell&product=OptiPlex&serial=ABC-1",
+    )
+    expect(status == 200 and b"Continuing to next boot device" in body, "hardware query still continues to disk")
 
     status, _, _ = c.request("POST", "/login", form={"username": args.user, "password": args.password})
     expect(status in {200, 303, 302}, f"login {status}")
+    session = next((cookie for cookie in c.jar if cookie.name == "session"), None)
+    expect(session is not None and session.expires is not None, "session cookie missing expiry")
+    remaining = session.expires - time.time()
+    expect(21000 < remaining < 22000, f"session idle timeout {remaining}")
 
     status, _, body = c.request("GET", "/machines")
     expect(status == 200 and b"data-open-dialog=\"add-machine\"" in body, "machines Add machine control")
@@ -423,6 +449,10 @@ def main() -> None:
     pmid = pending_linux["id"]
     status, _, body = c.request("GET", f"/windows/{pmid}/startnet.cmd")
     expect(status == 404, "pending must not receive startnet")
+    status, _, _ = c.request("POST", f"/api/machines/{pmid}/install-log", data=b"installer failed")
+    expect(status == 409, "pending must not accept an install log")
+    status, _, body = c.request("GET", f"/machines/{pmid}")
+    expect(b"Dell" in body and b"OptiPlex" in body and b"ABC-1" in body, "iPXE hardware fields on the machine page")
     expect(b"pxe-media" not in body, "pending startnet leaked media")
     status, _, _ = c.request("GET", f"/install-files/{pmid}/kernel")
     expect(status == 404, "pending must not receive install-files")
@@ -796,7 +826,8 @@ def main() -> None:
         expect(",vers=" not in nfs_text and "mountport=" not in nfs_text, "nfsroot must not swallow mount options")
         expect("iso-url=" not in nfs_text and "ramdisk_size" not in nfs_text, "nfs install should not wget ISO")
         expect("nfs-smoke-secret" not in nfs_text, "password leaked into nfs iPXE")
-        status, _, body = c.request("GET", f"/cloud-init/{nfs_machine['id']}/user-data")
+        nfs_live = machine_record(c, nfs_machine["id"])
+        status, _, body = c.request("GET", guest_path(nfs_live, "cloud-init", "user-data"))
         expect(status == 200, f"nfs user-data {status}")
         expect("ubuntu-server-minimal" in body.decode(), "nfs user-data missing selected source.id")
 
@@ -813,23 +844,28 @@ def main() -> None:
 
     status, _, _ = c.request(
         "POST",
-        f"/machines/{mid}/deploy",
+        f"/machines/{mid}/save",
         form={
-            "image_id": str(linux_image_id),
             "hostname": "smoke-linux",
             "timezone": "America/New_York",
             "username": "root",
             "password": "root-smoke-secret",
         },
     )
+    expect(status in {200, 303, 302}, f"save account {status}")
+    status, _, _ = c.request(
+        "POST",
+        f"/machines/{mid}/deploy",
+        form={"image_id": str(linux_image_id)},
+    )
     expect(status in {200, 303, 302}, f"deploy {status}")
     status, _, body = c.request("GET", f"/api/machines/{mid}")
-    expect(json.loads(body).get("hostname") == "smoke-linux", "deploy should persist hostname without a prior save")
+    expect(json.loads(body).get("hostname") == "smoke-linux", "save then deploy should persist hostname")
     status, _, body = c.request("GET", f"/machines/{mid}")
     expect(b">Deploying<" in body, "console should show Deploying after assign")
     expect(b"Copy Default" in body, "machine guest-init Copy Default")
     expect(token.encode() in body, "deploy should copy image seed into machine user-data")
-    expect(b'value="America/New_York" selected' in body, "deploy should persist timezone without a prior save")
+    expect(b'value="America/New_York" selected' in body, "save then deploy should persist timezone")
 
     status, _, body = c.request("GET", f"/ipxe/{mac}")
     text = body.decode()
@@ -845,7 +881,10 @@ def main() -> None:
     expect(not smb_secret or smb_secret not in text, "SMB password leaked into linux iPXE")
     expect(token not in text, "user-data token leaked into iPXE")
 
-    status, _, body = c.request("GET", f"/cloud-init/{mid}/user-data")
+    linux_live = machine_record(c, mid)
+    status, _, _ = c.request("GET", f"/cloud-init/{mid}/user-data")
+    expect(status == 404, "legacy cloud-init path must 404 while installing")
+    status, _, body = c.request("GET", guest_path(linux_live, "cloud-init", "user-data"))
     expect(status == 200, f"user-data {status}")
     user_data = body.decode()
     expect(token in user_data, "cloud-init missing image seed token")
@@ -853,6 +892,8 @@ def main() -> None:
     expect("root-smoke-secret" not in user_data, "plaintext password leaked into user-data")
     expect("$6$" in user_data, "cloud-init missing password_hash")
     expect("event=imaging" in user_data, "autoinstall early-commands must ping imaging")
+    expect("phy80211" in user_data, "autoinstall must unbind live Wi-Fi before netplan apply")
+    expect("autoinstall-confirm.py" in user_data, "autoinstall must fetch the confirmation helper")
     expect("optional: true" in user_data, "netplan catch-all NICs must be optional")
     expect("\n  identity:" in user_data, "autoinstall must include identity")
     expect("\n  timezone:" not in user_data, "timezone must not be an autoinstall root key")
@@ -862,8 +903,12 @@ def main() -> None:
     expect("ssh_authorized_keys: []" not in user_data, "empty ssh_authorized_keys fails Subiquity")
     expect("authorized-keys: []" not in user_data, "empty authorized-keys fails Subiquity")
     expect("--post-file=/dev/null" in user_data, "imaging wget must POST empty body")
+    expect("install-log" in user_data, "autoinstall error-commands must post the installer log")
     expect("--post-data=" not in user_data, "empty --post-data= is a wget error")
-    expect("instance-id" in c.request("GET", f"/cloud-init/{mid}/meta-data")[2].decode(), "meta-data")
+    expect(
+        "instance-id" in c.request("GET", guest_path(linux_live, "cloud-init", "meta-data"))[2].decode(),
+        "meta-data",
+    )
 
     status, _, body = c.request("GET", f"/api/machines/{mid}")
     detail = json.loads(body)
@@ -875,7 +920,7 @@ def main() -> None:
     expect(json.loads(body).get("state") == "imaging", "early-command should set imaging")
     status, _, body = c.request("GET", f"/machines/{mid}")
     expect(b">Imaging<" in body, "console should show Imaging")
-    status, _, body = c.request("GET", f"/cloud-init/{mid}/user-data")
+    status, _, body = c.request("GET", guest_path(linux_live, "cloud-init", "user-data"))
     expect(status == 200, "imaging must keep serving user-data")
     status, _, body = c.request("GET", f"/ipxe/{mac}")
     expect("kernel" in body.decode() and "Waiting" not in body.decode(), "imaging must keep serving install iPXE")
@@ -911,9 +956,37 @@ def main() -> None:
     status, _, _ = c.request("POST", f"/machines/{mid}/stage", form={})
     expect(status in {200, 303, 302}, f"stage {status}")
     status, _, body = c.request("GET", f"/machines/{mid}")
-    expect(b">Deploying<" in body, "staged reimage should show Deploying")
+    expect(b">Staged<" in body, "staged reimage should show Staged")
     status, _, body = c.request("GET", f"/ipxe/{mac}")
     expect("kernel" in body.decode(), "staged should install again")
+    status, _, _ = c.request("POST", f"/machines/{mid}/abort", form={})
+    expect(status in {200, 303, 302}, f"abort staged {status}")
+    status, _, body = c.request("GET", f"/api/machines/{mid}")
+    expect(json.loads(body).get("state") == "deployed", "aborting a staged install returns to deployed")
+    status, _, body = c.request("GET", f"/ipxe/{mac}")
+    aborted = body.decode()
+    expect("menu " in aborted and "kernel" not in aborted, "aborted staged host should show the folder menu")
+    linux_live = machine_record(c, mid)
+    status, _, _ = c.request("GET", guest_path(linux_live, "cloud-init", "user-data"))
+    expect(status == 404, "aborted install must not serve guest-init")
+    status, _, _ = c.request(
+        "POST",
+        f"/machines/{mid}/deploy",
+        form={"image_id": str(linux_image_id)},
+    )
+    expect(status in {200, 303, 302}, f"redeploy after abort {status}")
+    status, _, body = c.request("POST", f"/api/machines/{mid}/events?event=imaging")
+    expect(status == 200 and json.loads(body).get("state") == "imaging", "redeploy imaging callback")
+    status, _, body = c.request("POST", f"/api/machines/{mid}/install-log", data=b"subiquity crashed")
+    expect(status == 200 and json.loads(body).get("state") == "failed", "install log should mark the machine failed")
+    status, _, body = c.request("GET", f"/ipxe/{mac}")
+    failed_text = body.decode()
+    expect("menu " in failed_text and "kernel" not in failed_text, "failed install should show the folder menu")
+    linux_live = machine_record(c, mid)
+    status, _, _ = c.request("GET", guest_path(linux_live, "cloud-init", "user-data"))
+    expect(status == 404, "failed install must not serve guest-init")
+    status, _, body = c.request("GET", f"/machines/{mid}")
+    expect(b"Install failed" in body and b"subiquity crashed" in body, "console should show the install failure")
 
     status, _, body = c.request("GET", "/tftp/undionly.kpxe")
     expect(status == 200 and len(body) > 0, f"tftp http {status}")
@@ -983,29 +1056,32 @@ def main() -> None:
     expect("Win-smoke-secret" not in text, "password leaked into windows iPXE")
     expect(not smb_secret or smb_secret not in text, "SMB password leaked into windows iPXE")
 
-    status, _, body = c.request("GET", f"/windows/{win_machine['id']}/unattend.xml")
+    win_live = machine_record(c, win_machine["id"])
+    status, _, _ = c.request("GET", f"/windows/{win_machine['id']}/unattend.xml")
+    expect(status == 404, "legacy windows path must 404 while installing")
+    status, _, body = c.request("GET", guest_path(win_live, "windows", "unattend.xml"))
     expect(status == 200 and b"Win-smoke-secret" in body, "unattend missing Administrator password")
     expect(b"windowsPE" in body, "unattend missing windowsPE")
     expect(b"/IMAGE/NAME" in body and b"Windows Server 2022 SERVERSTANDARD" in body, "unattend missing selected image name")
     expect(b"<Value>2</Value>" in body, "unattend missing selected wim index")
-    status, _, body = c.request("GET", f"/windows/{win_machine['id']}/startnet.cmd")
+    status, _, body = c.request("GET", guest_path(win_live, "windows", "startnet.cmd"))
     expect(status == 200 and b"pxe-media" in body, "startnet missing SMB share")
     expect(b"event=imaging" in body, "WinPE startnet must ping imaging")
     expect(b"Win-smoke-secret" not in body, "windows local password leaked into startnet")
     if smb_secret:
         expect(smb_secret.encode() in body, "startnet missing SMB password")
-    status, _, body = c.request("GET", f"/cloudbase-init/{win_machine['id']}/user-data")
+    status, _, body = c.request("GET", guest_path(win_live, "cloudbase-init", "user-data"))
     expect(status == 200 and b"Win-smoke-secret" in body, "cloudbase-init missing password")
     expect(b"phone_home" in body, "cloudbase-init missing phone_home")
 
     wid = win_machine["id"]
     status, _, body = c.request("POST", f"/api/machines/{wid}/events?event=imaging")
     expect(status == 200 and json.loads(body).get("state") == "imaging", "windows imaging callback")
-    status, _, body = c.request("GET", f"/windows/{wid}/unattend.xml")
+    status, _, body = c.request("GET", guest_path(win_live, "windows", "unattend.xml"))
     expect(status == 200, "windows unattend while imaging")
-    status, _, body = c.request("GET", f"/windows/{wid}/startnet.cmd")
+    status, _, body = c.request("GET", guest_path(win_live, "windows", "startnet.cmd"))
     expect(status == 200, "windows startnet while imaging")
-    status, _, body = c.request("GET", f"/cloudbase-init/{wid}/user-data")
+    status, _, body = c.request("GET", guest_path(win_live, "cloudbase-init", "user-data"))
     expect(status == 200, "cloudbase-init while imaging")
     status, _, body = c.request("GET", f"/ipxe/{win_mac}")
     expect("wimboot" in body.decode(), "windows iPXE while imaging")
@@ -1016,7 +1092,7 @@ def main() -> None:
     expect(status == 200 and b"Windows SMB password rotated" in body, "smb rotate notice missing")
     if smb_secret:
         expect(smb_secret.encode() not in body, "old SMB password leaked after rotate")
-    status, _, body = c.request("GET", f"/windows/{wid}/startnet.cmd")
+    status, _, body = c.request("GET", guest_path(win_live, "windows", "startnet.cmd"))
     expect(status == 200 and b"pxe-media" in body, "startnet after smb rotate")
     if smb_secret:
         expect(smb_secret.encode() not in body, "startnet still has old SMB password after rotate")
@@ -1024,6 +1100,19 @@ def main() -> None:
     expect(status == 200 and b"smb.password" not in body, "smb.password listed after rotate")
     status, _, _ = c.request("GET", "/files/download?root=data&path=smb.password")
     expect(status == 404, "smb.password download after rotate")
+
+    status, _, body = c.request(
+        "POST",
+        "/settings/password",
+        form={
+            "current_password": args.password,
+            "new_password": "smokepass2",
+            "confirm_password": "smokepass2",
+        },
+    )
+    expect(status == 200 and b'action="/login"' in body, "password change must return to login")
+    status, _, body = c.request("GET", "/machines")
+    expect(b'data-open-dialog="add-machine"' not in body, "password change must sign the session out")
 
     print("SMOKE PASS")
 

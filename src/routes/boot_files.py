@@ -5,6 +5,7 @@ from ..db import session_scope
 from ..inventory.service import get_image, get_machine_for_guest_init, get_open_attempt
 from ..models import InstallAttempt
 from ..paths import UnsafePathError, resolve_under
+from ..seed_render import autoinstall_confirm_program
 from ..settings import get_settings
 from ..tftp_store import AUTOEXEC_CHAIN_NAME, BOOT_CHAIN_NAME, boot_chain_script_body
 
@@ -37,6 +38,15 @@ def _slot_from_attempt(attempt: InstallAttempt, slot: str) -> str:
     if attr is None:
         raise HTTPException(status_code=404, detail="unknown boot file")
     return getattr(attempt, attr) or ""
+
+
+@router.get("/boot-files/autoinstall-confirm.py", include_in_schema=False)
+def autoinstall_confirm_script():
+    return PlainTextResponse(
+        autoinstall_confirm_program(),
+        media_type="text/x-python",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/boot-files/{image_id}/{slot}", include_in_schema=False)

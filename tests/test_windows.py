@@ -1,4 +1,4 @@
-from tests.conftest import login
+from tests.conftest import login, seed_url
 
 from src.inventory.service import create_image, deploy_machine, touch_machine
 from src.models import AccountKind, OsFamily
@@ -24,7 +24,7 @@ def test_windows_unattend_has_setup_and_password(client):
         deploy_machine(db, machine, image=image, actor="admin")
         db.commit()
         mid = machine.id
-    body = client.get(f"/windows/{mid}/unattend.xml").text
+    body = client.get(seed_url(client, mid, "windows", "unattend.xml")).text
     assert "windowsPE" in body
     assert "WinSecret!" in body
     assert "WINBOX1" in body
@@ -58,7 +58,7 @@ def test_windows_unattend_includes_source_name(client):
         deploy_machine(db, machine, image=image, actor="admin")
         db.commit()
         mid = machine.id
-    body = client.get(f"/windows/{mid}/unattend.xml").text
+    body = client.get(seed_url(client, mid, "windows", "unattend.xml")).text
     assert "/IMAGE/NAME" in body
     assert "Windows Server 2022 SERVERSTANDARDCORE" in body
     assert "<Value>2</Value>" in body
@@ -98,8 +98,8 @@ def test_windows_startnet_uses_generated_share(client):
     assert "event=imaging" in body
     assert "WinSecret!" not in body
     assert "&" not in body.split("net use", 1)[-1].splitlines()[0]
-    gated = client.get(f"/windows/{mid}/startnet.cmd")
+    gated = client.get(seed_url(client, mid, "windows", "startnet.cmd"))
     assert gated.status_code == 200
     client.post(f"/api/machines/{mid}/events", json={"event": "deployed"})
-    assert client.get(f"/windows/{mid}/startnet.cmd").status_code == 404
-    assert client.get(f"/windows/{mid}/winpeshl.ini").status_code == 404
+    assert client.get(seed_url(client, mid, "windows", "startnet.cmd")).status_code == 404
+    assert client.get(seed_url(client, mid, "windows", "winpeshl.ini")).status_code == 404

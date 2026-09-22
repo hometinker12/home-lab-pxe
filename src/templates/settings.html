@@ -27,13 +27,27 @@
     </form>
   </div>
 </details>
+<details class="card" data-section="password" {% if open_section == "password" %}open{% endif %}>
+  <summary>Console password</summary>
+  <div class="card-body">
+    <p class="meta">Changing the password signs you out. Use at least 8 characters.</p>
+    <form method="post" action="/settings/password" class="form">
+      <label>Current password <input type="password" name="current_password" autocomplete="current-password" required></label>
+      <label>New password <input type="password" name="new_password" autocomplete="new-password" required></label>
+      <label>Confirm new password <input type="password" name="confirm_password" autocomplete="new-password" required></label>
+      <div class="btn-row">
+        <button type="submit">Change password</button>
+      </div>
+    </form>
+  </div>
+</details>
 <details class="card" data-section="machines" {% if open_section == "machines" %}open{% endif %}>
   <summary>Machines</summary>
   <div class="card-body">
     <p class="meta">If a machine stays <strong>Imaging</strong> longer than this, it moves to <strong>Timeout Error</strong> and the wait menu. Set 0 to disable the timer. New and discovered machines inherit the default timezone until you change it on the machine.</p>
     <form method="post" action="/settings/machines" class="form">
       <label>Imaging timeout (minutes)
-        <input type="number" name="imaging_timeout_minutes" min="0" max="1440" step="1" value="{{ dhcp.imaging_timeout_minutes if dhcp.imaging_timeout_minutes is not none else 15 }}" required>
+        <input type="number" name="imaging_timeout_minutes" min="0" max="1440" step="1" value="{{ dhcp.imaging_timeout_minutes if dhcp.imaging_timeout_minutes is not none else 60 }}" required>
       </label>
       <label>Default timezone
         <select name="default_timezone" required>
@@ -84,7 +98,10 @@
       </dd>
       <dt>Option 67 (Boot File Name)</dt>
       <dd>
-        <p class="meta">Default filename for a single-option DHCP server (UniFi Network Boot, option 67) is <code>{{ pxe_hints.default_filename }}</code> when every client is UEFI. Firmware that is not yet iPXE must get a binary, not WDS names like <code>bootx64\wdsnbp.com</code> and not <code>boot.ipxe</code> (Intel PXE cannot execute a script). BIOS/legacy clients still need <code>undionly.kpxe</code>. Proxmox/SeaBIOS already runs iPXE — those VMs must not receive <code>ipxe.efi</code> unless the guest firmware is OVMF/UEFI. If you pin option 67 to <code>ipxe.efi</code> for UEFI boxes, iPXE 2.0 then loads TFTP <code>autoexec.ipxe</code> (written next to <code>boot.ipxe</code>). Leave 66/67 unset on the other server if this box is already running proxyDHCP on the same L2.</p>
+        <details>
+          <summary>Option 67 / boot filename</summary>
+          <p class="meta">Default filename for a single-option DHCP server (UniFi Network Boot, option 67) is <code>{{ pxe_hints.default_filename }}</code> when every client is UEFI. Firmware that is not yet iPXE must get a binary, not WDS names like <code>bootx64\wdsnbp.com</code> and not <code>boot.ipxe</code> (Intel PXE cannot execute a script). BIOS/legacy clients still need <code>undionly.kpxe</code>. Proxmox/SeaBIOS already runs iPXE — those VMs must not receive <code>ipxe.efi</code> unless the guest firmware is OVMF/UEFI. If you pin option 67 to <code>ipxe.efi</code> for UEFI boxes, iPXE 2.0 then loads TFTP <code>autoexec.ipxe</code> (written next to <code>boot.ipxe</code>). Leave 66/67 unset on the other server if this box is already running proxyDHCP on the same L2.</p>
+        </details>
         <ul class="option-values">
           <li><span class="meta">Default / UEFI x86_64</span> <code>{{ pxe_hints.efi_filename }}</code></li>
           <li><span class="meta">BIOS / legacy</span> <code>{{ pxe_hints.bios_filename }}</code></li>
@@ -186,7 +203,7 @@
     <hr class="sep">
     <h3>Regenerate self-signed certificate</h3>
     <p class="meta">Creates a new self-signed certificate on the SSL volume and reloads HTTPS. Browsers will show a new trust warning.</p>
-    <form method="post" action="/settings/ssl/regenerate">
+    <form method="post" action="/settings/ssl/regenerate" onsubmit="return confirm('Replace the HTTPS certificate? Browsers will show a new trust warning.');">
       <button type="submit" class="btn-secondary">Regenerate self-signed certificate</button>
     </form>
   </div>

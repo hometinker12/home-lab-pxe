@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-09-22
+
+### Added
+
+- Ubuntu autoinstall `error-commands` post a capped, redacted Subiquity log to the console. The machine moves to **Install failed** (folder menu, no guest-init) instead of waiting out the imaging timer with no reason.
+- Console password change under Settings. Changing it signs the current session out.
+- Machines list search and state filters, with a short poll while a host is deploying or imaging. Machine detail shows the install log and confirmations for deploy, stage, mark deployed, and abort.
+- Abort install stops a deploying, imaging, or staged job and closes guest-init.
+- iPXE can report manufacturer, product, and serial. Those show on the machine page.
+- Guest-init URLs include the install `instance_id` (`/cloud-init/{id}/{instance_id}/…`, and the same for Windows and Cloudbase-Init). Paths without it return 404.
+- Activity labels, links, filter, and pages of 50.
+
+### Changed
+
+- Console sessions last 6 hours of inactivity. Each authenticated request refreshes the cookie.
+- Imaging timeout default is 60 minutes (`PXE_IMAGING_TIMEOUT_MINUTES`). Guest-init, install files, and imaging callbacks refresh the clock and are not expired in that same request.
+- Save on a machine stores the local account. Deploy requires that password or the Settings imaging default.
+- **Staged** is labeled Staged. The machines banner counts unnamed pending hosts only.
+- Boot menu timeouts and labels start collapsed. The folder editor is unchanged.
+- A live SMBIOS UUID (seen within the last hour) is not stolen by a second MAC. A quiet NIC still remaps. SQLite uses WAL, and each machine has one local account per kind.
+
+### Fixed
+
+- The machines list keeps the iPXE-reported LAN address when Docker publishes the port. A bridge peer such as `172.22.0.1` no longer replaces that address.
+- Ubuntu autoinstall no longer stops at “Continue with autoinstall?”. Subiquity’s text client still prints that prompt after apt configuration starts, even when `autoinstall` is already on the kernel command line. The early-command downloads a helper and runs it, so the installer console does not print that program.
+- Wrong `ENCRYPTION_KEY` shows “encryption key does not match stored accounts” on the machine page and returns 404 for guest-init.
+- iPXE `?ip=` is kept for Docker bridge NAT and ignored when it is not an IP. A direct LAN peer is preferred.
+- An assigned image that is still extracting can be submitted again; the console explains that it is not ready.
+- Settings imaging-account errors stay on the Accounts section.
+- Ubuntu autoinstall unbinds live Wi-Fi NICs in `early-commands` before Subiquity applies netplan. On machines with a wireless card (for example `wlp0s20f3` next to `eno1`), `netplan apply` runs `udevadm settle` while that card is still probing, settle exits 1, and the installer stops with `network_fail`.
+
 ## [0.3.4] - 2026-09-18
 
 ### Added

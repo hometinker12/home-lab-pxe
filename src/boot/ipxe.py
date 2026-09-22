@@ -36,20 +36,6 @@ def _linux_kernel_args(extra: str, defaults: list[str]) -> str:
     return " ".join(parts)
 
 
-def wait_script(mac_hyphen: str) -> str:
-    base = get_settings().public_url
-    url = f"{base}/ipxe/{mac_hyphen}"
-    return (
-        _header()
-        + "isset ${cls} && cls ||\n"
-        + "echo home-lab-pxe\n"
-        + "echo Unknown or waiting machine ${mac}\n"
-        + "echo Waiting for operator in the web console. No disk install.\n"
-        + "sleep 5\n"
-        + f"chain --replace {url} || sleep 5 && chain --replace {url}\n"
-    )
-
-
 def image_not_ready_script(mac_hyphen: str) -> str:
     base = get_settings().public_url
     url = f"{base}/ipxe/{mac_hyphen}"
@@ -65,10 +51,6 @@ def image_not_ready_script(mac_hyphen: str) -> str:
 
 def local_disk_lines() -> str:
     return "exit 1 || sanboot --no-describe --drive 0x80 || exit\n"
-
-
-def local_disk_script() -> str:
-    return _header() + "# continue to local disk / next boot device\n" + local_disk_lines()
 
 
 def unknown_local_script(timeout_seconds: int = 5) -> str:
@@ -101,7 +83,7 @@ def linux_install_script(machine: Machine, payload: BootPayload) -> str:
     if not kernel_ok and iso_ok:
         iso = f"{base}/boot-files/{payload.image_id}/iso"
         return _header() + f"sanboot --no-describe {iso} || sanboot {iso}\n"
-    seed = f"{base}/cloud-init/{machine.id}/"
+    seed = f"{base}/cloud-init/{machine.id}/{machine.instance_id}/"
     kernel = _boot_file_url(machine, payload, "kernel")
     initrd = _boot_file_url(machine, payload, "initrd")
     extra = payload.cmdline.strip()
@@ -164,9 +146,9 @@ def windows_install_script(machine: Machine, payload: BootPayload) -> str:
         return _header() + f"sanboot --no-describe {iso} || sanboot {iso}\n"
     wimboot = f"{base}/tftp/wimboot"
     boot_wim = _boot_file_url(machine, payload, "boot.wim")
-    unattend = f"{base}/windows/{machine.id}/unattend.xml"
-    winpeshl = f"{base}/windows/{machine.id}/winpeshl.ini"
-    startnet = f"{base}/windows/{machine.id}/startnet.cmd"
+    unattend = f"{base}/windows/{machine.id}/{machine.instance_id}/unattend.xml"
+    winpeshl = f"{base}/windows/{machine.id}/{machine.instance_id}/winpeshl.ini"
+    startnet = f"{base}/windows/{machine.id}/{machine.instance_id}/startnet.cmd"
     return (
         _header()
         + f"kernel {wimboot}\n"
@@ -207,16 +189,12 @@ def render_script(
     payload: BootPayload | None = None,
     unknown_timeout_seconds: int = 5,
 ) -> str:
-    if kind == ScriptKind.wait:
-        return wait_script(mac_hyphen)
     if kind == ScriptKind.image_not_ready:
         return image_not_ready_script(mac_hyphen)
-    if kind == ScriptKind.local:
-        return local_disk_script()
     if kind == ScriptKind.unknown_local:
         return unknown_local_script(unknown_timeout_seconds)
     if kind == ScriptKind.install_linux and machine is not None and payload is not None:
         return linux_install_script(machine, payload)
     if kind == ScriptKind.install_windows and machine is not None and payload is not None:
         return windows_install_script(machine, payload)
-    return wait_script(mac_hyphen)
+    return unknown_local_script(unknown_timeout_seconds)

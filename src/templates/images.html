@@ -8,6 +8,26 @@
   </div>
   <p class="description">Boot payloads served over PXE. Uploading an Ubuntu live-server or Windows Server ISO returns immediately; a background worker extracts netboot files and then deletes the uploaded ISO when NFS or SMB media is ready. Linux kernel/initrd pairs and custom Windows boot.wim uploads still work.</p>
 </header>
+<div class="toolbar">
+  <label class="toolbar-field">OS
+    <select id="image-os-filter" aria-label="Filter by OS">
+      <option value="">All</option>
+      <option value="linux">linux</option>
+      <option value="windows">windows</option>
+      <option value="tool">tool</option>
+    </select>
+  </label>
+  <label class="toolbar-field">Extract
+    <select id="image-extract-filter" aria-label="Filter by extract status">
+      <option value="">All</option>
+      <option value="idle">idle</option>
+      <option value="queued">queued</option>
+      <option value="extracting">extracting</option>
+      <option value="ready">ready</option>
+      <option value="failed">failed</option>
+    </select>
+  </label>
+</div>
 {% if error and not add_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 <div class="table-wrap">
   <table>
@@ -15,8 +35,8 @@
     <tbody>
       {% for img in images %}
       {% set extract_busy = (img.extract_status or 'idle') in ('queued', 'extracting') %}
-      <tr data-image-id="{{ img.id }}">
-        <td>{{ img.name }}</td>
+      <tr data-image-id="{{ img.id }}" data-os="{{ img.os_family }}" data-extract="{{ img.extract_status or 'idle' }}">
+        <td><a href="/images/{{ img.id }}">{{ img.name }}</a></td>
         <td>{{ img.os_family }}</td>
         <td>{{ folder_paths.get(img.id, "—") }}</td>
         <td>{{ img.arch }}</td>
@@ -41,7 +61,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="empty">No images registered. Use Add image to start deploying.</td></tr>
+      <tr><td colspan="7" class="empty">No images yet. Add an Ubuntu live-server ISO or a Windows Server ISO to start deploying.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -64,8 +84,9 @@
     <div data-os="linux,windows">
       <label>Install source
         <select disabled aria-label="Install source">
-          <option>Available after extract</option>
+          <option>Pick after extract</option>
         </select>
+        <span class="meta">The catalog appears on the image page after extraction finishes.</span>
       </label>
     </div>
     <label>Folder

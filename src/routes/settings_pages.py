@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlmodel import Session
+from sqlmodel import Session, select
 from starlette.status import HTTP_303_SEE_OTHER
 
 from ..auth import require_user
@@ -15,9 +15,10 @@ from ..dhcp_runtime import (
     save_pxe,
     save_tftp,
 )
-from ..inventory.service import LAB_DEFAULT_MACHINE_ID, local_account_status, upsert_local_account
-from ..models import AccountKind
+from ..inventory.service import LAB_DEFAULT_MACHINE_ID, local_account_status, record_activity, upsert_local_account
+from ..models import AccountKind, User
 from ..netinfo import net_snapshot
+from ..security import hash_password, verify_password
 from ..settings import get_settings
 from ..smb_runtime import rotate_smb_password, smb_password_configured
 from ..timezones import timezone_choices
@@ -152,7 +153,7 @@ def settings_tftp(
 @router.post("/settings/machines")
 def settings_machines(
     request: Request,
-    imaging_timeout_minutes: str = Form("15"),
+    imaging_timeout_minutes: str = Form("60"),
     default_timezone: str = Form(""),
     db: Session = Depends(get_db),
     user: str = Depends(require_user),
@@ -188,8 +189,35 @@ def settings_smb_rotate(
     return RedirectResponse(url="/settings?section=smb&notice=smb-rotated", status_code=HTTP_303_SEE_OTHER)
 
 
+def _save_lab_account(
+    db: Session,
+    *,
+    kind: AccountKind,
+    username: str,
+    password: str,
+    default: str,
+) -> None:
+    status = local_account_status(db, LAB_DEFAULT_MACHINE_ID, kind)
+    name = username.strip() or default
+    secret = password or None
+    if not secret and not status.get("set"):
+        if name != default:
+            raise ValueError("Password is required when creating a local account")
+        return
+    if status.get("unreadable") and not secret:
+        raise ValueError("encryption key does not match stored accounts")
+    upsert_local_account(
+        db,
+        machine_id=LAB_DEFAULT_MACHINE_ID,
+        kind=kind,
+        username=name,
+        password=secret,
+    )
+
+
 @router.post("/settings/accounts")
 def settings_accounts(
+    request: Request,
     linux_username: str = Form("root"),
     linux_password: str = Form(""),
     windows_username: str = Form("Administrator"),
@@ -197,30 +225,57 @@ def settings_accounts(
     db: Session = Depends(get_db),
     user: str = Depends(require_user),
 ):
-    if linux_password or linux_username:
-        try:
-            upsert_local_account(
-                db,
-                machine_id=LAB_DEFAULT_MACHINE_ID,
-                kind=AccountKind.linux_root,
-                username=linux_username.strip() or "root",
-                password=linux_password or None,
-            )
-        except ValueError:
-            pass
-    if windows_password or windows_username:
-        try:
-            upsert_local_account(
-                db,
-                machine_id=LAB_DEFAULT_MACHINE_ID,
-                kind=AccountKind.windows_administrator,
-                username=windows_username.strip() or "Administrator",
-                password=windows_password or None,
-            )
-        except ValueError:
-            pass
-    db.commit()
+    try:
+        _save_lab_account(
+            db,
+            kind=AccountKind.linux_root,
+            username=linux_username,
+            password=linux_password,
+            default="root",
+        )
+        _save_lab_account(
+            db,
+            kind=AccountKind.windows_administrator,
+            username=windows_username,
+            password=windows_password,
+            default="Administrator",
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return _settings_context(request, db, error=str(exc), open_section="accounts")
     return RedirectResponse(url="/settings?section=accounts", status_code=HTTP_303_SEE_OTHER)
+
+
+@router.post("/settings/password")
+def settings_password(
+    request: Request,
+    current_password: str = Form(""),
+    new_password: str = Form(""),
+    confirm_password: str = Form(""),
+    db: Session = Depends(get_db),
+    user: str = Depends(require_user),
+):
+    row = db.exec(select(User).where(User.username == user)).first()
+    if row is None or not verify_password(current_password, row.hashed_password):
+        return _settings_context(request, db, error="Current password is incorrect", open_section="password")
+    if len(new_password) < 8:
+        return _settings_context(
+            request, db, error="New password must be at least 8 characters", open_section="password"
+        )
+    if new_password != confirm_password:
+        return _settings_context(
+            request, db, error="New password and confirmation do not match", open_section="password"
+        )
+    row.hashed_password = hash_password(new_password)
+    row.session_version = int(row.session_version or 0) + 1
+    db.add(row)
+    record_activity(db, actor=user, action="auth.password", detail="console password changed")
+    db.commit()
+    request.state.session_refresh = None
+    response = RedirectResponse(url="/login", status_code=HTTP_303_SEE_OTHER)
+    response.delete_cookie("session", path="/")
+    return response
 
 
 async def _read_pem_file(upload: UploadFile | None, *, label: str) -> bytes:

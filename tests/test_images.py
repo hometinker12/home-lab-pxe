@@ -51,7 +51,7 @@ def test_create_and_edit_image_metadata(client):
     assert 'name="iso_path"' in detail.text
     assert 'data-os="linux,tool" open' not in detail.text
     assert "Install source" in detail.text
-    assert "Available after extract" in detail.text
+    assert "Pick after extract" in detail.text
     updated = client.post(
         "/images/1",
         data={
@@ -149,7 +149,7 @@ def test_iso_upload_queues_extract(client, tmp_path):
     assert 'data-os="windows"' in listing.text
     assert "iso_file" in listing.text
     assert "data-image-edit" in listing.text
-    assert 'href="/images/1"' not in listing.text
+    assert 'href="/images/1"' in listing.text
     assert "Wait until extraction finishes" in listing.text
     from src.db import session_scope
 
@@ -334,7 +334,7 @@ def test_edit_blocked_while_extracting(client, tmp_path):
         follow_redirects=False,
     )
     listing = client.get("/images")
-    assert 'href="/images/1"' not in listing.text
+    assert 'href="/images/1"' in listing.text
     assert "Wait until extraction finishes" in listing.text
     detail = client.get("/images/1")
     assert detail.status_code == 200

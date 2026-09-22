@@ -36,6 +36,17 @@ def get_engine():
         _ensure_sqlite_dir(url)
         connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
         _engine = create_engine(url, echo=False, connect_args=connect_args)
+        if url.startswith("sqlite"):
+            from sqlalchemy import event
+
+            @event.listens_for(_engine, "connect")
+            def _sqlite_pragmas(dbapi_connection, _connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA busy_timeout=5000")
+                if ":memory:" not in url:
+                    cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.close()
+
         SessionLocal = sessionmaker(class_=Session, autoflush=False, bind=_engine)
     return _engine
 
@@ -84,6 +95,32 @@ def _add_column_if_missing(conn, table: str, column: str, ddl: str) -> None:
         conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
 
 
+def _dedupe_machine_uuids(conn) -> None:
+    rows = conn.execute(
+        text("SELECT uuid FROM machine WHERE uuid IS NOT NULL AND uuid != '' GROUP BY uuid HAVING COUNT(*) > 1")
+    ).fetchall()
+    for (uuid,) in rows:
+        ids = conn.execute(
+            text("SELECT id FROM machine WHERE uuid = :uuid ORDER BY id"),
+            {"uuid": uuid},
+        ).fetchall()
+        for (machine_id,) in ids[1:]:
+            conn.execute(text("UPDATE machine SET uuid = NULL WHERE id = :id"), {"id": machine_id})
+
+
+def _dedupe_local_accounts(conn) -> None:
+    rows = conn.execute(
+        text("SELECT machine_id, kind FROM localaccount GROUP BY machine_id, kind HAVING COUNT(*) > 1")
+    ).fetchall()
+    for machine_id, kind in rows:
+        ids = conn.execute(
+            text("SELECT id FROM localaccount WHERE machine_id = :machine_id AND kind = :kind ORDER BY id"),
+            {"machine_id": machine_id, "kind": kind},
+        ).fetchall()
+        for (row_id,) in ids[1:]:
+            conn.execute(text("DELETE FROM localaccount WHERE id = :id"), {"id": row_id})
+
+
 def _migrate_schema() -> None:
     engine = get_engine()
     with engine.begin() as conn:
@@ -104,11 +141,22 @@ def _migrate_schema() -> None:
         if "dhcpruntime" in tables:
             _add_column_if_missing(conn, "dhcpruntime", "tftp_enabled", "tftp_enabled BOOLEAN DEFAULT 1")
             _add_column_if_missing(
-                conn, "dhcpruntime", "imaging_timeout_minutes", "imaging_timeout_minutes INTEGER DEFAULT 15"
+                conn, "dhcpruntime", "imaging_timeout_minutes", "imaging_timeout_minutes INTEGER DEFAULT 60"
             )
             _add_column_if_missing(conn, "dhcpruntime", "default_timezone", "default_timezone VARCHAR DEFAULT 'UTC'")
         if "machine" in tables:
             _add_column_if_missing(conn, "machine", "imaging_started_at", "imaging_started_at DATETIME")
+            _add_column_if_missing(conn, "machine", "manufacturer", "manufacturer VARCHAR DEFAULT ''")
+            _add_column_if_missing(conn, "machine", "product", "product VARCHAR DEFAULT ''")
+            _add_column_if_missing(conn, "machine", "serial", "serial VARCHAR DEFAULT ''")
+            _add_column_if_missing(conn, "machine", "install_log", "install_log VARCHAR DEFAULT ''")
+            _dedupe_machine_uuids(conn)
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_machine_uuid ON machine(uuid)"))
+        if "localaccount" in tables:
+            _dedupe_local_accounts(conn)
+            conn.execute(
+                text("CREATE UNIQUE INDEX IF NOT EXISTS uq_localaccount_machine_kind ON localaccount(machine_id, kind)")
+            )
 
 
 def _seed_admin() -> None:

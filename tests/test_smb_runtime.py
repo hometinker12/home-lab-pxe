@@ -1,4 +1,4 @@
-from tests.conftest import login
+from tests.conftest import login, seed_url
 
 from src.inventory.service import create_image, deploy_machine, touch_machine
 from src.models import AccountKind, OsFamily
@@ -59,7 +59,7 @@ def test_rotate_smb_password_overrides_env_and_is_write_only(client):
     assert new not in page.text
     assert old not in page.text
     activity = client.get("/activity")
-    assert "smb.rotate" in activity.text
+    assert "Rotated the SMB password" in activity.text
     assert "pxe-media share password rotated" in activity.text
     assert new not in activity.text
     assert old not in activity.text
@@ -130,7 +130,7 @@ def test_windows_startnet_uses_rotated_smb_password(client):
     assert new in after
     assert "test-smb-password-ok" not in after
     assert "WinSecret!" not in after
-    page = client.get(f"/windows/{mid}/startnet.cmd")
+    page = client.get(seed_url(client, mid, "windows", "startnet.cmd"))
     assert page.status_code == 200
     assert new in page.text
     assert "test-smb-password-ok" not in page.text

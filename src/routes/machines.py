@@ -8,6 +8,7 @@ from ..db import get_db
 from ..dhcp_runtime import default_timezone
 from ..inventory.mac import InvalidMacError
 from ..inventory.service import (
+    abort_deploy,
     apply_hostname,
     delete_machine,
     deploy_machine,
@@ -30,11 +31,13 @@ from ..inventory.service import (
     os_family_for,
     record_activity,
     register_machine,
+    resolve_local_account,
     stage_machine,
     update_staged_attempt,
     upsert_local_account,
 )
 from ..models import AccountKind, MachineState, OsFamily
+from ..security import VaultError
 from ..seed_render import validate_seed_template
 from ..seed_store import (
     SeedError,
@@ -60,7 +63,7 @@ _PLACEHOLDER_HELP = (
     "Saving a non-empty file replaces the image document for this machine only. "
     "Deploy copies the image template here if this field is still empty. Copy Default pulls the latest image file. "
     "Placeholders: {{hostname}} {{username}} {{password}} {{password_hash}} {{instance_id}} {{machine_id}} "
-    "{{public_url}} {{phone_home_url}} {{imaging_url}} {{timezone}} {{ssh_keys}} {{packages}} "
+    "{{public_url}} {{phone_home_url}} {{imaging_url}} {{install_log_url}} {{timezone}} {{ssh_keys}} {{packages}} "
     "{{source_id}} {{wim_index}} {{install_media_path}}"
 )
 
@@ -143,7 +146,57 @@ def _apply_guest_fields(
     db.add(machine)
 
 
-def _detail(request: Request, db: Session, machine, *, error=None):
+_NOTICES = {
+    "saved": "Saved.",
+    "deployed": "Deploy started. The next PXE boot installs this image.",
+    "aborted": "Install aborted.",
+}
+
+_SCRIPT_LABELS = {
+    "unknown_local": "Continue to disk",
+    "menu": "Boot menu",
+    "install_linux": "Linux install",
+    "install_windows": "Windows install",
+    "image_not_ready": "Image not ready",
+    "tool": "Tool image",
+}
+
+
+def _account_kind(db: Session, machine, image=None):
+    family = image.os_family if image is not None else os_family_for(db, machine).value
+    if family == OsFamily.windows.value:
+        return AccountKind.windows_administrator, "Administrator"
+    return AccountKind.linux_root, "root"
+
+
+def _persist_account(db: Session, machine, *, username: str, password: str, image=None) -> None:
+    kind, default_user = _account_kind(db, machine, image)
+    secret = (password or "").strip()
+    name = (username or "").strip() or default_user
+    status = local_account_status(db, int(machine.id), kind)
+    if not secret:
+        if not status.get("set") or status.get("unreadable"):
+            return
+    upsert_local_account(
+        db,
+        machine_id=int(machine.id),
+        kind=kind,
+        username=name,
+        password=secret or None,
+    )
+
+
+def _require_account(db: Session, machine, image) -> None:
+    kind, _default = _account_kind(db, machine, image)
+    try:
+        creds = resolve_local_account(db, int(machine.id), kind)
+    except VaultError as exc:
+        raise ValueError(str(exc)) from exc
+    if creds is None or not (creds[1] or "").strip():
+        raise ValueError("Set a local account password before deploy, or save an imaging default in Settings")
+
+
+def _detail(request: Request, db: Session, machine, *, error=None, notice=None):
     images = list_images(db)
     image = get_image(db, machine.assigned_image_id)
     family = os_family_for(db, machine)
@@ -175,7 +228,7 @@ def _detail(request: Request, db: Session, machine, *, error=None):
         if attempt is not None and (attempt.seed_snapshot_path or "").strip():
             served_hint = (
                 f"deploy snapshot {attempt.seed_snapshot_path}; installer fetches "
-                f"/cloud-init/{machine.id}/user-data with placeholders filled"
+                f"/cloud-init/{machine.id}/{machine.instance_id}/user-data with placeholders filled"
             )
     return render(
         request,
@@ -194,7 +247,11 @@ def _detail(request: Request, db: Session, machine, *, error=None):
         deploying=edit_locked(machine),
         timezones=timezone_choices(selected_timezone),
         selected_timezone=selected_timezone,
-        error=error,
+        error=error or ("encryption key does not match stored accounts" if account.get("unreadable") else None),
+        notice=notice if error is None else None,
+        script_labels=_SCRIPT_LABELS,
+        can_abort=machine.state
+        in {MachineState.deploying.value, MachineState.imaging.value, MachineState.staged.value},
     )
 
 
@@ -229,6 +286,8 @@ def api_machine(machine_id: int, db: Session = Depends(get_db), user: str = Depe
         "state": machine.state,
         "account_username": account["username"],
         "account_password_set": account["set"],
+        "instance_id": machine.instance_id,
+        "last_ip": machine.last_ip,
     }
 
 
@@ -237,42 +296,45 @@ def root():
     return RedirectResponse(url="/machines", status_code=HTTP_303_SEE_OTHER)
 
 
+def _machine_groups(machines):
+    return {
+        "pending": [m for m in machines if m.state == MachineState.pending.value],
+        "timeouts": [m for m in machines if m.state == MachineState.timeout_error.value],
+        "failed": [m for m in machines if m.state == MachineState.failed.value],
+    }
+
+
 @router.get("/machines", response_class=HTMLResponse)
 def machines_page(request: Request, db: Session = Depends(get_db), user: str = Depends(require_user)):
     _apply_imaging_timeouts(db)
     machines = list_machines(db)
-    pending = [m for m in machines if m.state in {MachineState.pending.value, MachineState.ready.value}]
-    timeouts = [m for m in machines if m.state == MachineState.timeout_error.value]
+    groups = _machine_groups(machines)
     images = {img.id: img for img in list_images(db)}
     return render(
         request,
         "machines.html",
         machines=machines,
-        pending=pending,
-        timeouts=timeouts,
         images=images,
         error=None,
         add_mac="",
         add_hostname="",
+        **groups,
     )
 
 
 def _machines_error(request: Request, db: Session, error: str, *, add_mac: str = "", add_hostname: str = ""):
     _apply_imaging_timeouts(db)
     machines = list_machines(db)
-    pending = [m for m in machines if m.state in {MachineState.pending.value, MachineState.ready.value}]
-    timeouts = [m for m in machines if m.state == MachineState.timeout_error.value]
     images = {img.id: img for img in list_images(db)}
     return render(
         request,
         "machines.html",
         machines=machines,
-        pending=pending,
-        timeouts=timeouts,
         images=images,
         error=error,
         add_mac=add_mac,
         add_hostname=add_hostname,
+        **_machine_groups(machines),
     )
 
 
@@ -298,7 +360,8 @@ def machines_create(
 def machine_detail(request: Request, machine_id: int, db: Session = Depends(get_db), user: str = Depends(require_user)):
     _apply_imaging_timeouts(db)
     machine = _machine_or_404(db, machine_id)
-    return _detail(request, db, machine)
+    notice = _NOTICES.get((request.query_params.get("notice") or "").strip())
+    return _detail(request, db, machine, notice=notice)
 
 
 @router.post("/machines/{machine_id}/save")
@@ -311,6 +374,8 @@ def machine_save(
     ssh_keys: str = Form(""),
     user_data: str = Form(""),
     unattend_xml: str = Form(""),
+    username: str = Form(""),
+    password: str = Form(""),
     image_id: int | None = Form(default=None),
     db: Session = Depends(get_db),
     user: str = Depends(require_user),
@@ -319,6 +384,7 @@ def machine_save(
     if edit_locked(machine):
         return _detail(request, db, machine, error="Cannot edit guest-init while a deploy is in progress")
     try:
+        _persist_account(db, machine, username=username, password=password)
         _apply_guest_fields(
             db,
             machine,
@@ -336,11 +402,11 @@ def machine_save(
         assigned = get_image(db, machine.assigned_image_id)
         if machine.state == MachineState.disabled.value:
             db.commit()
-            return RedirectResponse(url=f"/machines/{machine_id}", status_code=HTTP_303_SEE_OTHER)
+            return RedirectResponse(url=f"/machines/{machine_id}?notice=saved", status_code=HTTP_303_SEE_OTHER)
         if machine.state == MachineState.deployed.value:
             if assigned is None:
                 db.commit()
-                return RedirectResponse(url=f"/machines/{machine_id}", status_code=HTTP_303_SEE_OTHER)
+                return RedirectResponse(url=f"/machines/{machine_id}?notice=saved", status_code=HTTP_303_SEE_OTHER)
             stage_machine(db, machine, actor=user, image=assigned)
         elif machine.state == MachineState.staged.value:
             if assigned is None:
@@ -352,7 +418,7 @@ def machine_save(
     except (ValueError, SeedError) as exc:
         db.rollback()
         return _detail(request, db, machine, error=str(exc))
-    return RedirectResponse(url=f"/machines/{machine_id}", status_code=HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=f"/machines/{machine_id}?notice=saved", status_code=HTTP_303_SEE_OTHER)
 
 
 @router.post("/machines/{machine_id}/deploy")
@@ -403,6 +469,7 @@ def machine_deploy(
                 username=(username.strip() or default_user),
                 password=password,
             )
+        _require_account(db, machine, image)
         deploy_machine(db, machine, image=image, actor=user)
         db.commit()
     except ValueError as exc:
@@ -411,7 +478,24 @@ def machine_deploy(
     except SeedError as exc:
         db.rollback()
         return _detail(request, db, machine, error=str(exc))
-    return RedirectResponse(url=f"/machines/{machine_id}", status_code=HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=f"/machines/{machine_id}?notice=deployed", status_code=HTTP_303_SEE_OTHER)
+
+
+@router.post("/machines/{machine_id}/abort")
+def machine_abort(
+    request: Request,
+    machine_id: int,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_user),
+):
+    machine = _machine_or_404(db, machine_id)
+    try:
+        abort_deploy(db, machine, actor=user)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return _detail(request, db, machine, error=str(exc))
+    return RedirectResponse(url=f"/machines/{machine_id}?notice=aborted", status_code=HTTP_303_SEE_OTHER)
 
 
 @router.post("/machines/{machine_id}/seed/copy-default")

@@ -600,6 +600,107 @@
     rememberBootMenuScroll();
   });
 
+  const sshPub = document.getElementById("ssh-pub");
+  const sshKeys = document.getElementById("ssh-keys");
+  if (sshPub && sshKeys) {
+    sshPub.addEventListener("change", async () => {
+      const file = sshPub.files && sshPub.files[0];
+      if (!file) {
+        return;
+      }
+      const text = (await file.text()).trim();
+      if (!text) {
+        return;
+      }
+      sshKeys.value = sshKeys.value.trim() ? `${sshKeys.value.replace(/\s+$/, "")}\n${text}\n` : `${text}\n`;
+      sshPub.value = "";
+    });
+  }
+
+  const machineSearch = document.getElementById("machine-search");
+  const machineRows = [...document.querySelectorAll("tr[data-machine-id]")];
+  let machineState = "";
+  function applyMachineFilter() {
+    const query = (machineSearch && machineSearch.value ? machineSearch.value : "").trim().toLowerCase();
+    machineRows.forEach((row) => {
+      const hay = row.getAttribute("data-search") || "";
+      const state = row.getAttribute("data-state") || "";
+      const hide = (query && !hay.includes(query)) || (machineState && state !== machineState);
+      row.classList.toggle("is-filtered", hide);
+    });
+  }
+  if (machineSearch) {
+    machineSearch.addEventListener("input", applyMachineFilter);
+  }
+  const machineStateFilter = document.getElementById("machine-state-filter");
+  if (machineStateFilter) {
+    machineStateFilter.addEventListener("change", () => {
+      machineState = machineStateFilter.value || "";
+      applyMachineFilter();
+    });
+  }
+
+  const stateLabels = {
+    pending: "Pending",
+    ready: "Ready",
+    deploying: "Deploying",
+    imaging: "Imaging",
+    timeout_error: "Timeout Error",
+    deployed: "Deployed",
+    staged: "Staged",
+    disabled: "Disabled",
+    failed: "Install failed",
+  };
+  if (machineRows.some((row) => ["deploying", "imaging", "staged"].includes(row.getAttribute("data-state")))) {
+    window.setInterval(async () => {
+      try {
+        const response = await fetch("/api/machines", { headers: { Accept: "application/json" } });
+        if (!response.ok) {
+          return;
+        }
+        const machines = await response.json();
+        machines.forEach((machine) => {
+          const row = document.querySelector(`tr[data-machine-id="${machine.id}"]`);
+          if (!row) {
+            return;
+          }
+          row.setAttribute("data-state", machine.state);
+          row.className = `state-${machine.state}`;
+          const badge = row.querySelector(".badge");
+          if (badge) {
+            badge.className = `badge badge-${machine.state}`;
+            badge.textContent = stateLabels[machine.state] || machine.state;
+          }
+          const ip = row.querySelector("td:nth-child(5)");
+          if (ip) {
+            ip.textContent = machine.last_ip || "—";
+          }
+        });
+        applyMachineFilter();
+      } catch {
+        /* keep polling */
+      }
+    }, 5000);
+  }
+
+  const imageOs = document.getElementById("image-os-filter");
+  const imageExtract = document.getElementById("image-extract-filter");
+  const imageFilterRows = [...document.querySelectorAll("tr[data-image-id]")];
+  function applyImageFilter() {
+    const os = imageOs ? imageOs.value : "";
+    const extract = imageExtract ? imageExtract.value : "";
+    imageFilterRows.forEach((row) => {
+      const hide = (os && row.getAttribute("data-os") !== os) || (extract && row.getAttribute("data-extract") !== extract);
+      row.classList.toggle("is-filtered", hide);
+    });
+  }
+  if (imageOs) {
+    imageOs.addEventListener("change", applyImageFilter);
+  }
+  if (imageExtract) {
+    imageExtract.addEventListener("change", applyImageFilter);
+  }
+
   document.addEventListener("submit", (event) => {
     if (!onBootMenuPage()) {
       return;

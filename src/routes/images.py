@@ -29,7 +29,7 @@ router = APIRouter(tags=["console"], include_in_schema=False)
 
 _PLACEHOLDER_HELP = (
     "{{hostname}} {{username}} {{password}} {{password_hash}} {{instance_id}} {{machine_id}} "
-    "{{public_url}} {{phone_home_url}} {{imaging_url}} {{timezone}} {{ssh_keys}} {{packages}} "
+    "{{public_url}} {{phone_home_url}} {{imaging_url}} {{install_log_url}} {{timezone}} {{ssh_keys}} {{packages}} "
     "{{source_id}} {{wim_index}} {{install_media_path}}"
 )
 

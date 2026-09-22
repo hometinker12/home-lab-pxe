@@ -8,9 +8,26 @@
   </div>
   <p class="description">Every host that PXE-boots checks in here. Unknown and disabled hosts continue to local disk after a short timeout. Named hosts see the Boot menu folders unless you stage a reimage.</p>
 </header>
+<div class="toolbar">
+  <input type="search" id="machine-search" placeholder="Search hostname, MAC, or IP" aria-label="Search machines">
+  <label class="toolbar-field">State
+    <select id="machine-state-filter" aria-label="Filter by state">
+      <option value="">All states</option>
+      <option value="pending">Pending</option>
+      <option value="ready">Ready</option>
+      <option value="deploying">Deploying</option>
+      <option value="staged">Staged</option>
+      <option value="imaging">Imaging</option>
+      <option value="deployed">Deployed</option>
+      <option value="failed">Install failed</option>
+      <option value="timeout_error">Timeout Error</option>
+      <option value="disabled">Disabled</option>
+    </select>
+  </label>
+</div>
 {% if pending %}
 <section class="alert alert-warn">
-  <strong>{{ pending|length }} waiting for operator</strong>
+  <strong>{{ pending|length }} new or unnamed</strong>
   <ul>
     {% for m in pending %}
     <li>
@@ -34,6 +51,19 @@
   </ul>
 </section>
 {% endif %}
+{% if failed %}
+<section class="alert alert-error">
+  <strong>{{ failed|length }} install failed</strong>
+  <ul>
+    {% for m in failed %}
+    <li>
+      <a href="/machines/{{ m.id }}"><code>{{ m.mac }}</code></a>
+      <span class="meta">{{ m.hostname or "(unnamed)" }} · last {{ m.last_seen_at }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
 <div class="table-wrap">
   <table>
     <thead>
@@ -41,7 +71,7 @@
     </thead>
     <tbody>
       {% for m in machines %}
-      <tr class="state-{{ m.state }}">
+      <tr class="state-{{ m.state }}" data-machine-id="{{ m.id }}" data-state="{{ m.state }}" data-search="{{ (m.hostname or '')|lower }} {{ m.mac }} {{ (m.last_ip or '')|lower }}">
         <td><a href="/machines/{{ m.id }}">{{ m.hostname or "(unnamed)" }}</a></td>
         <td><code>{{ m.mac }}</code></td>
         <td><span class="badge badge-{{ m.state }}">{{ state_label(m.state) }}</span></td>
@@ -54,7 +84,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="empty">No machines yet. Use Add machine or PXE-boot a host to register it.</td></tr>
+      <tr><td colspan="6" class="empty">No machines yet. Add a machine, or PXE-boot a host so it registers as pending.</td></tr>
       {% endfor %}
     </tbody>
   </table>

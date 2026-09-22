@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import html
+import inspect
 import json
 import re
+import textwrap
 import xml.etree.ElementTree as ET
 from typing import Any
 
@@ -29,6 +31,7 @@ ALLOWED_TOKENS = frozenset(
         "public_url",
         "phone_home_url",
         "imaging_url",
+        "install_log_url",
         "timezone",
         "ssh_keys",
         "packages",
@@ -244,10 +247,55 @@ def _imaging_wget(url: str) -> str:
     return _shell_wget(url)
 
 
+def _install_log_command(url: str) -> str:
+    token = url if str(url).startswith("{{") else json.dumps(url)
+    return (
+        'sh -c \'log=/tmp/pxe-install-fail.log; : > "$log"; '
+        'tail -c 49152 /var/log/installer/subiquity-server-debug.log >> "$log" 2>/dev/null || true; '
+        'tail -c 16384 /var/log/installer/curtin-install.log >> "$log" 2>/dev/null || true; '
+        f'wget -q --tries=3 --timeout=30 --post-file="$log" -O /dev/null {token} || true\''
+    )
+
+
+def _has_install_log(cmds: list) -> bool:
+    blob = " ".join(_command_text(cmd) for cmd in cmds)
+    return "install-log" in blob or "{{install_log_url}}" in blob
+
+
+def _ensure_install_log_error_command(auto: dict, install_log_url: str) -> bool:
+    url = install_log_url or "{{install_log_url}}"
+    cmds = auto.get("error-commands")
+    if not isinstance(cmds, list):
+        auto["error-commands"] = [_install_log_command(url)]
+        return True
+    if _has_install_log(cmds):
+        return False
+    auto["error-commands"] = [*cmds, _install_log_command(url)]
+    return True
+
+
 FORCE_REBOOT_CMD = (
     "sh -c 'sleep 1; echo 1 > /proc/sys/kernel/sysrq; "
     "echo s > /proc/sysrq-trigger; echo u > /proc/sysrq-trigger; "
     "echo b > /proc/sysrq-trigger'"
+)
+
+# netplan apply runs `udevadm settle` with no timeout. A Wi-Fi NIC that is still
+# probing (wlp*) keeps that queue busy, settle exits 1, and Subiquity aborts.
+# Early-commands run before Network/apply_autoinstall_config. Unbind only
+# interfaces that expose phy80211 so the PXE NIC (eno*/eth*) stays up.
+QUIET_WIFI_CMD = (
+    "sh -c 'for p in /sys/class/net/*; do "
+    'n=$(basename "$p"); '
+    '[ -e "$p/phy80211" ] || continue; '
+    'dev=$(basename "$(readlink -f "$p/device" 2>/dev/null)" 2>/dev/null || true); '
+    'drv=$(basename "$(readlink -f "$p/device/driver" 2>/dev/null)" 2>/dev/null || true); '
+    'if [ -n "$dev" ] && [ -n "$drv" ] && [ -w "/sys/bus/pci/drivers/$drv/unbind" ]; then '
+    'printf %s "$dev" > "/sys/bus/pci/drivers/$drv/unbind" || true; '
+    'elif [ -n "$dev" ] && [ -n "$drv" ] && [ -w "/sys/bus/usb/drivers/$drv/unbind" ]; then '
+    'printf %s "$dev" > "/sys/bus/usb/drivers/$drv/unbind" || true; '
+    'else ip link set "$n" down || true; fi; '
+    "done; true'"
 )
 
 
@@ -338,6 +386,169 @@ def _normalize_callback_wgets(auto: dict) -> bool:
             auto[key] = rewritten
             changed = True
     return changed
+
+
+def _has_quiet_wifi(cmds: list) -> bool:
+    blob = " ".join(_command_text(cmd) for cmd in cmds)
+    return "phy80211" in blob
+
+
+def _ensure_quiet_wifi_early_command(auto: dict) -> bool:
+    """Drop live Wi-Fi NICs before Subiquity runs netplan apply."""
+    cmds = auto.get("early-commands")
+    if not isinstance(cmds, list):
+        auto["early-commands"] = [QUIET_WIFI_CMD]
+        return True
+    if _has_quiet_wifi(cmds):
+        return False
+    auto["early-commands"] = [QUIET_WIFI_CMD, *cmds]
+    return True
+
+
+def silence_subiquity_client_source(text: str) -> str | None:
+    """Drop Subiquity's yes/no prompt. The server already continues once apt starts."""
+    import ast
+
+    marker = "Add 'autoinstall' to your kernel command line"
+    start = text.find("    async def noninteractive_confirmation(self):")
+    if start < 0 or marker not in text:
+        return None
+    rest = text.find("\n    async def ", start + 1)
+    if rest < 0:
+        return None
+    replacement = "    async def noninteractive_confirmation(self):\n        await self.confirm_install()\n"
+    patched = text[:start] + replacement + text[rest + 1 :]
+    try:
+        ast.parse(patched)
+    except SyntaxError:
+        return None
+    return patched
+
+
+_CONFIRM_POLLER = r"""
+import socket
+import time
+import urllib.parse
+
+def post():
+    query = urllib.parse.urlencode({"tty": "/dev/tty1"})
+    req = (
+        f"POST /meta/confirm?{query} HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Content-Length: 0\r\n"
+        "Connection: close\r\n\r\n"
+    ).encode()
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(5)
+    try:
+        sock.connect("/run/subiquity/socket")
+        sock.sendall(req)
+        data = sock.recv(256)
+    finally:
+        sock.close()
+    parts = data.split(None, 2)
+    return len(parts) > 1 and parts[1].startswith(b"2")
+
+for _ in range(5400):
+    try:
+        state = open("/run/subiquity/server-state").read().strip()
+    except OSError:
+        state = ""
+    if state == "NEEDS_CONFIRMATION":
+        try:
+            if post():
+                break
+        except OSError:
+            pass
+    elif state in {"RUNNING", "LATE_COMMANDS", "DONE", "ERROR"}:
+        break
+    time.sleep(0.5)
+"""
+
+
+def autoinstall_confirm_program() -> str:
+    """Python helper fetched by the early-command. Kept off the installer console."""
+    fn = textwrap.dedent(inspect.getsource(silence_subiquity_client_source))
+    poller = json.dumps(_CONFIRM_POLLER)
+    runner = f"""
+import pathlib
+import subprocess
+
+def patch_client():
+    paths = list(pathlib.Path("/snap/subiquity").glob(
+        "*/lib/python3.*/site-packages/subiquity/client/client.py"
+    ))
+    if not paths:
+        return
+    patched = silence_subiquity_client_source(paths[0].read_text(encoding="utf-8"))
+    if not patched:
+        return
+    dest = pathlib.Path("/run/pxe-subiquity-client.py")
+    dest.write_text(patched, encoding="utf-8")
+    for path in paths:
+        subprocess.run(["mount", "--bind", str(dest), str(path)], check=False)
+    subprocess.run(
+        ["systemctl", "restart", "snap.subiquity.subiquity-service"],
+        check=False,
+        timeout=25,
+    )
+
+def main():
+    try:
+        patch_client()
+    except Exception:
+        pass
+    try:
+        subprocess.Popen(
+            ["python3", "-c", {poller}],
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+main()
+"""
+    return fn + "\n" + textwrap.dedent(runner)
+
+
+def _autoinstall_confirm_command(public_url: str) -> str:
+    base = (public_url or "{{public_url}}").rstrip("/")
+    url = f"{base}/boot-files/autoinstall-confirm.py"
+    token = url if url.startswith("{{") else json.dumps(url)
+    return (
+        "wget -q --tries=3 --timeout=20 -O /run/pxe-autoinstall-confirm.py "
+        f"{token} && python3 /run/pxe-autoinstall-confirm.py || true"
+    )
+
+
+def _has_autoinstall_confirm(cmds: list) -> bool:
+    blob = " ".join(_command_text(cmd) for cmd in cmds)
+    return "autoinstall-confirm.py" in blob
+
+
+def _is_inline_confirm_command(cmd: object) -> bool:
+    text = _command_text(cmd)
+    return "silence_subiquity_client_source" in text or ("python3 - << 'PY'" in text and "/meta/confirm" in text)
+
+
+def _ensure_autoinstall_confirm_command(auto: dict, public_url: str) -> bool:
+    """Subiquity's text client still asks for yes after apt configuration has started."""
+    cmd = _autoinstall_confirm_command(public_url)
+    cmds = auto.get("early-commands")
+    if not isinstance(cmds, list):
+        auto["early-commands"] = [cmd]
+        return True
+    kept = [item for item in cmds if not _is_inline_confirm_command(item)]
+    if _has_autoinstall_confirm(kept):
+        if kept != cmds:
+            auto["early-commands"] = kept
+            return True
+        return False
+    auto["early-commands"] = [cmd, *kept]
+    return True
 
 
 def _ensure_imaging_early_command(auto: dict, imaging_url: str) -> bool:
@@ -453,7 +664,14 @@ def _ensure_identity(auto: dict) -> bool:
     return True
 
 
-def complete_linux_user_data(rendered: str, *, imaging_url: str = "", source_id: str = "") -> str:
+def complete_linux_user_data(
+    rendered: str,
+    *,
+    imaging_url: str = "",
+    install_log_url: str = "",
+    source_id: str = "",
+    public_url: str = "",
+) -> str:
     """Fill missing Subiquity autoinstall keys so NFS installs stay non-interactive."""
     try:
         parsed = yaml.safe_load(rendered)
@@ -474,7 +692,13 @@ def complete_linux_user_data(rendered: str, *, imaging_url: str = "", source_id:
                 if apt_key not in auto["apt"]:
                     auto["apt"][apt_key] = apt_val
                     changed = True
+    if _ensure_quiet_wifi_early_command(auto):
+        changed = True
     if _ensure_imaging_early_command(auto, imaging_url):
+        changed = True
+    if _ensure_autoinstall_confirm_command(auto, public_url):
+        changed = True
+    if _ensure_install_log_error_command(auto, install_log_url):
         changed = True
     if _normalize_callback_wgets(auto):
         changed = True
@@ -510,6 +734,7 @@ def dummy_values() -> dict[str, Any]:
         "public_url": "http://127.0.0.1:8080",
         "phone_home_url": "http://127.0.0.1:8080/api/machines/0/events",
         "imaging_url": "http://127.0.0.1:8080/api/machines/0/events?event=imaging",
+        "install_log_url": "http://127.0.0.1:8080/api/machines/0/install-log",
         "timezone": "UTC",
         "ssh_keys": [],
         "packages": [],
@@ -638,6 +863,7 @@ def placeholder_values(
         "public_url": public,
         "phone_home_url": f"{public}/api/machines/{machine.id}/events",
         "imaging_url": f"{public}/api/machines/{machine.id}/events?event=imaging",
+        "install_log_url": f"{public}/api/machines/{machine.id}/install-log",
         "timezone": str(overlay.get("timezone") or "").strip() or default_timezone(db),
         "ssh_keys": [str(k).strip() for k in ssh_keys if str(k).strip()] if isinstance(ssh_keys, list) else [],
         "packages": [str(p).strip() for p in packages if str(p).strip()] if isinstance(packages, list) else [],
@@ -679,7 +905,9 @@ def render_selected_seed(
             rendered = complete_linux_user_data(
                 rendered,
                 imaging_url=str(values.get("imaging_url") or ""),
+                install_log_url=str(values.get("install_log_url") or ""),
                 source_id=str(values.get("source_id") or ""),
+                public_url=str(values.get("public_url") or ""),
             )
             yaml.safe_load(rendered)
     except (SeedRenderError, ET.ParseError, yaml.YAMLError) as exc:

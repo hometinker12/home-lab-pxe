@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sys
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
@@ -80,5 +80,12 @@ def encrypt_value(value: str) -> str:
     return get_fernet().encrypt(value.encode()).decode()
 
 
+class VaultError(ValueError):
+    """Stored ciphertext cannot be decrypted with the current ENCRYPTION_KEY."""
+
+
 def decrypt_value(value: str) -> str:
-    return get_fernet().decrypt(value.encode()).decode()
+    try:
+        return get_fernet().decrypt(value.encode()).decode()
+    except (InvalidToken, ValueError, TypeError) as exc:
+        raise VaultError("encryption key does not match stored accounts") from exc

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from ..models import (
@@ -21,7 +23,7 @@ from ..models import (
     OsFamily,
     StagedJob,
 )
-from ..security import decrypt_value, encrypt_value
+from ..security import VaultError, decrypt_value, encrypt_value
 from ..seed_store import (
     SeedError,
     copy_image_seed_to_machine,
@@ -36,6 +38,13 @@ from ..settings import get_settings, smb_password_configured
 from .mac import normalize_mac, normalize_uuid
 
 LAB_DEFAULT_MACHINE_ID = 0
+INSTALL_LOG_MAX_BYTES = 64 * 1024
+_UUID_LIVE = timedelta(hours=1)
+_SECRET_LINE = re.compile(
+    r"(password|chpasswd|ssh_authorized_keys|ssh-rsa|ssh-ed25519|BEGIN OPENSSH|AutoLogon|AdministratorPassword)",
+    re.IGNORECASE,
+)
+_HW_UNSAFE = re.compile(r"[^\w .,_()/+-]+")
 
 INSTALL_STATES = frozenset(
     {
@@ -124,8 +133,18 @@ def list_machines(db: Session) -> list[Machine]:
     return list(db.exec(select(Machine).order_by(col(Machine.last_seen_at).desc())).all())
 
 
-def list_activity(db: Session, limit: int = 100) -> list[ActivityLog]:
-    return list(db.exec(select(ActivityLog).order_by(col(ActivityLog.at).desc()).limit(limit)).all())
+def list_activity(
+    db: Session,
+    limit: int = 100,
+    *,
+    offset: int = 0,
+    prefix: str = "",
+) -> list[ActivityLog]:
+    statement = select(ActivityLog).order_by(col(ActivityLog.at).desc())
+    needle = (prefix or "").strip()
+    if needle:
+        statement = statement.where(col(ActivityLog.action).startswith(needle))
+    return list(db.exec(statement.offset(max(0, offset)).limit(limit)).all())
 
 
 def list_boot_events(db: Session, machine_id: int, limit: int = 25) -> list[BootEvent]:
@@ -140,11 +159,27 @@ def get_machine(db: Session, machine_id: int) -> Machine | None:
     return db.get(Machine, machine_id)
 
 
-def get_machine_for_guest_init(db: Session, machine_id: int) -> Machine | None:
-    expire_stale_imaging(db)
+def note_imaging_heartbeat(db: Session, machine: Machine) -> None:
+    """A live installer fetch or imaging callback extends the timeout clock."""
+    if machine.state != MachineState.imaging.value:
+        return
+    machine.imaging_started_at = now()
+    db.add(machine)
+    db.commit()
+
+
+def get_machine_for_guest_init(
+    db: Session,
+    machine_id: int,
+    *,
+    instance_id: str | None = None,
+) -> Machine | None:
     machine = get_machine(db, machine_id)
     if machine is None or not guest_init_allowed(machine):
         return None
+    if instance_id is not None and machine.instance_id != instance_id:
+        return None
+    note_imaging_heartbeat(db, machine)
     return machine
 
 
@@ -272,23 +307,67 @@ def refresh_install_attempt(db: Session, machine: Machine, image: Image) -> Inst
     return create_install_attempt(db, machine, image)
 
 
+def clean_hardware(value: str | None, *, limit: int = 80) -> str:
+    return " ".join(_HW_UNSAFE.sub(" ", value or "").split())[:limit]
+
+
+def _uuid_is_live(machine: Machine) -> bool:
+    seen = machine.last_seen_at
+    if seen is None:
+        return False
+    return _aware(seen) >= now() - _UUID_LIVE
+
+
+def _apply_hardware(machine: Machine, *, manufacturer: str, product: str, serial: str) -> None:
+    if manufacturer:
+        machine.manufacturer = manufacturer
+    if product:
+        machine.product = product
+    if serial:
+        machine.serial = serial
+
+
 def touch_machine(
     db: Session,
     *,
     mac: str,
     uuid: str | None,
     client_ip: str,
+    manufacturer: str | None = None,
+    product: str | None = None,
+    serial: str | None = None,
 ) -> Machine:
     mac_n = normalize_mac(mac)
     uuid_n = normalize_uuid(uuid)
+    hw_manufacturer = clean_hardware(manufacturer)
+    hw_product = clean_hardware(product)
+    hw_serial = clean_hardware(serial)
     machine = db.exec(select(Machine).where(Machine.mac == mac_n)).first()
     if machine is None and uuid_n:
-        machine = db.exec(select(Machine).where(Machine.uuid == uuid_n)).first()
-        if machine is not None:
-            machine.mac = mac_n
+        by_uuid = db.exec(select(Machine).where(Machine.uuid == uuid_n)).first()
+        if by_uuid is not None and by_uuid.mac != mac_n and _uuid_is_live(by_uuid):
+            record_activity(
+                db,
+                actor="system",
+                action="machine.uuid_collision",
+                detail=f"uuid={uuid_n} mac={mac_n} kept={by_uuid.mac}",
+            )
+            uuid_n = None
+        elif by_uuid is not None:
+            by_uuid.mac = mac_n
+            machine = by_uuid
     if machine is None:
+        if uuid_n and db.exec(select(Machine).where(Machine.uuid == uuid_n)).first() is not None:
+            uuid_n = None
         machine = Machine(
-            mac=mac_n, uuid=uuid_n, state=MachineState.pending.value, last_ip=client_ip, last_seen_at=now()
+            mac=mac_n,
+            uuid=uuid_n,
+            state=MachineState.pending.value,
+            last_ip=client_ip,
+            last_seen_at=now(),
+            manufacturer=hw_manufacturer,
+            product=hw_product,
+            serial=hw_serial,
         )
         apply_lab_timezone(db, machine)
         db.add(machine)
@@ -298,7 +377,10 @@ def touch_machine(
         machine.last_seen_at = now()
         machine.last_ip = client_ip or machine.last_ip
         if uuid_n and not machine.uuid:
-            machine.uuid = uuid_n
+            taken = db.exec(select(Machine).where(Machine.uuid == uuid_n)).first()
+            if taken is None or taken.id == machine.id:
+                machine.uuid = uuid_n
+        _apply_hardware(machine, manufacturer=hw_manufacturer, product=hw_product, serial=hw_serial)
     db.add(machine)
     return machine
 
@@ -333,6 +415,12 @@ def record_boot_event(db: Session, machine: Machine, *, client_ip: str, script_k
     db.add(BootEvent(machine_id=int(machine.id), client_ip=client_ip, script_kind=script_kind))
 
 
+def _local_account_row(db: Session, machine_id: int, kind: AccountKind) -> LocalAccount | None:
+    return db.exec(
+        select(LocalAccount).where(LocalAccount.machine_id == machine_id, LocalAccount.kind == kind.value)
+    ).first()
+
+
 def upsert_local_account(
     db: Session,
     *,
@@ -341,9 +429,7 @@ def upsert_local_account(
     username: str,
     password: str | None,
 ) -> LocalAccount:
-    row = db.exec(
-        select(LocalAccount).where(LocalAccount.machine_id == machine_id, LocalAccount.kind == kind.value)
-    ).first()
+    row = _local_account_row(db, machine_id, kind)
     if row is None:
         if not password:
             raise ValueError("Password is required when creating a local account")
@@ -353,11 +439,19 @@ def upsert_local_account(
             encrypted_username=encrypt_value(username),
             encrypted_password=encrypt_value(password),
         )
-    else:
-        row.encrypted_username = encrypt_value(username)
-        if password:
-            row.encrypted_password = encrypt_value(password)
+        db.add(row)
+        try:
+            with db.begin_nested():
+                db.flush()
+        except IntegrityError:
+            row = _local_account_row(db, machine_id, kind)
+    if row is None:
+        raise ValueError("Password is required when creating a local account")
+    row.encrypted_username = encrypt_value(username)
+    if password:
+        row.encrypted_password = encrypt_value(password)
     db.add(row)
+    db.flush()
     return row
 
 
@@ -366,8 +460,13 @@ def local_account_status(db: Session, machine_id: int, kind: AccountKind) -> dic
         select(LocalAccount).where(LocalAccount.machine_id == machine_id, LocalAccount.kind == kind.value)
     ).first()
     if row is None:
-        return {"set": False, "username": ""}
-    return {"set": True, "username": decrypt_value(row.encrypted_username)}
+        return {"set": False, "username": "", "unreadable": False}
+    try:
+        username = decrypt_value(row.encrypted_username)
+        decrypt_value(row.encrypted_password)
+    except VaultError:
+        return {"set": True, "username": "", "unreadable": True}
+    return {"set": True, "username": username, "unreadable": False}
 
 
 def resolve_local_account(db: Session, machine_id: int, kind: AccountKind) -> tuple[str, str] | None:
@@ -396,6 +495,7 @@ def deploy_machine(db: Session, machine: Machine, *, image: Image, actor: str) -
     assert_image_deployable(image)
     machine.assigned_image_id = image.id
     machine.state = MachineState.deploying.value
+    machine.install_log = ""
     _clear_imaging_clock(machine)
     bump_instance_id(machine)
     if machine.id is not None:
@@ -416,12 +516,15 @@ def mark_ready(db: Session, machine: Machine, *, hostname: str, actor: str) -> M
 
 
 def mark_imaging(db: Session, machine: Machine, *, actor: str = "installer") -> Machine:
-    """Installer early-command: disk imaging has started."""
-    if machine.state != MachineState.imaging.value:
-        machine.state = MachineState.imaging.value
+    """Installer early-command: disk imaging has started. Repeat calls refresh the timeout clock."""
+    if machine.state == MachineState.imaging.value:
         machine.imaging_started_at = now()
         db.add(machine)
-        record_activity(db, actor=actor, action="machine.imaging", detail=machine.mac)
+        return machine
+    machine.state = MachineState.imaging.value
+    machine.imaging_started_at = now()
+    db.add(machine)
+    record_activity(db, actor=actor, action="machine.imaging", detail=machine.mac)
     return machine
 
 
@@ -454,6 +557,41 @@ def expire_stale_imaging(db: Session) -> int:
             mark_timeout_error(db, machine, actor="timeout")
             expired += 1
     return expired
+
+
+def redact_install_log(raw: str) -> str:
+    lines: list[str] = []
+    for line in (raw or "").splitlines():
+        lines.append("[redacted]" if _SECRET_LINE.search(line) else line)
+    text = "\n".join(lines).strip()
+    if len(text.encode("utf-8")) <= INSTALL_LOG_MAX_BYTES:
+        return text
+    encoded = text.encode("utf-8")
+    return encoded[-INSTALL_LOG_MAX_BYTES:].decode("utf-8", errors="ignore")
+
+
+def mark_install_failed(db: Session, machine: Machine, *, log: str, actor: str = "installer") -> Machine:
+    machine.install_log = redact_install_log(log)
+    machine.state = MachineState.failed.value
+    _clear_imaging_clock(machine)
+    close_open_attempts(db, machine)
+    db.add(machine)
+    record_activity(db, actor=actor, action="machine.install_failed", detail=machine.mac)
+    return machine
+
+
+def abort_deploy(db: Session, machine: Machine, *, actor: str) -> Machine:
+    if machine.state == MachineState.staged.value:
+        machine.state = MachineState.deployed.value
+    elif machine.state in {MachineState.deploying.value, MachineState.imaging.value}:
+        machine.state = MachineState.timeout_error.value
+    else:
+        raise ValueError("No install is in progress")
+    _clear_imaging_clock(machine)
+    close_open_attempts(db, machine)
+    db.add(machine)
+    record_activity(db, actor=actor, action="machine.abort", detail=machine.mac)
+    return machine
 
 
 def mark_deployed(db: Session, machine: Machine, *, actor: str = "installer") -> Machine:

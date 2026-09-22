@@ -18,25 +18,27 @@
 </header>
 {% if error and not edit_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 
-<section class="card">
-  <h2>Timeouts and labels</h2>
-  <form method="post" action="/boot-menu/settings" class="form">
-    {% if selected %}<input type="hidden" name="folder" value="{{ selected.id }}">{% endif %}
-    <label>Menu title <input name="title" value="{{ settings.title }}" required></label>
-    <label>Continue to next device <input name="continue_label" value="{{ settings.continue_label }}" required></label>
-    <label>Unknown / disabled timeout (seconds)
-      <input name="unknown_timeout_seconds" type="number" min="0" max="300" value="{{ settings.unknown_timeout_seconds }}">
-    </label>
-    <p class="meta">0 continues immediately. This timeout is not an OS-install menu — unknown and disabled hosts never see folders.</p>
-    <label>Configured-machine menu countdown (seconds)
-      <input name="menu_timeout_seconds" type="number" min="0" max="300" value="{{ settings.menu_timeout_seconds }}">
-    </label>
-    <p class="meta">0 waits until a key is pressed. The default item is continue-to-disk unless the operator opens a folder.</p>
-    <div class="btn-row">
-      <button type="submit">Save menu settings</button>
-    </div>
-  </form>
-</section>
+<details class="card" {% if error and not edit_open %}open{% endif %}>
+  <summary>Timeouts and labels</summary>
+  <div class="card-body">
+    <form method="post" action="/boot-menu/settings" class="form">
+      {% if selected %}<input type="hidden" name="folder" value="{{ selected.id }}">{% endif %}
+      <label>Menu title <input name="title" value="{{ settings.title }}" required></label>
+      <label>Continue to next device <input name="continue_label" value="{{ settings.continue_label }}" required></label>
+      <label>Unknown / disabled timeout (seconds)
+        <input name="unknown_timeout_seconds" type="number" min="0" max="300" value="{{ settings.unknown_timeout_seconds }}">
+      </label>
+      <p class="meta">0 continues immediately. This timeout is not an OS-install menu — unknown and disabled hosts never see folders.</p>
+      <label>Configured-machine menu countdown (seconds)
+        <input name="menu_timeout_seconds" type="number" min="0" max="300" value="{{ settings.menu_timeout_seconds }}">
+      </label>
+      <p class="meta">0 waits until a key is pressed. The default item is continue-to-disk unless the operator opens a folder.</p>
+      <div class="btn-row">
+        <button type="submit">Save menu settings</button>
+      </div>
+    </form>
+  </div>
+</details>
 
 <div class="boot-menu-layout">
   <aside class="card boot-menu-tree">

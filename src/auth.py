@@ -21,7 +21,7 @@ _INSECURE_SECRET_DEFAULTS = frozenset(
     }
 )
 
-SESSION_IDLE_TIMEOUT_SECONDS = 900
+SESSION_IDLE_TIMEOUT_SECONDS = 6 * 60 * 60
 _serializer: URLSafeTimedSerializer | None = None
 
 
@@ -109,6 +109,7 @@ def load_current_user(request: Request, db: Session) -> str:
     if cookie_version != db_version:
         raise HTTPException(status_code=401, detail="Invalid or expired session")
     request.state.session_user = username
+    request.state.session_refresh = create_session_cookie(username, cookie_version)
     return username
 
 
