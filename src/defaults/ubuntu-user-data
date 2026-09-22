@@ -71,7 +71,12 @@ autoinstall:
   shutdown: reboot
   updates: security
   early-commands:
+    - |
+      sh -c 'for p in /sys/class/net/*; do n=$(basename "$p"); [ -e "$p/phy80211" ] || continue; dev=$(basename "$(readlink -f "$p/device" 2>/dev/null)" 2>/dev/null || true); drv=$(basename "$(readlink -f "$p/device/driver" 2>/dev/null)" 2>/dev/null || true); if [ -n "$dev" ] && [ -n "$drv" ] && [ -w "/sys/bus/pci/drivers/$drv/unbind" ]; then printf %s "$dev" > "/sys/bus/pci/drivers/$drv/unbind" || true; elif [ -n "$dev" ] && [ -n "$drv" ] && [ -w "/sys/bus/usb/drivers/$drv/unbind" ]; then printf %s "$dev" > "/sys/bus/usb/drivers/$drv/unbind" || true; else ip link set "$n" down || true; fi; done; true'
     - wget -q --tries=3 --timeout=10 --post-file=/dev/null -O /dev/null {{imaging_url}} || true
+  error-commands:
+    - |
+      sh -c 'log=/tmp/pxe-install-fail.log; : > "$log"; tail -c 49152 /var/log/installer/subiquity-server-debug.log >> "$log" 2>/dev/null || true; tail -c 16384 /var/log/installer/curtin-install.log >> "$log" 2>/dev/null || true; wget -q --tries=3 --timeout=30 --post-file="$log" -O /dev/null {{install_log_url}} || true'
   late-commands:
     - wget -q --tries=3 --timeout=10 --post-file=/dev/null -O /dev/null {{phone_home_url}} || true
     - sh -c 'sleep 1; echo 1 > /proc/sys/kernel/sysrq; echo s > /proc/sysrq-trigger; echo u > /proc/sysrq-trigger; echo b > /proc/sysrq-trigger'

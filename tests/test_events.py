@@ -103,7 +103,8 @@ def test_state_labels():
     assert state_label("imaging") == "Imaging"
     assert state_label("deployed") == "Deployed"
     assert state_label("disabled") == "Disabled"
-    assert state_label("staged") == "Deploying"
+    assert state_label("staged") == "Staged"
+    assert state_label("failed") == "Install failed"
     assert state_label("timeout_error") == "Timeout Error"
 
 
@@ -129,7 +130,7 @@ def test_imaging_timeout_moves_to_timeout_error(client):
     assert client.post(f"/api/machines/{mid}/events?event=imaging").json()["state"] == "imaging"
     with session_scope() as db:
         machine = touch_machine(db, mac="02:00:00:00:00:36", uuid=None, client_ip="10.0.0.8")
-        machine.imaging_started_at = datetime.now(UTC) - timedelta(minutes=16)
+        machine.imaging_started_at = datetime.now(UTC) - timedelta(minutes=61)
         db.add(machine)
         db.commit()
     page = client.get("/machines")
@@ -188,7 +189,7 @@ def test_imaging_timeout_zero_disables_timer(client):
     assert restore.status_code in {302, 303}
 
 
-def test_imaging_event_does_not_reset_timeout_clock(client):
+def test_imaging_event_refreshes_timeout_clock(client):
     login(client)
     from src.db import session_scope
 
@@ -206,8 +207,13 @@ def test_imaging_event_does_not_reset_timeout_clock(client):
         db.commit()
         mid = machine.id
     client.post(f"/api/machines/{mid}/events?event=imaging")
+    from datetime import UTC, datetime, timedelta
+
     with session_scope() as db:
         machine = touch_machine(db, mac="02:00:00:00:00:38", uuid=None, client_ip="10.0.0.10")
+        machine.imaging_started_at = datetime.now(UTC) - timedelta(minutes=30)
+        db.add(machine)
+        db.commit()
         started = machine.imaging_started_at
         assert started is not None
         started_naive = started.replace(tzinfo=None)
@@ -216,4 +222,4 @@ def test_imaging_event_does_not_reset_timeout_clock(client):
         machine = touch_machine(db, mac="02:00:00:00:00:38", uuid=None, client_ip="10.0.0.10")
         again = machine.imaging_started_at
         assert again is not None
-        assert again.replace(tzinfo=None) == started_naive
+        assert again.replace(tzinfo=None) > started_naive

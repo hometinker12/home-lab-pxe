@@ -20,7 +20,7 @@ _EXEMPT_PREFIXES = (
     "/install-files/",
     "/tftp/",
 )
-_EXEMPT_PATHS = re.compile(r"^/api/machines/\d+/events/?$")
+_EXEMPT_PATHS = re.compile(r"^/api/machines/\d+/(events|install-log)/?$")
 
 
 def relax_csrf_for_tests() -> bool:
@@ -43,7 +43,7 @@ def csrf_check_required(request: Request) -> bool:
         return False
     if _EXEMPT_PATHS.match(path):
         return False
-    if path in {"/health", "/ready"}:
+    if path == "/health":
         return False
     return True
 

@@ -1,5 +1,5 @@
 import yaml
-from tests.conftest import login
+from tests.conftest import login, seed_url
 
 from src.inventory.service import (
     LAB_DEFAULT_MACHINE_ID,
@@ -39,8 +39,8 @@ def test_cloud_init_injects_root_and_bumps_instance_id(client):
         mid = machine.id
         first_id = machine.instance_id
         image_id = int(image.id)
-    user_data = client.get(f"/cloud-init/{mid}/user-data").text
-    meta = client.get(f"/cloud-init/{mid}/meta-data").text
+    user_data = client.get(seed_url(client, mid, "cloud-init", "user-data")).text
+    meta = client.get(seed_url(client, mid, "cloud-init", "meta-data")).text
     parsed = yaml.safe_load(user_data)
     assert parsed["autoinstall"]["identity"]["username"] == "ubuntu"
     assert parsed["autoinstall"]["user-data"]["chpasswd"]["users"][0]["name"] == "root"
@@ -59,7 +59,7 @@ def test_cloud_init_injects_root_and_bumps_instance_id(client):
     disk = read_image_seed(image_id, OsFamily.linux)
     assert "{{password_hash}}" in disk
     assert "root-secret" not in disk
-    assert client.get(f"/cloud-init/{mid}/vendor-data").status_code == 200
+    assert client.get(seed_url(client, mid, "cloud-init", "vendor-data")).status_code == 200
     detail = client.get(f"/api/machines/{mid}").json()
     assert "root-secret" not in str(detail)
 
@@ -91,7 +91,7 @@ def test_cloud_init_uses_image_source_id(client):
         deploy_machine(db, machine, image=image, actor="admin")
         db.commit()
         mid = machine.id
-    parsed = yaml.safe_load(client.get(f"/cloud-init/{mid}/user-data").text)
+    parsed = yaml.safe_load(client.get(seed_url(client, mid, "cloud-init", "user-data")).text)
     assert parsed["autoinstall"]["source"]["id"] == "ubuntu-server-minimal"
     assert parsed["autoinstall"]["source"]["search_drivers"] is False
 
@@ -126,7 +126,7 @@ def test_machine_seed_override_replaces_image(client):
         deploy_machine(db, machine, image=image, actor="admin")
         db.commit()
         mid = machine.id
-    user_data = client.get(f"/cloud-init/{mid}/user-data").text
+    user_data = client.get(seed_url(client, mid, "cloud-init", "user-data")).text
     assert "machine-override-token" in user_data
     assert "autoinstall" not in user_data
     assert "autoinstall:" in factory_seed_text(OsFamily.linux)
@@ -147,7 +147,7 @@ def test_guest_init_hidden_until_deploy_and_after_phone_home(client):
         machine = touch_machine(db, mac="02:00:00:00:00:13", uuid=None, client_ip="10.0.0.10")
         db.commit()
         mid = machine.id
-    pending = client.get(f"/cloud-init/{mid}/user-data")
+    pending = client.get(seed_url(client, mid, "cloud-init", "user-data"))
     assert pending.status_code == 404
     assert "lab-default-secret" not in pending.text
     assert client.get(f"/windows/{mid}/unattend.xml").status_code == 404
@@ -164,7 +164,7 @@ def test_guest_init_hidden_until_deploy_and_after_phone_home(client):
         )
         deploy_machine(db, machine, image=image, actor="admin")
         db.commit()
-    installing = client.get(f"/cloud-init/{mid}/user-data")
+    installing = client.get(seed_url(client, mid, "cloud-init", "user-data"))
     assert installing.status_code == 200
     assert "lab-default-secret" not in installing.text
     assert "root" in installing.text
@@ -174,13 +174,13 @@ def test_guest_init_hidden_until_deploy_and_after_phone_home(client):
     imaging = client.post(f"/api/machines/{mid}/events?event=imaging")
     assert imaging.status_code == 200
     assert imaging.json()["state"] == "imaging"
-    still = client.get(f"/cloud-init/{mid}/user-data")
+    still = client.get(seed_url(client, mid, "cloud-init", "user-data"))
     assert still.status_code == 200
     assert "event=imaging" in still.text
 
     phone = client.post(f"/api/machines/{mid}/events", json={"event": "deployed"})
     assert phone.status_code == 200
-    closed = client.get(f"/cloud-init/{mid}/user-data")
+    closed = client.get(seed_url(client, mid, "cloud-init", "user-data"))
     assert closed.status_code == 404
     assert "lab-default-secret" not in closed.text
 

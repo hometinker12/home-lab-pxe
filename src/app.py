@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from .auth import session_cookie_secure, session_cookie_settings
 from .csrf import csrf_origin_allowed, csrf_rejection_response
 from .db import init_db
 from .rate_limit import rate_limit_exceeded, rate_limit_rejection_response
@@ -36,7 +37,15 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             return rate_limit_rejection_response(request)
         if not csrf_origin_allowed(request):
             return csrf_rejection_response(request)
-        return await call_next(request)
+        response = await call_next(request)
+        token = getattr(request.state, "session_refresh", None)
+        if token:
+            response.set_cookie(
+                "session",
+                token,
+                **session_cookie_settings(secure=session_cookie_secure(request)),
+            )
+        return response
 
 
 def create_app() -> FastAPI:

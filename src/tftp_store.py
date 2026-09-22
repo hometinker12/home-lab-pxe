@@ -44,7 +44,11 @@ def tftp_root() -> Path:
 
 def boot_chain_script_body(public_url: str) -> str:
     base = public_url.rstrip("/")
-    return f"#!ipxe\nchain --replace {base}/ipxe/${{mac:hexhyp}}?uuid=${{uuid}}&ip=${{ip}}\n"
+    return (
+        "#!ipxe\n"
+        f"chain --replace {base}/ipxe/${{mac:hexhyp}}"
+        "?uuid=${uuid}&ip=${ip}&manufacturer=${manufacturer}&product=${product}&serial=${serial}\n"
+    )
 
 
 def write_boot_chain_script() -> Path:

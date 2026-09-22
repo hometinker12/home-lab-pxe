@@ -12,8 +12,6 @@ from .payload import BootPayload
 
 
 class ScriptKind(StrEnum):
-    wait = "wait"
-    local = "local"
     unknown_local = "unknown_local"
     menu = "menu"
     install_linux = "install_linux"
@@ -33,6 +31,7 @@ def machine_menu_eligible(machine: Machine) -> bool:
         MachineState.ready.value,
         MachineState.deployed.value,
         MachineState.timeout_error.value,
+        MachineState.failed.value,
     }
 
 

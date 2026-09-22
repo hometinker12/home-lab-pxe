@@ -44,3 +44,8 @@ def client(tmp_path, monkeypatch):
 def login(client: TestClient) -> None:
     response = client.post("/login", data={"username": "admin", "password": "secret"}, follow_redirects=False)
     assert response.status_code in {302, 303}
+
+
+def seed_url(client: TestClient, machine_id: int, family: str, leaf: str) -> str:
+    instance_id = client.get(f"/api/machines/{machine_id}").json()["instance_id"]
+    return f"/{family}/{machine_id}/{instance_id}/{leaf}"

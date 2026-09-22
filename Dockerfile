@@ -7,7 +7,7 @@
 
 FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
-ARG VERSION=0.3.3
+ARG VERSION=0.3.5
 
 LABEL org.opencontainers.image.title="home-lab-pxe" \
       org.opencontainers.image.description="Docker PXE/iPXE server with web console, cloud-init, and Cloudbase-Init" \

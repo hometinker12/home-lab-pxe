@@ -41,8 +41,9 @@
         </select>
         {% else %}
         <select disabled aria-label="Install source">
-          <option>Available after extract</option>
+          <option>Pick after extract</option>
         </select>
+        <span class="meta">Ubuntu source ids and Windows editions show up here after the ISO extract finishes.</span>
         <input type="hidden" name="source_id" value="{{ image.source_id }}">
         {% endif %}
       </label>

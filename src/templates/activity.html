@@ -5,6 +5,20 @@
   <h1>Activity</h1>
   <p class="description">Audit trail of operator actions in the console, newest first.</p>
 </header>
+<form class="toolbar" method="get" action="/activity">
+  <label class="toolbar-field">Category
+    <select name="q" aria-label="Filter activity" onchange="this.form.submit()">
+      <option value="" {% if not q %}selected{% endif %}>All activity</option>
+      <option value="machine" {% if q == "machine" %}selected{% endif %}>Machines</option>
+      <option value="image" {% if q == "image" %}selected{% endif %}>Images</option>
+      <option value="boot-menu" {% if q == "boot-menu" %}selected{% endif %}>Boot menu</option>
+      <option value="files" {% if q == "files" %}selected{% endif %}>Files</option>
+      <option value="auth" {% if q == "auth" %}selected{% endif %}>Console access</option>
+      <option value="smb" {% if q == "smb" %}selected{% endif %}>SMB media</option>
+    </select>
+  </label>
+  <noscript><button type="submit" class="btn-secondary">Apply</button></noscript>
+</form>
 <div class="table-wrap">
   <table>
     <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
@@ -13,13 +27,17 @@
       <tr>
         <td>{{ e.at }}</td>
         <td>{{ e.actor }}</td>
-        <td>{{ e.action }}</td>
-        <td>{{ e.detail }}</td>
+        <td>{{ e.label }}</td>
+        <td>{% if e.href %}<a href="{{ e.href }}">{{ e.detail or e.action }}</a>{% else %}{{ e.detail }}{% endif %}</td>
       </tr>
       {% else %}
       <tr><td colspan="4" class="empty">No events recorded yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>
+</div>
+<div class="btn-row">
+  {% if has_prev %}<a class="btn-ghost btn-sm" href="/activity?q={{ q }}&page={{ page - 1 }}">Previous</a>{% endif %}
+  {% if has_next %}<a class="btn-ghost btn-sm" href="/activity?q={{ q }}&page={{ page + 1 }}">Next</a>{% endif %}
 </div>
 {% endblock %}
