@@ -37,6 +37,7 @@ def test_complete_linux_user_data_fills_unattended_keys():
     assert "en*" in filled
     assert "sizing-policy:" in filled
     assert "sysrq-trigger" in filled
+    assert "phy80211" in filled
 
 
 def test_complete_linux_user_data_marks_match_nics_optional():
@@ -48,6 +49,76 @@ def test_complete_linux_user_data_marks_match_nics_optional():
         "        dhcp4: true\n"
     )
     assert "optional: true" in filled
+
+
+def test_complete_linux_user_data_answers_autoinstall_prompt():
+    import ast
+
+    from src.seed_render import autoinstall_confirm_program, complete_linux_user_data, silence_subiquity_client_source
+
+    sample = (
+        "class Client:\n"
+        "    async def noninteractive_confirmation(self):\n"
+        "        print(_(\"Add 'autoinstall' to your kernel command line to avoid this\"))\n"
+        "        answer = await run_in_thread(input)\n"
+        "\n"
+        "    async def _status_get(self, cur=None):\n"
+        "        return cur\n"
+    )
+    patched = silence_subiquity_client_source(sample)
+    assert patched is not None
+    assert "kernel command line" not in patched
+    assert "await self.confirm_install()" in patched
+    assert "async def _status_get" in patched
+
+    filled = complete_linux_user_data(
+        "#cloud-config\nautoinstall:\n  version: 1\n",
+        public_url="http://192.168.2.223:8080",
+    )
+    parsed = yaml.safe_load(filled)
+    cmds = parsed["autoinstall"]["early-commands"]
+    assert "autoinstall-confirm.py" in cmds[0]
+    assert "python3 - << 'PY'" not in cmds[0]
+    assert "silence_subiquity" not in filled
+    program = autoinstall_confirm_program()
+    ast.parse(program)
+    assert "/meta/confirm" in program
+    assert "noninteractive_confirmation" in program
+    again = complete_linux_user_data(filled, public_url="http://192.168.2.223:8080")
+    again_cmds = yaml.safe_load(again)["autoinstall"]["early-commands"]
+    assert sum("autoinstall-confirm.py" in str(cmd) for cmd in again_cmds) == 1
+
+    legacy = complete_linux_user_data(
+        "#cloud-config\nautoinstall:\n  version: 1\n  early-commands:\n"
+        "    - |\n      python3 - << 'PY' || true\n      /meta/confirm\n      PY\n"
+    )
+    parsed_legacy = yaml.safe_load(legacy)
+    legacy_cmds = parsed_legacy["autoinstall"]["early-commands"]
+    assert sum("autoinstall-confirm.py" in str(cmd) for cmd in legacy_cmds) == 1
+    assert "python3 - << 'PY'" not in legacy
+
+
+def test_autoinstall_confirm_script_is_fetchable(client):
+    import ast
+
+    response = client.get("/boot-files/autoinstall-confirm.py")
+    assert response.status_code == 200
+    ast.parse(response.text)
+    assert "/meta/confirm" in response.text
+    assert "noninteractive_confirmation" in response.text
+
+
+def test_complete_linux_user_data_unbinds_wifi_once():
+    from src.seed_render import complete_linux_user_data
+
+    filled = complete_linux_user_data("#cloud-config\nautoinstall:\n  version: 1\n  early-commands:\n    - echo hi\n")
+    assert filled.count("phy80211") == 1
+    parsed = yaml.safe_load(filled)
+    wifi = [cmd for cmd in parsed["autoinstall"]["early-commands"] if "phy80211" in cmd]
+    assert len(wifi) == 1
+    assert wifi[0].startswith("sh -c 'for p in /sys/class/net")
+    again = complete_linux_user_data(filled)
+    assert again.count("phy80211") == 1
 
 
 def test_complete_linux_user_data_uses_live_imaging_url():
@@ -119,6 +190,7 @@ def test_factory_linux_seed_has_imaging_callback():
     assert 'name: "en*"' in text
     assert 'name: "eth*"' in text
     assert "sysrq-trigger" in text
+    assert "phy80211" in text
 
 
 def test_factory_linux_seed_substitutes_lists():
@@ -191,9 +263,19 @@ def test_complete_linux_user_data_appends_force_reboot_once():
         "#cloud-config\nautoinstall:\n  version: 1\n  late-commands:\n"
         "    - wget -q --post-file=/dev/null -O /dev/null {{phone_home_url}} || true\n"
     )
-    assert filled.count("sysrq-trigger") >= 3
+    assert "sync; sync;" in filled
+    assert "echo b > /proc/sysrq-trigger" in filled
+    assert "echo s >" not in filled
     again = complete_linux_user_data(filled)
     assert again.count("sysrq-trigger") == filled.count("sysrq-trigger")
+    assert "echo s >" not in again
+    legacy = complete_linux_user_data(
+        "#cloud-config\nautoinstall:\n  version: 1\n  late-commands:\n"
+        "    - sh -c 'echo 1 > /proc/sys/kernel/sysrq; echo s > /proc/sysrq-trigger; "
+        "echo u > /proc/sysrq-trigger; echo b > /proc/sysrq-trigger'\n"
+    )
+    assert "sync; sync;" in legacy
+    assert "echo s >" not in legacy
 
 
 def test_complete_linux_user_data_injects_source_id():

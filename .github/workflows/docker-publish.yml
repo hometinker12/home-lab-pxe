@@ -212,7 +212,7 @@ jobs:
             --base-url http://127.0.0.1:8080 \
             --user admin \
             --password container-smoke-password \
-            --smb-password "$SMB_PASS" \
+            --smb-password="$SMB_PASS" \
             --container "$CONTAINER_NAME"
           rotated=0
           for i in $(seq 1 15); do

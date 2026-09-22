@@ -22,10 +22,11 @@ class MachineState(StrEnum):
     deployed = "deployed"
     staged = "staged"
     disabled = "disabled"
+    failed = "failed"
 
 
 def state_label(state: str) -> str:
-    """Operator-facing badge text. Staged reimages show as Deploying until imaging starts."""
+    """Operator-facing badge text."""
     labels = {
         MachineState.pending.value: "Pending",
         MachineState.ready.value: "Ready",
@@ -33,8 +34,9 @@ def state_label(state: str) -> str:
         MachineState.imaging.value: "Imaging",
         MachineState.timeout_error.value: "Timeout Error",
         MachineState.deployed.value: "Deployed",
-        MachineState.staged.value: "Deploying",
+        MachineState.staged.value: "Staged",
         MachineState.disabled.value: "Disabled",
+        MachineState.failed.value: "Install failed",
     }
     return labels.get(state, state)
 
@@ -82,6 +84,30 @@ class BootMenuSettings(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+class IpxeBuildStatus(StrEnum):
+    idle = "idle"
+    building = "building"
+    ready = "ready"
+    failed = "failed"
+
+
+class IpxeBuild(SQLModel, table=True):
+    """USB options and status for the custom x86_64 EFI iPXE build."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    usb_keyboard: bool = False
+    usb_block: bool = True
+    hcd_ehci: bool = True
+    hcd_uhci: bool = True
+    hcd_xhci: bool = True
+    hcd_usbio: bool = False
+    status: str = IpxeBuildStatus.idle.value
+    error: str = ""
+    served: str = ""
+    source_commit: str = ""
+    built_at: datetime | None = None
+
+
 class Image(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(unique=True, index=True)
@@ -112,6 +138,10 @@ class Machine(SQLModel, table=True):
     state: str = MachineState.pending.value
     last_seen_at: datetime | None = None
     last_ip: str = ""
+    manufacturer: str = ""
+    product: str = ""
+    serial: str = ""
+    install_log: str = ""
     assigned_image_id: int | None = Field(default=None, foreign_key="image.id")
     instance_id: str = Field(default_factory=lambda: uuid4().hex)
     guest_overlay: str = "{}"
@@ -184,6 +214,6 @@ class DhcpRuntime(SQLModel, table=True):
     dhcp_router: str = ""
     dhcp_dns: str = ""
     extra_options: str = ""
-    imaging_timeout_minutes: int = 15
+    imaging_timeout_minutes: int = 60
     default_timezone: str = "UTC"
     updated_at: datetime = Field(default_factory=utcnow)

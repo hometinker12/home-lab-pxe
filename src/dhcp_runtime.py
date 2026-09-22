@@ -14,7 +14,7 @@ from .settings import get_settings
 from .timezones import is_valid_timezone
 
 DHCP_RUNTIME_ID = 1
-DEFAULT_IMAGING_TIMEOUT_MINUTES = 15
+DEFAULT_IMAGING_TIMEOUT_MINUTES = 60
 MAX_IMAGING_TIMEOUT_MINUTES = 1440
 DEFAULT_TIMEZONE = "UTC"
 _IFACE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,31}$")

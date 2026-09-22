@@ -23,13 +23,14 @@ from ..inventory.service import (
 from ..models import Machine, MachineState, OsFamily
 from ..settings import get_settings
 from ..tftp_store import boot_chain_script_body
-from ..web import client_ip
+from ..web import client_ip, reported_client_ip
 
 router = APIRouter(tags=["ipxe"])
 
 
 def _boot_chain_response() -> PlainTextResponse:
-    return PlainTextResponse(boot_chain_script_body(get_settings().public_url), media_type="text/plain")
+    body = boot_chain_script_body(get_settings().public_url)
+    return PlainTextResponse(body, media_type="text/plain")
 
 
 @router.get("/boot.ipxe", include_in_schema=False)
@@ -44,6 +45,13 @@ def autoexec_ipxe():
 
 def _invalid_mac() -> PlainTextResponse:
     return PlainTextResponse("#!ipxe\necho invalid mac\nsleep 5\n", status_code=400)
+
+
+def _client_addr(
+    request: Request,
+    ip: str | None,
+) -> str:
+    return reported_client_ip(client_ip(request), ip)
 
 
 def _payload_for(db: Session, machine: Machine) -> BootPayload | None:
@@ -78,14 +86,25 @@ def ipxe_script(
     request: Request,
     uuid: str | None = Query(default=None),
     ip: str | None = Query(default=None),
+    manufacturer: str | None = Query(default=None),
+    product: str | None = Query(default=None),
+    serial: str | None = Query(default=None),
 ):
     try:
         mac_n = normalize_mac(mac)
     except InvalidMacError:
         return _invalid_mac()
-    client = ip or client_ip(request)
+    client = _client_addr(request, ip)
     with session_scope() as db:
-        machine = touch_machine(db, mac=mac_n, uuid=uuid, client_ip=client)
+        machine = touch_machine(
+            db,
+            mac=mac_n,
+            uuid=uuid,
+            client_ip=client,
+            manufacturer=manufacturer,
+            product=product,
+            serial=serial,
+        )
         expire_stale_imaging(db)
         script, kind = _render_policy_script(db, machine, mac_n)
         record_boot_event(db, machine, client_ip=client, script_kind=kind)
@@ -100,14 +119,25 @@ def ipxe_folder_menu(
     request: Request,
     uuid: str | None = Query(default=None),
     ip: str | None = Query(default=None),
+    manufacturer: str | None = Query(default=None),
+    product: str | None = Query(default=None),
+    serial: str | None = Query(default=None),
 ):
     try:
         mac_n = normalize_mac(mac)
     except InvalidMacError:
         return _invalid_mac()
-    client = ip or client_ip(request)
+    client = _client_addr(request, ip)
     with session_scope() as db:
-        machine = touch_machine(db, mac=mac_n, uuid=uuid, client_ip=client)
+        machine = touch_machine(
+            db,
+            mac=mac_n,
+            uuid=uuid,
+            client_ip=client,
+            manufacturer=manufacturer,
+            product=product,
+            serial=serial,
+        )
         expire_stale_imaging(db)
         hyphen = mac_hyphen(mac_n)
         kind = decide_script(db, machine)
@@ -128,14 +158,25 @@ def ipxe_boot_image(
     request: Request,
     uuid: str | None = Query(default=None),
     ip: str | None = Query(default=None),
+    manufacturer: str | None = Query(default=None),
+    product: str | None = Query(default=None),
+    serial: str | None = Query(default=None),
 ):
     try:
         mac_n = normalize_mac(mac)
     except InvalidMacError:
         return _invalid_mac()
-    client = ip or client_ip(request)
+    client = _client_addr(request, ip)
     with session_scope() as db:
-        machine = touch_machine(db, mac=mac_n, uuid=uuid, client_ip=client)
+        machine = touch_machine(
+            db,
+            mac=mac_n,
+            uuid=uuid,
+            client_ip=client,
+            manufacturer=manufacturer,
+            product=product,
+            serial=serial,
+        )
         expire_stale_imaging(db)
         hyphen = mac_hyphen(mac_n)
         kind = decide_script(db, machine)

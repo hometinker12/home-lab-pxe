@@ -79,7 +79,7 @@ One image, one Compose service for v1 (dnsmasq + uvicorn via `scripts/entrypoint
 | `proxy` (default) | proxyDHCP / `dhcp-range=...,proxy` — existing router/Windows DHCP stays authoritative |
 | `authoritative` | dnsmasq owns the range (`PXE_DHCP_RANGE`, router, DNS) |
 
-First-boot defaults come from env. After that, **Settings** in the console is the source of truth (SQLite). **PXE**, **DHCP**, **TFTP**, and **Machines** are separate collapsed sections. PXE shows the Docker **host** LAN IPv4 (`PXE_HOST_LAN_IPV4` in `.env`) plus bind interface, extra allowlisted dnsmasq lines, and copy-paste DHCP options 60/66/67 for an existing LAN DHCP server. DHCP and TFTP each have their own enable toggle. Machines holds the imaging timeout (default 15 minutes; `PXE_IMAGING_TIMEOUT_MINUTES` seeds the first row) and the default IANA timezone for new machines (`PXE_DEFAULT_TIMEZONE`, else UTC). **Files** in the header browses the TFTP, Images, and Data volumes (list/upload/download/delete; paths stay inside those roots). Saving PXE/DHCP/TFTP writes `dnsmasq-pxe.conf` plus `dhcp.enabled` / `tftp.enabled`; `scripts/entrypoint.sh` starts, stops, or reloads dnsmasq when either service is on. Extra option lines are allowlisted (`dhcp-option`, `dhcp-host`, …); `dhcp-script` and `conf-file` are rejected.
+First-boot defaults come from env. After that, **Settings** in the console is the source of truth (SQLite). **PXE**, **DHCP**, **TFTP**, and **Machines** are separate collapsed sections. PXE shows the Docker **host** LAN IPv4 (`PXE_HOST_LAN_IPV4` in `.env`) plus bind interface, extra allowlisted dnsmasq lines, and copy-paste DHCP options 60/66/67 for an existing LAN DHCP server. DHCP and TFTP each have their own enable toggle. Machines holds the imaging timeout (default 60 minutes; `PXE_IMAGING_TIMEOUT_MINUTES` seeds the first row) and the default IANA timezone for new machines (`PXE_DEFAULT_TIMEZONE`, else UTC). **Files** in the header browses the TFTP, Images, and Data volumes (list/upload/download/delete; paths stay inside those roots). Saving PXE/DHCP/TFTP writes `dnsmasq-pxe.conf` plus `dhcp.enabled` / `tftp.enabled`; `scripts/entrypoint.sh` starts, stops, or reloads dnsmasq when either service is on. Extra option lines are allowlisted (`dhcp-option`, `dhcp-host`, …); `dhcp-script` and `conf-file` are rejected.
 
 ## 5. Machine identity and lifecycle
 
@@ -91,7 +91,8 @@ First-boot defaults come from env. After that, **Settings** in the console is th
 | `ready` | Folder menu (countdown to disk) | Operator named it / tagged it; no deploy yet |
 | `deploying` | Installer + guest init | Operator clicked Deploy or the client picked an OS image |
 | `imaging` | Same as deploying | Installer early-command / WinPE startnet |
-| `timeout_error` | Folder menu; no guest-init | Imaging longer than Settings timeout (default 15 minutes) |
+| `timeout_error` | Folder menu; no guest-init | Imaging longer than Settings timeout (default 60 minutes) |
+| `failed` | Folder menu; no guest-init | Ubuntu installer posted a redacted error log |
 | `deployed` | Folder menu (countdown to disk) | Installer reported success, or operator marked deployed |
 | `staged` | Same as `deploying` on next PXE | Operator saved image/guest-init changes |
 | `disabled` | Same as unknown (timeout then disk) | Operator quarantined the MAC |
@@ -107,8 +108,8 @@ Unknown → `pending` is automatic. Every other transition is an operator action
 1. Unknown / unnamed pending / disabled → insert `pending` if needed, sleep the Boot menu unknown timeout, then `exit` / `sanboot` to the next boot device.
 2. Named, `ready`, `deployed`, or `timeout_error` → iPXE folder menu (`GET /ipxe/{mac}/menu/{id}` for nested folders). Default item continues to disk after the menu countdown. `GET /ipxe/{mac}/boot/{image_id}` starts deploy/stage for Linux/Windows, or boots a tool image without changing state.
 3. `deploying`, `staged`, or `imaging`:
-   - **Linux:** kernel + initrd plus `autoinstall`, `cloud-config-url=` to `/cloud-init/{machine_id}/user-data` on NFS, and `ds=nocloud;s=${PXE_PUBLIC_URL}/cloud-init/{machine_id}/`.
-   - **Windows:** iPXE `wimboot` (or equivalent) into WinPE / Setup, with `unattend.xml` from `${PXE_PUBLIC_URL}/windows/{machine_id}/unattend.xml`.
+   - **Linux:** kernel + initrd plus `autoinstall`, `cloud-config-url=` to `/cloud-init/{machine_id}/{instance_id}/user-data` on NFS, and `ds=nocloud;s=${PXE_PUBLIC_URL}/cloud-init/{machine_id}/{instance_id}/`.
+   - **Windows:** iPXE `wimboot` (or equivalent) into WinPE / Setup, with `unattend.xml` from `${PXE_PUBLIC_URL}/windows/{machine_id}/{instance_id}/unattend.xml`.
 
 The folder menu is built in the console **Boot menu** page (nested folders, default Windows / Linux / Tools). Extracting images are omitted from the client list.
 
@@ -134,11 +135,11 @@ Each image record: name, `os_family`, architecture (`x86_64` / `aarch64`), kerne
 
 Per machine, HTTP nocloud (`ds=nocloud;s=` plus `cloud-config-url=` to `user-data` on NFS casper):
 
-- `GET /cloud-init/{machine_id}/user-data`
-- `GET /cloud-init/{machine_id}/meta-data`
-- `GET /cloud-init/{machine_id}/vendor-data`
+- `GET /cloud-init/{machine_id}/{instance_id}/user-data`
+- `GET /cloud-init/{machine_id}/{instance_id}/meta-data`
+- `GET /cloud-init/{machine_id}/{instance_id}/vendor-data`
 
-These URLs are unauthenticated (installers have no console session) and return **404** unless the machine is `deploying` or `staged`.
+These URLs are unauthenticated (installers have no console session) and return **404** unless the machine is `deploying`, `staged`, or `imaging` and `instance_id` matches. Paths without `instance_id` return 404.
 
 `meta-data.instance-id` **must change** when a staged job should re-run cloud-init / reimage.
 
@@ -155,8 +156,8 @@ Two layers, both in v1:
 
 Per machine:
 
-- `GET /windows/{machine_id}/unattend.xml` — generated at request time; Administrator name/password decrypted into the answer file, never cached on disk in plaintext.
-- `GET /cloudbase-init/{machine_id}/` — HTTP metadata/user-data for Cloudbase-Init (NoCloud-style files or the HTTP service Cloudbase-Init expects). Bump instance-id on staged reimage.
+- `GET /windows/{machine_id}/{instance_id}/unattend.xml` — generated at request time; Administrator name/password decrypted into the answer file, never cached on disk in plaintext.
+- `GET /cloudbase-init/{machine_id}/{instance_id}/` — HTTP metadata/user-data for Cloudbase-Init (NoCloud-style files or the HTTP service Cloudbase-Init expects). Bump instance-id on staged reimage. Paths without `instance_id` return 404.
 
 Windows images used for deploy **must include Cloudbase-Init** (sysprep’d WIM/template). Raw ISO-only install without Cloudbase-Init can complete Setup via `unattend.xml` but cannot apply later staged guest-init the same way.
 

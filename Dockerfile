@@ -7,7 +7,7 @@
 
 FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
-ARG VERSION=0.3.3
+ARG VERSION=0.3.6
 
 LABEL org.opencontainers.image.title="home-lab-pxe" \
       org.opencontainers.image.description="Docker PXE/iPXE server with web console, cloud-init, and Cloudbase-Init" \
@@ -32,9 +32,16 @@ ENV WIMBOOT_URL=https://github.com/ipxe/wimboot/releases/download/v2.8.0/wimboot
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        binutils \
         ca-certificates \
         curl \
         dnsmasq \
+        gcc \
+        git \
+        libc6-dev \
+        make \
+        perl \
+        xz-utils \
         gosu \
         gzip \
         libpcre2-8-0 \
@@ -81,6 +88,15 @@ RUN set -e; \
     curl -fsSL -o /usr/share/home-lab-pxe/wimboot "$WIMBOOT_URL"; \
     echo "$WIMBOOT_SHA256  /usr/share/home-lab-pxe/wimboot" | sha256sum -c -; \
     cp /usr/share/home-lab-pxe/wimboot /var/lib/pxe/tftp/wimboot
+
+# Pinned iPXE tree for the boot-menu rebuild. Keep the SHA in sync with src/ipxe_build.py.
+RUN set -eu; \
+    git init /usr/share/home-lab-pxe/ipxe; \
+    git -C /usr/share/home-lab-pxe/ipxe remote add origin https://github.com/ipxe/ipxe.git; \
+    git -C /usr/share/home-lab-pxe/ipxe fetch --depth 1 origin 7cd92e01d6514b2c8091999f9bce8aef22a1d586; \
+    git -C /usr/share/home-lab-pxe/ipxe checkout --detach FETCH_HEAD; \
+    test -f /usr/share/home-lab-pxe/ipxe/src/Makefile; \
+    rm -rf /usr/share/home-lab-pxe/ipxe/.git
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \

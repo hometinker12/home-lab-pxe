@@ -175,8 +175,8 @@ sequenceDiagram
   IPXE->>API: GET /ipxe/{mac}
   API-->>IPXE: kernel cmdline ds=nocloud
   IPXE->>API: GET kernel / initrd
-  OS->>API: GET /cloud-init/{id}/meta-data
-  OS->>API: GET /cloud-init/{id}/user-data
+  OS->>API: GET /cloud-init/{id}/{instance_id}/meta-data
+  OS->>API: GET /cloud-init/{id}/{instance_id}/user-data
   API->>Vault: decrypt linux_root
   Vault-->>API: username + password in memory
   API-->>OS: rendered user-data (source.id from image catalog)
@@ -196,11 +196,11 @@ sequenceDiagram
 
   IPXE->>API: GET /ipxe/{mac}
   API-->>IPXE: wimboot + boot.wim / install.wim
-  PE->>API: GET /windows/{id}/unattend.xml
+  PE->>API: GET /windows/{id}/{instance_id}/unattend.xml
   API->>Vault: decrypt windows_administrator
   API-->>PE: unattend.xml (IMAGE NAME/INDEX from catalog; not cached plaintext)
   PE->>CBI: first boot of sysprep’d image
-  CBI->>API: GET /cloudbase-init/{id}/
+  CBI->>API: GET /cloudbase-init/{id}/{instance_id}/
   CBI->>API: callback deployed
 ```
 
@@ -216,6 +216,9 @@ stateDiagram-v2
   staged --> imaging: installer early-command
   imaging --> deployed: installer phone_home
   imaging --> timeout_error: Settings timeout
+  imaging --> failed: installer error log
+  deploying --> failed: installer error log
+  failed --> deploying: Deploy
   timeout_error --> deploying: Deploy
   deploying --> deployed: installer callback
   deployed --> staged: console save / reimage
@@ -227,7 +230,7 @@ stateDiagram-v2
   disabled --> ready: operator enables
 ```
 
-Identity: **MAC primary**, SMBIOS UUID secondary. A known UUID with a new MAC (NIC swap) attaches the MAC and keeps the record. **Timeout Error** is wait-only (no guest-init); the operator Deploys again. The timer is Settings → Machines (default 15 minutes). New machines inherit the Settings default IANA timezone.
+Identity: **MAC primary**, SMBIOS UUID secondary. A known UUID with a new MAC attaches that MAC when the previous NIC has been quiet for an hour. A UUID that still belongs to a recently seen MAC is left alone and the new MAC is registered on its own. **Timeout Error** and **Install failed** are wait-only (no guest-init); the operator Deploys again. The timer is Settings → Machines (default 60 minutes). Guest-init and imaging callbacks refresh it. New machines inherit the Settings default IANA timezone.
 
 ---
 
@@ -432,11 +435,11 @@ flowchart TD
   S -->|yes| OP["Operator actions"]
   K --> B["/ipxe/{mac}"]
   B --> LAN1["No session — boot policy only"]
-  K --> G["/cloud-init/{id}  /windows/{id}  /cloudbase-init/{id}"]
-  G --> LAN2["No session — only while deploying or staged"]
+  K --> G["/cloud-init/{id}/{instance}  /windows/{id}/{instance}  /cloudbase-init/{id}/{instance}"]
+  G --> LAN2["No session — only while deploying, staged, or imaging"]
 ```
 
-Guest seeds must not require a browser cookie (installers cannot log in). They **must not** appear in iPXE text. Seeds that decrypt the vault are served **only** while the machine is `deploying` or `staged` (404 otherwise). A LAN attacker who spoofs the MAC during that window can still pull that machine’s seed; that is an accepted home-lab residual risk.
+Guest seeds must not require a browser cookie (installers cannot log in). They **must not** appear in iPXE text. Seeds that decrypt the vault are served **only** while the machine is `deploying`, `staged`, or `imaging`, and the URL must include the current `instance_id` (404 otherwise). A LAN attacker who spoofs the MAC during that window can still pull that machine’s seed; that is an accepted home-lab residual risk. Console CSRF checks `Origin` or `Referer` against the request host. There is no double-submit token.
 
 ### 4.3 Credential vault
 
@@ -446,7 +449,7 @@ Linux **root** and Windows **local Administrator** usernames **and** passwords a
 flowchart LR
   subgraph write["Operator save"]
     FORM["HTML form password"]
-    CSRF["CSRF token"]
+    CSRF["Origin or Referer"]
     FORM --> ENC["Fernet.encrypt"]
     CSRF --> ENC
   end

@@ -18,25 +18,92 @@
 </header>
 {% if error and not edit_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 
-<section class="card">
-  <h2>Timeouts and labels</h2>
-  <form method="post" action="/boot-menu/settings" class="form">
-    {% if selected %}<input type="hidden" name="folder" value="{{ selected.id }}">{% endif %}
-    <label>Menu title <input name="title" value="{{ settings.title }}" required></label>
-    <label>Continue to next device <input name="continue_label" value="{{ settings.continue_label }}" required></label>
-    <label>Unknown / disabled timeout (seconds)
-      <input name="unknown_timeout_seconds" type="number" min="0" max="300" value="{{ settings.unknown_timeout_seconds }}">
-    </label>
-    <p class="meta">0 continues immediately. This timeout is not an OS-install menu — unknown and disabled hosts never see folders.</p>
-    <label>Configured-machine menu countdown (seconds)
-      <input name="menu_timeout_seconds" type="number" min="0" max="300" value="{{ settings.menu_timeout_seconds }}">
-    </label>
-    <p class="meta">0 waits until a key is pressed. The default item is continue-to-disk unless the operator opens a folder.</p>
-    <div class="btn-row">
-      <button type="submit">Save menu settings</button>
-    </div>
-  </form>
-</section>
+<details class="card" {% if error and not edit_open %}open{% endif %}>
+  <summary>Timeouts and labels</summary>
+  <div class="card-body">
+    <form method="post" action="/boot-menu/settings" class="form">
+      {% if selected %}<input type="hidden" name="folder" value="{{ selected.id }}">{% endif %}
+      <label>Menu title <input name="title" value="{{ settings.title }}" required></label>
+      <label>Continue to next device <input name="continue_label" value="{{ settings.continue_label }}" required></label>
+      <label>Unknown / disabled timeout (seconds)
+        <input name="unknown_timeout_seconds" type="number" min="0" max="300" value="{{ settings.unknown_timeout_seconds }}">
+      </label>
+      <p class="meta">0 continues immediately. This timeout is not an OS-install menu — unknown and disabled hosts never see folders.</p>
+      <label>Configured-machine menu countdown (seconds)
+        <input name="menu_timeout_seconds" type="number" min="0" max="300" value="{{ settings.menu_timeout_seconds }}">
+      </label>
+      <p class="meta">0 waits until a key is pressed. The default item is continue-to-disk unless the operator opens a folder.</p>
+      <div class="btn-row">
+        <button type="submit">Save menu settings</button>
+      </div>
+    </form>
+  </div>
+</details>
+
+<details class="card" {% if ipxe_open %}open{% endif %}>
+  <summary>iPXE build</summary>
+  <div class="card-body">
+    {% if ipxe_running %}
+    <script>setTimeout(function () { location.reload(); }, 3000);</script>
+    {% endif %}
+    <p class="meta">This binary is iPXE under GPL-2.0-only and is separate from the MIT licence of home-lab-pxe. Source commit <code>{{ ipxe_commit }}</code>. Rebuild writes <code>ipxe-custom.efi</code> and copies it over <code>ipxe.efi</code>. The first rebuild keeps the previous file as <code>ipxe-native.efi</code>.</p>
+    {% if ipxe_error %}<p class="alert alert-error" role="alert">{{ ipxe_error }}</p>{% endif %}
+    {% if ipxe_running %}
+    <p class="meta">Rebuild is running. This page refreshes until it finishes.</p>
+    {% elif ipxe_status == "failed" %}
+    <p class="alert alert-error" role="alert">{{ ipxe_notice or "Rebuild failed" }}</p>
+    {% elif ipxe_status == "ready" and ipxe_build.served == "custom" %}
+    <p class="meta">Serving the custom build as <code>ipxe.efi</code>{% if ipxe_build.built_at %} (built {{ ipxe_build.built_at.strftime("%Y-%m-%d %H:%M UTC") }}){% endif %}.</p>
+    {% elif ipxe_build.served == "stock" %}
+    <p class="meta">Serving the stock <code>ipxe.efi</code> backup.</p>
+    {% else %}
+    <p class="meta">Stock EFI defaults. A rebuild replaces <code>ipxe.efi</code> with the custom binary.</p>
+    {% endif %}
+    <form method="post" action="/boot-menu/ipxe-build" class="form">
+      {% if selected %}<input type="hidden" name="folder" value="{{ selected.id }}">{% endif %}
+      <input type="hidden" name="action" value="rebuild">
+      <label class="check">
+        <input type="checkbox" name="usb_keyboard" value="1" {% if ipxe_build.usb_keyboard %}checked{% endif %}>
+        USB keyboard
+      </label>
+      <p class="meta">Off in the stock EFI build. Turn this on when the firmware keyboard stops working after iPXE loads, then rebuild.</p>
+      <label class="check">
+        <input type="checkbox" name="usb_block" value="1" {% if ipxe_build.usb_block %}checked{% endif %}>
+        USB block devices
+      </label>
+      <label class="check">
+        <input type="checkbox" name="hcd_ehci" value="1" {% if ipxe_build.hcd_ehci %}checked{% endif %}>
+        EHCI host controller
+      </label>
+      <label class="check">
+        <input type="checkbox" name="hcd_uhci" value="1" {% if ipxe_build.hcd_uhci %}checked{% endif %}>
+        UHCI host controller
+      </label>
+      <label class="check">
+        <input type="checkbox" name="hcd_xhci" value="1" {% if ipxe_build.hcd_xhci %}checked{% endif %}>
+        xHCI host controller
+      </label>
+      <p class="meta">Leave xHCI on for Intel NUC USB.</p>
+      <label class="check">
+        <input type="checkbox" name="hcd_usbio" value="1" {% if ipxe_build.hcd_usbio %}checked{% endif %}>
+        EFI USB I/O host controller
+      </label>
+      <p class="meta">Off. iPXE marks this pseudo-controller as very slow. It is not the keyboard fix.</p>
+      <div class="btn-row">
+        <button type="submit" {% if ipxe_running %}disabled{% endif %}>Rebuild</button>
+      </div>
+    </form>
+    {% if stock_available %}
+    <form method="post" action="/boot-menu/ipxe-build" class="form">
+      {% if selected %}<input type="hidden" name="folder" value="{{ selected.id }}">{% endif %}
+      <input type="hidden" name="action" value="stock">
+      <div class="btn-row">
+        <button type="submit" class="btn-secondary" {% if ipxe_running %}disabled{% endif %}>Use stock</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</details>
 
 <div class="boot-menu-layout">
   <aside class="card boot-menu-tree">

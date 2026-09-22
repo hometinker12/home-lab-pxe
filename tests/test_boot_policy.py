@@ -1,4 +1,4 @@
-from tests.conftest import login
+from tests.conftest import login, seed_url
 
 from src.boot.policy import ScriptKind, decide_script
 from src.inventory.service import create_image, deploy_machine, mark_deployed, stage_machine
@@ -127,10 +127,10 @@ def test_windows_install_script_has_unattend_url_not_password(client):
     assert "install.wim" not in response.text
     assert "SuperSecret" not in response.text
     assert "wimboot" in response.text
-    seed = client.get(f"/windows/{mid}/unattend.xml")
+    seed = client.get(seed_url(client, mid, "windows", "unattend.xml"))
     assert "SuperSecret" in seed.text
     assert "windowsPE" in seed.text
-    startnet = client.get(f"/windows/{mid}/startnet.cmd")
+    startnet = client.get(seed_url(client, mid, "windows", "startnet.cmd"))
     assert startnet.status_code == 200
     assert r"\pxe-media" in startnet.text
     assert "SuperSecret" not in startnet.text
@@ -215,7 +215,7 @@ def test_imaging_timeout_serves_wait_menu(client):
         assert machine is not None
         deploy_machine(db, machine, image=image, actor="admin")
         machine.state = MachineState.imaging.value
-        machine.imaging_started_at = datetime.now(UTC) - timedelta(minutes=16)
+        machine.imaging_started_at = datetime.now(UTC) - timedelta(minutes=61)
         db.add(machine)
         db.commit()
         kind = decide_script(db, machine)

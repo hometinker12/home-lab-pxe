@@ -8,6 +8,7 @@
   <link rel="apple-touch-icon" href="/static/favicon.png">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/app.js" defer></script>
+  <script src="/static/cloudinit-editor.js" defer></script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
   <a class="skip-link" href="#main">Skip to content</a>
@@ -34,6 +35,9 @@
     </div>
   </header>
   <main id="main" class="{% block main_class %}wrap{% endblock %}">
+    {% if user and insecure_defaults %}
+    <p class="alert alert-warn">Insecure defaults are on. Set SECRET_KEY and ENCRYPTION_KEY before using this on a real LAN.</p>
+    {% endif %}
     {% block body %}{% endblock %}
   </main>
   <footer class="wrap">v{{ version }}</footer>

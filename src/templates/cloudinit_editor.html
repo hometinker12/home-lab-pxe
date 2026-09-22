@@ -1,0 +1,13 @@
+{# Schema-driven cloud-init node editor.
+   Context: cc_view ({doc, extra_yaml}), cc_schema (node list), form_id, disabled. #}
+<div class="cc-editor" data-cc-editor {% if disabled %}data-disabled="1"{% endif %}>
+  <script type="application/json" class="cc-schema">{{ cc_schema|tojson }}</script>
+  <script type="application/json" class="cc-doc">{{ cc_view.doc|tojson }}</script>
+  <div class="cc-nav" role="tablist" aria-label="Cloud-init modules"></div>
+  <div class="cc-detail"></div>
+  <details class="cc-advanced">
+    <summary>Advanced YAML</summary>
+    <p class="meta">Keys this form does not model. This is not the autoinstall installer block.</p>
+    <textarea name="cc_extra_yaml" rows="8" class="seed-editor" {% if form_id %}form="{{ form_id }}"{% endif %} {% if disabled %}disabled{% endif %}>{{ cc_view.extra_yaml }}</textarea>
+  </details>
+</div>
