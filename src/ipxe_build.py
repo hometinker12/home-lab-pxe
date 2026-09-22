@@ -25,6 +25,8 @@ LOGGER = logging.getLogger("home_lab_pxe")
 IPXE_COMMIT = "7cd92e01d6514b2c8091999f9bce8aef22a1d586"
 IPXE_BUILD_ID = 1
 IMAGE_SOURCE = Path("/usr/share/home-lab-pxe/ipxe")
+WORK_TREE = Path("/tmp/home-lab-pxe-ipxe")
+_SECRET_ENV = frozenset({"SECRET_KEY", "ENCRYPTION_KEY", "ADMIN_PASSWORD", "PXE_SMB_PASSWORD"})
 NATIVE_NAME = "ipxe-native.efi"
 CUSTOM_NAME = "ipxe-custom.efi"
 SERVED_NAME = "ipxe.efi"
@@ -214,17 +216,56 @@ def _source_tree() -> Path:
     return Path(override) if override else IMAGE_SOURCE
 
 
+def _work_tree_dir() -> Path:
+    override = (os.getenv("PXE_IPXE_WORK") or "").strip()
+    return Path(override) if override else WORK_TREE
+
+
+def _browser_roots() -> tuple[Path, ...]:
+    settings = get_settings()
+    roots: list[Path] = []
+    for path in (settings.data_dir, settings.image_root, settings.tftp_root):
+        try:
+            roots.append(path.resolve())
+        except OSError:
+            continue
+    return tuple(roots)
+
+
+def path_is_under(path: Path, roots: tuple[Path, ...]) -> bool:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return True
+    for root in roots:
+        if resolved == root or root in resolved.parents:
+            return True
+    return False
+
+
+def _is_under_browser(path: Path) -> bool:
+    return path_is_under(path, _browser_roots())
+
+
 def ensure_work_tree() -> Path:
-    dest = get_settings().data_dir / "ipxe-src"
-    if (dest / "src" / "Makefile").is_file():
-        return dest
+    """Copy the pinned image source to a directory the Files browser cannot write."""
     source = _source_tree()
+    dest = _work_tree_dir()
+    if _is_under_browser(source) or _is_under_browser(dest):
+        raise IpxeBuildError("iPXE build must use the image source, outside the Files volumes")
     if not (source / "src" / "Makefile").is_file():
         raise IpxeBuildError("iPXE source is not in this image")
+    leftover = get_settings().data_dir / "ipxe-src"
+    if leftover.exists():
+        shutil.rmtree(leftover, ignore_errors=True)
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(source, dest, symlinks=True)
     return dest
+
+
+def _make_env() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if key not in _SECRET_ENV}
 
 
 def read_link_map(bin_dir: Path) -> str:
@@ -261,6 +302,7 @@ def _run_make(work: Path, cmd: list[str]) -> None:
             text=True,
             timeout=_MAKE_TIMEOUT_SECONDS,
             check=False,
+            env=_make_env(),
         )
     except FileNotFoundError as exc:
         raise IpxeBuildError("The iPXE compiler tools are not installed in this image") from exc

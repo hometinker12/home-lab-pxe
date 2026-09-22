@@ -1,5 +1,6 @@
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from tests.conftest import login
@@ -9,11 +10,14 @@ from src.ipxe_build import (
     IPXE_COMMIT,
     IpxeBuildError,
     UsbBuildOptions,
+    ensure_work_tree,
     install_built_efi,
+    path_is_under,
     render_usb_local_header,
     restore_stock_efi,
 )
 from src.models import IpxeBuildStatus
+from src.settings import clear_settings_cache
 
 
 @pytest.fixture(autouse=True)
@@ -188,6 +192,52 @@ def test_rebuild_saves_options_and_rejects_a_second_build(client, monkeypatch):
     )
     assert blocked.status_code == 200
     assert "already running" in blocked.text
+
+
+def _pin_volumes(monkeypatch, tmp_path: Path) -> tuple[Path, Path, Path]:
+    data = tmp_path / "data"
+    images = tmp_path / "images"
+    tftp = tmp_path / "tftp"
+    for path in (data, images, tftp):
+        path.mkdir()
+    monkeypatch.setenv("PXE_DATA_DIR", str(data))
+    monkeypatch.setenv("PXE_IMAGE_ROOT", str(images))
+    monkeypatch.setenv("PXE_TFTP_ROOT", str(tftp))
+    clear_settings_cache()
+    return data, images, tftp
+
+
+def _fake_source(path: Path) -> None:
+    (path / "src").mkdir(parents=True)
+    (path / "src" / "Makefile").write_text("all:\n", encoding="utf-8")
+
+
+def test_work_tree_is_copied_outside_files_volumes(tmp_path, monkeypatch):
+    data, _, _ = _pin_volumes(monkeypatch, tmp_path)
+    source = tmp_path / "image-ipxe"
+    work = tmp_path / "work"
+    _fake_source(source)
+    poisoned = data / "ipxe-src" / "src"
+    poisoned.mkdir(parents=True)
+    (poisoned / "Makefile").write_text("hack:\n\t@echo pwned\n", encoding="utf-8")
+    monkeypatch.setenv("PXE_IPXE_SOURCE", str(source))
+    monkeypatch.setenv("PXE_IPXE_WORK", str(work))
+    dest = ensure_work_tree()
+    assert dest.resolve() == work.resolve()
+    assert "pwned" not in (dest / "src" / "Makefile").read_text(encoding="utf-8")
+    assert not (data / "ipxe-src").exists()
+    assert not path_is_under(dest, (data.resolve(),))
+
+
+def test_refuses_to_build_from_a_files_volume(tmp_path, monkeypatch):
+    data, _, _ = _pin_volumes(monkeypatch, tmp_path)
+    source = data / "ipxe-src"
+    _fake_source(source)
+    monkeypatch.setenv("PXE_IPXE_SOURCE", str(source))
+    monkeypatch.setenv("PXE_IPXE_WORK", str(tmp_path / "work"))
+    with pytest.raises(IpxeBuildError, match="Files volumes"):
+        ensure_work_tree()
+    assert (source / "src" / "Makefile").is_file()
 
 
 def test_use_stock_restores_the_served_file(client, tmp_path):

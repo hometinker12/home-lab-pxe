@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Linux machine and image pages edit cloud-config modules in a node list; empty optional keys are omitted from `user-data`; the autoinstall installer section is unchanged.
+
 ## [0.3.6] - 2026-09-22
 
 ### Added
@@ -10,6 +12,7 @@
 
 ### Fixed
 
+- The iPXE rebuild copies the image's pinned source into a private work directory. It does not run `make` on a tree the Files browser can overwrite.
 - Ubuntu autoinstall flushes the disk before the forced reboot. The old late-command used sysrq sync, which returns before the EFI partition is written, so Intel NUCs came back with an empty EFI system partition and no boot loader.
 
 ## [0.3.5] - 2026-09-22
