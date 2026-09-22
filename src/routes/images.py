@@ -5,6 +5,8 @@ from starlette.datastructures import UploadFile
 from starlette.status import HTTP_303_SEE_OTHER
 
 from ..auth import require_user
+from ..cloudinit.editor import apply_cloudinit_editor, cloud_config_view
+from ..cloudinit.schema import NODES
 from ..db import get_db
 from ..extract_worker import schedule_extract
 from ..image_store import UploadError, has_upload, relative_slot_path, remove_image_tree, save_upload_file
@@ -123,6 +125,14 @@ def _apply_uploads(
 def _save_image_seed(image_id: int, os_family: OsFamily, form) -> None:
     if os_family == OsFamily.tool:
         return
+    if os_family == OsFamily.linux:
+        cc_json = _form_str(form, "cc_json")
+        if cc_json.strip():
+            existing = read_image_seed(image_id, os_family)
+            body = apply_cloudinit_editor(existing or "", cc_json, _form_str(form, "cc_extra_yaml"))
+            validate_seed_template(body, os_family)
+            write_image_seed(image_id, os_family, body)
+            return
     field = "unattend_xml" if os_family == OsFamily.windows else "user_data"
     if field not in form:
         return
@@ -190,6 +200,11 @@ def _image_source_options(db: Session, image) -> list:
 def _image_detail_context(request: Request, db: Session, image, *, error=None):
     family = OsFamily(image.os_family) if image.os_family in {e.value for e in OsFamily} else OsFamily.linux
     seed = "" if family == OsFamily.tool else read_image_seed(int(image.id), family)
+    cc_view = None
+    cc_schema: list = []
+    if family == OsFamily.linux:
+        cc_view = cloud_config_view(seed)
+        cc_schema = NODES
     return render(
         request,
         "image_detail.html",
@@ -202,6 +217,8 @@ def _image_detail_context(request: Request, db: Session, image, *, error=None):
         source_options=_image_source_options(db, image),
         extract_busy=image_extract_in_progress(image),
         error=error,
+        cc_view=cc_view,
+        cc_schema=cc_schema,
     )
 
 
