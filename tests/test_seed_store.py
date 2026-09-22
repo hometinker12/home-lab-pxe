@@ -263,9 +263,19 @@ def test_complete_linux_user_data_appends_force_reboot_once():
         "#cloud-config\nautoinstall:\n  version: 1\n  late-commands:\n"
         "    - wget -q --post-file=/dev/null -O /dev/null {{phone_home_url}} || true\n"
     )
-    assert filled.count("sysrq-trigger") >= 3
+    assert "sync; sync;" in filled
+    assert "echo b > /proc/sysrq-trigger" in filled
+    assert "echo s >" not in filled
     again = complete_linux_user_data(filled)
     assert again.count("sysrq-trigger") == filled.count("sysrq-trigger")
+    assert "echo s >" not in again
+    legacy = complete_linux_user_data(
+        "#cloud-config\nautoinstall:\n  version: 1\n  late-commands:\n"
+        "    - sh -c 'echo 1 > /proc/sys/kernel/sysrq; echo s > /proc/sysrq-trigger; "
+        "echo u > /proc/sysrq-trigger; echo b > /proc/sysrq-trigger'\n"
+    )
+    assert "sync; sync;" in legacy
+    assert "echo s >" not in legacy
 
 
 def test_complete_linux_user_data_injects_source_id():

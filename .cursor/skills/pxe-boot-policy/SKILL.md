@@ -42,7 +42,7 @@ Identity: MAC is primary; SMBIOS UUID is secondary. If UUID matches a known mach
 - Inject Linux root and Windows local Administrator from the Fernet vault at render time. Do not persist plaintext in `StagedJob` rows.
 - Deploy copies the image seed onto the machine if the machine file is empty. Console **Copy Default** overwrites the machine file from the current image template. Deploy persists hostname, timezone, packages, SSH keys, and the seed textarea from the same form before creating the install attempt.
 - Timezone is an IANA dropdown. New and PXE-discovered machines inherit Settings → Machines default timezone (`PXE_DEFAULT_TIMEZONE` on first boot, else UTC).
-- After phone-home, Ubuntu autoinstall late-commands sysrq-reboot so casper NFS does not hang on a blank cursor waiting to unmount nfsroot. Linux iPXE adds `noprompt`, `quickreboot`, and `reboot=force`.
+- After phone-home, Ubuntu autoinstall late-commands run a blocking `sync` and then sysrq `b` so casper NFS does not hang on a blank cursor waiting to unmount nfsroot. Do not use sysrq `s` or `u`; those schedule work and `b` resets before FAT writes to the EFI system partition reach the disk. Linux iPXE adds `noprompt`, `quickreboot`, and `reboot=force`.
 - Sanitize rendered payloads in logs (redact passwords, `chpasswd`, `AutoLogon`, `ssh_authorized_keys`).
 
 ## Credential vault
