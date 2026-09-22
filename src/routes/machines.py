@@ -4,6 +4,8 @@ from sqlmodel import Session
 from starlette.status import HTTP_303_SEE_OTHER
 
 from ..auth import require_user
+from ..cloudinit.editor import apply_cloudinit_editor, cloud_config_view
+from ..cloudinit.schema import NODES
 from ..db import get_db
 from ..dhcp_runtime import default_timezone
 from ..inventory.mac import InvalidMacError
@@ -89,6 +91,31 @@ def _image_options(images):
             }
         )
     return rows
+
+
+def _user_data_from_editor(
+    db: Session,
+    machine,
+    *,
+    family: OsFamily,
+    image,
+    cc_json: str | None,
+    cc_extra_yaml: str,
+    user_data: str,
+) -> str:
+    if family != OsFamily.linux or cc_json is None or not cc_json.strip():
+        return user_data
+    existing = read_machine_seed(int(machine.id), family)
+    if not existing.strip():
+        if image is not None:
+            existing = default_seed_text(int(image.id), family)
+        else:
+            assigned = get_image(db, machine.assigned_image_id)
+            if assigned is not None:
+                existing = default_seed_text(int(assigned.id), family)
+    if not existing.strip():
+        raise SeedError("Assign an image before editing cloud-init")
+    return apply_cloudinit_editor(existing, cc_json, cc_extra_yaml or "")
 
 
 def _resolved_timezone(db: Session, timezone: str, overlay: dict) -> str:
@@ -230,6 +257,11 @@ def _detail(request: Request, db: Session, machine, *, error=None, notice=None):
                 f"deploy snapshot {attempt.seed_snapshot_path}; installer fetches "
                 f"/cloud-init/{machine.id}/{machine.instance_id}/user-data with placeholders filled"
             )
+    cc_view = None
+    cc_schema: list = []
+    if family == OsFamily.linux and machine_seed.strip():
+        cc_view = cloud_config_view(machine_seed)
+        cc_schema = NODES
     return render(
         request,
         "machine_detail.html",
@@ -252,6 +284,8 @@ def _detail(request: Request, db: Session, machine, *, error=None, notice=None):
         script_labels=_SCRIPT_LABELS,
         can_abort=machine.state
         in {MachineState.deploying.value, MachineState.imaging.value, MachineState.staged.value},
+        cc_view=cc_view,
+        cc_schema=cc_schema,
     )
 
 
@@ -374,6 +408,8 @@ def machine_save(
     ssh_keys: str = Form(""),
     user_data: str = Form(""),
     unattend_xml: str = Form(""),
+    cc_json: str | None = Form(default=None),
+    cc_extra_yaml: str = Form(""),
     username: str = Form(""),
     password: str = Form(""),
     image_id: int | None = Form(default=None),
@@ -383,8 +419,19 @@ def machine_save(
     machine = _machine_or_404(db, machine_id)
     if edit_locked(machine):
         return _detail(request, db, machine, error="Cannot edit guest-init while a deploy is in progress")
+    family = os_family_for(db, machine)
+    assigned = get_image(db, image_id) if image_id else get_image(db, machine.assigned_image_id)
     try:
         _persist_account(db, machine, username=username, password=password)
+        user_data = _user_data_from_editor(
+            db,
+            machine,
+            family=family,
+            image=assigned,
+            cc_json=cc_json,
+            cc_extra_yaml=cc_extra_yaml,
+            user_data=user_data,
+        )
         _apply_guest_fields(
             db,
             machine,
@@ -434,6 +481,8 @@ def machine_deploy(
     ssh_keys: str = Form(""),
     user_data: str = Form(""),
     unattend_xml: str = Form(""),
+    cc_json: str | None = Form(default=None),
+    cc_extra_yaml: str = Form(""),
     db: Session = Depends(get_db),
     user: str = Depends(require_user),
 ):
@@ -446,7 +495,17 @@ def machine_deploy(
         raise HTTPException(status_code=400, detail="unknown image")
     kind = AccountKind.windows_administrator if image.os_family == OsFamily.windows.value else AccountKind.linux_root
     default_user = "Administrator" if kind == AccountKind.windows_administrator else "root"
+    family = OsFamily(image.os_family)
     try:
+        user_data = _user_data_from_editor(
+            db,
+            machine,
+            family=family,
+            image=image,
+            cc_json=cc_json,
+            cc_extra_yaml=cc_extra_yaml,
+            user_data=user_data,
+        )
         _apply_guest_fields(
             db,
             machine,
