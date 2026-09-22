@@ -80,9 +80,11 @@ def init_db() -> None:
     _seed_admin()
     from .dhcp_runtime import seed_dhcp_runtime
     from .inventory.boot_menu import seed_boot_menu
+    from .ipxe_build import seed_ipxe_build
 
     seed_dhcp_runtime()
     seed_boot_menu()
+    seed_ipxe_build()
 
 
 def _table_columns(conn, table: str) -> set[str]:

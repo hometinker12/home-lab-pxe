@@ -29,7 +29,8 @@ router = APIRouter(tags=["ipxe"])
 
 
 def _boot_chain_response() -> PlainTextResponse:
-    return PlainTextResponse(boot_chain_script_body(get_settings().public_url), media_type="text/plain")
+    body = boot_chain_script_body(get_settings().public_url)
+    return PlainTextResponse(body, media_type="text/plain")
 
 
 @router.get("/boot.ipxe", include_in_schema=False)
