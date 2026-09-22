@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Ubuntu autoinstall flushes the disk before the forced reboot. The old late-command used sysrq sync, which returns before the EFI partition is written, so Intel NUCs came back with an empty EFI system partition and no boot loader.
+
 ## [0.3.5] - 2026-09-22
 
 ### Added

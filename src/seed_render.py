@@ -274,11 +274,9 @@ def _ensure_install_log_error_command(auto: dict, install_log_url: str) -> bool:
     return True
 
 
-FORCE_REBOOT_CMD = (
-    "sh -c 'sleep 1; echo 1 > /proc/sys/kernel/sysrq; "
-    "echo s > /proc/sysrq-trigger; echo u > /proc/sysrq-trigger; "
-    "echo b > /proc/sysrq-trigger'"
-)
+# sysrq `s` and `u` only schedule work. `b` resets immediately, so the EFI
+# system partition's FAT writes never hit the disk. `sync` waits until they do.
+FORCE_REBOOT_CMD = "sh -c 'sync; sync; sleep 2; echo 1 > /proc/sys/kernel/sysrq; echo b > /proc/sysrq-trigger'"
 
 # netplan apply runs `udevadm settle` with no timeout. A Wi-Fi NIC that is still
 # probing (wlp*) keeps that queue busy, settle exits 1, and Subiquity aborts.
@@ -304,15 +302,31 @@ def _has_force_reboot(cmds: list) -> bool:
     return "sysrq-trigger" in blob or "reboot -f" in blob
 
 
+def _async_sysrq_sync(cmd: object) -> bool:
+    """True when the command uses sysrq sync/remount, which do not wait."""
+    text = _command_text(cmd)
+    return "sysrq-trigger" in text and ("echo s >" in text or "echo u >" in text)
+
+
 def _ensure_force_reboot_late_command(auto: dict) -> bool:
     """Casper NFS installs hang on a blank cursor if systemd waits to unmount nfsroot."""
     cmds = auto.get("late-commands")
     if not isinstance(cmds, list):
         auto["late-commands"] = [FORCE_REBOOT_CMD]
         return True
-    if _has_force_reboot(cmds):
-        return False
-    auto["late-commands"] = [*cmds, FORCE_REBOOT_CMD]
+    changed = False
+    rewritten: list = []
+    for cmd in cmds:
+        if _async_sysrq_sync(cmd):
+            rewritten.append(FORCE_REBOOT_CMD)
+            changed = True
+        else:
+            rewritten.append(cmd)
+    if _has_force_reboot(rewritten):
+        if changed:
+            auto["late-commands"] = rewritten
+        return changed
+    auto["late-commands"] = [*rewritten, FORCE_REBOOT_CMD]
     return True
 
 
