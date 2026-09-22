@@ -308,6 +308,8 @@ def main() -> None:
 
     status, _, body = c.request("GET", "/boot-menu")
     expect(status == 200 and b"Windows" in body and b"Linux" in body and b"Tools" in body, "boot menu default folders")
+    expect(b"iPXE build" in body and b'name="usb_keyboard"' in body, "boot menu iPXE build section")
+    expect(b"GPL-2.0-only" in body, "iPXE build licence notice")
     expect(b"unknown_timeout_seconds" in body, "unknown/disabled timeout field")
     expect(b'id="edit-folder"' in body, "folder editor overlay")
     expect(b'data-open-dialog="edit-folder"' in body, "edit folder control")

@@ -84,6 +84,30 @@ class BootMenuSettings(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+class IpxeBuildStatus(StrEnum):
+    idle = "idle"
+    building = "building"
+    ready = "ready"
+    failed = "failed"
+
+
+class IpxeBuild(SQLModel, table=True):
+    """USB options and status for the custom x86_64 EFI iPXE build."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    usb_keyboard: bool = False
+    usb_block: bool = True
+    hcd_ehci: bool = True
+    hcd_uhci: bool = True
+    hcd_xhci: bool = True
+    hcd_usbio: bool = False
+    status: str = IpxeBuildStatus.idle.value
+    error: str = ""
+    served: str = ""
+    source_commit: str = ""
+    built_at: datetime | None = None
+
+
 class Image(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(unique=True, index=True)
