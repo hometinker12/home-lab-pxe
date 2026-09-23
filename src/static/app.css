@@ -1098,9 +1098,18 @@ tr.is-filtered { display: none; }
   align-items: start;
   margin: 0 0 0.9rem;
 }
-.form:has(> .cc-editor),
-.image-form:has(.cc-editor) {
-  max-width: none;
+.seed-label-actions {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.cc-editor-dialog {
+  width: min(72rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+.cc-editor-dialog .cc-nav {
+  max-height: min(60vh, 28rem);
 }
 .cc-nav {
   max-height: 70vh;

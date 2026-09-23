@@ -390,6 +390,38 @@ def machines_create(
     return RedirectResponse(url=f"/machines/{machine.id}", status_code=HTTP_303_SEE_OTHER)
 
 
+_EDITOR_MAX_BYTES = 256 * 1024
+
+
+@router.post("/api/cloud-init/editor")
+async def cloudinit_editor_preview(request: Request, user: str = Depends(require_user)):
+    """Turn the open seed file into editor fields, or write those fields back into the file."""
+    del user
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Expected JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+    seed = payload.get("seed") if isinstance(payload.get("seed"), str) else ""
+    if len(seed.encode("utf-8")) > _EDITOR_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="Seed exceeds 256 KiB")
+    action = str(payload.get("action") or "")
+    try:
+        if action == "view":
+            view = cloud_config_view(seed)
+            return {"doc": view["doc"], "extra_yaml": view["extra_yaml"], "mode": view["mode"]}
+        if action == "apply":
+            cc_json = payload.get("cc_json") if isinstance(payload.get("cc_json"), str) else ""
+            extra = payload.get("cc_extra_yaml") if isinstance(payload.get("cc_extra_yaml"), str) else ""
+            if not cc_json.strip():
+                raise SeedError("Editor document is empty")
+            return {"seed": apply_cloudinit_editor(seed, cc_json, extra)}
+    except SeedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    raise HTTPException(status_code=400, detail="Unknown action")
+
+
 @router.get("/machines/{machine_id}", response_class=HTMLResponse)
 def machine_detail(request: Request, machine_id: int, db: Session = Depends(get_db), user: str = Depends(require_user)):
     _apply_imaging_timeouts(db)
