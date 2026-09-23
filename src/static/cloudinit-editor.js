@@ -119,18 +119,10 @@
       return;
     }
 
-    const extraYaml = root.querySelector('textarea[name="cc_extra_yaml"]');
-    const formId = extraYaml ? extraYaml.getAttribute("form") : null;
-    const form = (extraYaml && extraYaml.form) || root.closest("form");
-
-    /* Value first, then the name, so a mid-init submit never posts a blank cc_json. */
     const hidden = document.createElement("input");
     hidden.type = "hidden";
+    hidden.setAttribute("data-cc-state", "");
     hidden.value = JSON.stringify(state);
-    if (formId) {
-      hidden.setAttribute("form", formId);
-    }
-    hidden.name = "cc_json";
     root.append(hidden);
 
     const nodeButtons = new Map();
@@ -470,11 +462,118 @@
     if (initial) {
       showNode(initial);
     }
-    if (form) {
-      form.addEventListener("submit", () => {
-        hidden.value = JSON.stringify(state);
-      });
+  }
+
+  function editorError(dialog, message) {
+    const alert = dialog.querySelector("[data-cc-error]");
+    if (!alert) {
+      return;
     }
+    alert.hidden = !message;
+    alert.textContent = message || "";
+  }
+
+  function mountEditor(root, doc, extraYaml) {
+    const docEl = root.querySelector("script.cc-doc");
+    if (docEl) {
+      docEl.textContent = JSON.stringify(doc || {});
+    }
+    const extra = root.querySelector("[data-cc-extra]");
+    if (extra) {
+      extra.value = extraYaml || "";
+    }
+    const nav = root.querySelector(".cc-nav");
+    const detail = root.querySelector(".cc-detail");
+    if (nav) {
+      nav.replaceChildren();
+    }
+    if (detail) {
+      detail.replaceChildren();
+    }
+    root.querySelector("[data-cc-state]")?.remove();
+    delete root.dataset.ccReady;
+    root.dataset.ccReady = "1";
+    initCloudInitEditor(root);
+  }
+
+  async function postEditor(body) {
+    const response = await fetch("/api/cloud-init/editor", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+    });
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch {
+      payload = {};
+    }
+    if (!response.ok) {
+      const detail = payload.detail;
+      const message = typeof detail === "string" ? detail : "Could not update the seed";
+      throw new Error(message);
+    }
+    return payload;
+  }
+
+  function wireEditorDialogs() {
+    document.querySelectorAll("[data-cc-open]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const dialog = document.getElementById(btn.getAttribute("data-cc-dialog") || "");
+        const seed = document.querySelector("[data-cc-seed]");
+        const root = dialog ? dialog.querySelector("[data-cc-editor]") : null;
+        if (!dialog || !seed || !root || typeof dialog.showModal !== "function") {
+          return;
+        }
+        const applyBtn = dialog.querySelector("[data-cc-apply]");
+        btn.disabled = true;
+        editorError(dialog, "");
+        try {
+          const view = await postEditor({ action: "view", seed: seed.value });
+          mountEditor(root, view.doc, view.extra_yaml);
+          if (applyBtn) {
+            applyBtn.disabled = false;
+          }
+          dialog.showModal();
+        } catch (err) {
+          editorError(dialog, err instanceof Error ? err.message : "Could not open the editor");
+          if (applyBtn) {
+            applyBtn.disabled = true;
+          }
+          dialog.showModal();
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+    document.querySelectorAll("[data-cc-apply]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const dialog = btn.closest("dialog");
+        const seed = document.querySelector("[data-cc-seed]");
+        const root = dialog ? dialog.querySelector("[data-cc-editor]") : null;
+        const stateInput = root ? root.querySelector("[data-cc-state]") : null;
+        const extra = root ? root.querySelector("[data-cc-extra]") : null;
+        if (!dialog || !seed || !stateInput) {
+          return;
+        }
+        btn.disabled = true;
+        editorError(dialog, "");
+        try {
+          const result = await postEditor({
+            action: "apply",
+            seed: seed.value,
+            cc_json: stateInput.value,
+            cc_extra_yaml: extra ? extra.value : "",
+          });
+          seed.value = result.seed || "";
+          dialog.close();
+        } catch (err) {
+          editorError(dialog, err instanceof Error ? err.message : "Could not apply the editor");
+          btn.disabled = false;
+        }
+      });
+    });
   }
 
   function boot() {
@@ -485,6 +584,7 @@
       root.dataset.ccReady = "1";
       initCloudInitEditor(root);
     });
+    wireEditorDialogs();
   }
 
   if (document.readyState === "loading") {

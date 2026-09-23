@@ -197,7 +197,10 @@ def test_machine_detail_includes_cc_editor(client):
         mid = int(machine.id)
     page = client.get(f"/machines/{mid}")
     assert page.status_code == 200
+    assert 'name="user_data"' in page.text
+    assert ">Editor</button>" in page.text
     assert "data-cc-editor" in page.text
+    assert 'name="cc_json"' not in page.text
 
 
 def test_image_detail_linux_includes_cc_editor(client):
@@ -217,6 +220,8 @@ def test_image_detail_linux_includes_cc_editor(client):
         image_id = int(image.id)
     page = client.get(f"/images/{image_id}")
     assert page.status_code == 200
+    assert 'name="user_data"' in page.text
+    assert ">Editor</button>" in page.text
     assert "data-cc-editor" in page.text
 
 
@@ -238,3 +243,28 @@ def test_image_detail_windows_excludes_cc_editor(client):
     page = client.get(f"/images/{image_id}")
     assert page.status_code == 200
     assert "data-cc-editor" not in page.text
+    assert ">Editor</button>" not in page.text
+
+
+def test_editor_preview_view_and_apply(client):
+    login(client)
+    seed = _factory_seed()
+    view = client.post("/api/cloud-init/editor", json={"action": "view", "seed": seed})
+    assert view.status_code == 200
+    body = view.json()
+    assert body["mode"] == "autoinstall"
+    assert body["doc"]["hostname"] == "{{hostname}}"
+    applied = client.post(
+        "/api/cloud-init/editor",
+        json={"action": "apply", "seed": seed, "cc_json": json.dumps(body["doc"]), "cc_extra_yaml": body["extra_yaml"]},
+    )
+    assert applied.status_code == 200
+    before = _parsed_autoinstall(seed)
+    after = _parsed_autoinstall(applied.json()["seed"])
+    assert before["early-commands"] == after["early-commands"]
+    assert before["user-data"] == after["user-data"]
+
+
+def test_editor_preview_requires_login(client):
+    response = client.post("/api/cloud-init/editor", json={"action": "view", "seed": ""})
+    assert response.status_code == 401

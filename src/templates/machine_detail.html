@@ -93,20 +93,15 @@
     {% else %}
     <label>
       <span class="seed-label-row">Machine user-data
-        <button type="submit" form="machine-save" formaction="/machines/{{ machine.id }}/seed/copy-default" class="btn-ghost btn-sm" {% if deploying %}disabled{% endif %}>Copy Default</button>
+        <span class="seed-label-actions">
+          {% if cc_view %}
+          <button type="button" class="btn-ghost btn-sm" data-cc-open data-cc-dialog="cc-editor-dialog" {% if deploying %}disabled{% endif %}>Editor</button>
+          {% endif %}
+          <button type="submit" form="machine-save" formaction="/machines/{{ machine.id }}/seed/copy-default" class="btn-ghost btn-sm" {% if deploying %}disabled{% endif %}>Copy Default</button>
+        </span>
       </span>
-      {% if not cc_view %}
-      <textarea form="machine-save" name="user_data" rows="16" class="seed-editor" {% if deploying %}disabled{% endif %}>{{ machine_seed }}</textarea>
-      {% endif %}
+      <textarea form="machine-save" name="user_data" rows="16" class="seed-editor" data-cc-seed {% if deploying %}disabled{% endif %}>{{ machine_seed }}</textarea>
     </label>
-    {% if cc_view %}
-    {% with form_id="machine-save", disabled=deploying %}
-    {% include "cloudinit_editor.html" %}
-    {% endwith %}
-    <noscript>
-      <textarea form="machine-save" name="user_data" rows="16" class="seed-editor">{{ machine_seed }}</textarea>
-    </noscript>
-    {% endif %}
     {% endif %}
     <p class="meta">Active seed: <code>{{ served_hint }}</code>.</p>
     <details>
@@ -135,4 +130,7 @@
     {% endfor %}
   </ul>
 </section>
+{% if cc_view %}
+{% include "cloudinit_editor.html" %}
+{% endif %}
 {% endblock %}

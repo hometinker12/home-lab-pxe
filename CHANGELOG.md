@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- Linux machine and image pages edit cloud-config modules in a node list; empty optional keys are omitted from `user-data`; the autoinstall installer section is unchanged.
+- Linux machine and image pages keep the raw user-data file. Editor, next to Copy Default on a machine, opens the cloud-config node list in a dialog. Apply writes that list back into the file and leaves the autoinstall installer section unchanged. Empty optional keys are omitted.
 
 ## [0.3.6] - 2026-09-22
 

@@ -88,19 +88,14 @@
       </div>
     </details>
     <div data-os="linux">
-      {% if cc_view %}
-      <label>cloud-init user-data</label>
-      {% with form_id="", disabled=extract_busy %}
-      {% include "cloudinit_editor.html" %}
-      {% endwith %}
-      <noscript>
-        <textarea name="user_data" rows="24" class="seed-editor">{{ seed_text }}</textarea>
-      </noscript>
-      {% else %}
-      <label>cloud-init user-data
-        <textarea name="user_data" rows="24" class="seed-editor">{{ seed_text }}</textarea>
+      <label>
+        <span class="seed-label-row">cloud-init user-data
+          {% if cc_view %}
+          <button type="button" class="btn-ghost btn-sm" data-cc-open data-cc-dialog="cc-editor-dialog" {% if extract_busy %}disabled{% endif %}>Editor</button>
+          {% endif %}
+        </span>
+        <textarea name="user_data" rows="24" class="seed-editor" data-cc-seed>{{ seed_text }}</textarea>
       </label>
-      {% endif %}
       <p class="meta">Placeholders: {{ placeholder_help }}. This editor is the image template. Deploy copies it onto a machine if that machine file is empty; Copy Default on the machine page pulls the latest. On Deploy a snapshot is pinned under Files → Install snapshots; the installer fetches the filled file from HTTP <code>/cloud-init/&lt;machine-id&gt;/user-data</code>, not that snapshot. Image files cannot be saved empty — reset to factory instead.</p>
     </div>
     <div data-os="windows">
@@ -121,4 +116,7 @@
     <form method="post" action="/images/{{ image.id }}/delete" onsubmit="return confirm('Delete this image and its extracted files?');"><button type="submit" class="btn-danger">Delete image</button></form>
   </div>
 </section>
+{% if cc_view %}
+{% include "cloudinit_editor.html" %}
+{% endif %}
 {% endblock %}
