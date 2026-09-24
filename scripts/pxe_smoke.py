@@ -276,6 +276,15 @@ def main() -> None:
     except SyntaxError as exc:
         fail(f"autoinstall confirm helper is not valid Python: {exc}")
 
+    status, _, body = c.request("GET", "/boot-files/uefi-boot-order.py")
+    expect(status == 200 and b"efibootmgr" in body, "uefi boot order python helper")
+    try:
+        compile(body.decode(), "uefi-boot-order.py", "exec")
+    except SyntaxError as exc:
+        fail(f"uefi boot order helper is not valid Python: {exc}")
+    status, _, body = c.request("GET", "/boot-files/uefi-boot-order.ps1")
+    expect(status == 200 and b"bcdedit" in body, "uefi boot order PowerShell helper")
+
     mac = "de-ad-be-ef-00-01"
     status, _, body = c.request("GET", f"/ipxe/{mac}")
     text = body.decode()
@@ -896,6 +905,7 @@ def main() -> None:
     expect("event=imaging" in user_data, "autoinstall early-commands must ping imaging")
     expect("phy80211" in user_data, "autoinstall must unbind live Wi-Fi before netplan apply")
     expect("autoinstall-confirm.py" in user_data, "autoinstall must fetch the confirmation helper")
+    expect("uefi-boot-order.py" in user_data, "autoinstall must run the UEFI boot order helper")
     expect("optional: true" in user_data, "netplan catch-all NICs must be optional")
     expect("\n  identity:" in user_data, "autoinstall must include identity")
     expect("\n  timezone:" not in user_data, "timezone must not be an autoinstall root key")
@@ -1066,6 +1076,7 @@ def main() -> None:
     expect(b"windowsPE" in body, "unattend missing windowsPE")
     expect(b"/IMAGE/NAME" in body and b"Windows Server 2022 SERVERSTANDARD" in body, "unattend missing selected image name")
     expect(b"<Value>2</Value>" in body, "unattend missing selected wim index")
+    expect(b"uefi-boot-order.ps1" in body, "unattend must run the UEFI boot order helper in specialize")
     status, _, body = c.request("GET", guest_path(win_live, "windows", "startnet.cmd"))
     expect(status == 200 and b"pxe-media" in body, "startnet missing SMB share")
     expect(b"event=imaging" in body, "WinPE startnet must ping imaging")

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 
+from ..boot.uefi_order import linux_helper_program, windows_helper_script
 from ..db import session_scope
 from ..inventory.service import get_image, get_machine_for_guest_init, get_open_attempt
 from ..models import InstallAttempt
@@ -45,6 +46,24 @@ def autoinstall_confirm_script():
     return PlainTextResponse(
         autoinstall_confirm_program(),
         media_type="text/x-python",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/boot-files/uefi-boot-order.py", include_in_schema=False)
+def uefi_boot_order_linux():
+    return PlainTextResponse(
+        linux_helper_program(get_settings().public_url),
+        media_type="text/x-python",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/boot-files/uefi-boot-order.ps1", include_in_schema=False)
+def uefi_boot_order_windows():
+    return PlainTextResponse(
+        windows_helper_script(get_settings().public_url),
+        media_type="text/plain",
         headers={"Cache-Control": "no-store"},
     )
 

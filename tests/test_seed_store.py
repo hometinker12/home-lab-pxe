@@ -325,3 +325,99 @@ def test_seed_byte_cap(tmp_path, monkeypatch):
     clear_settings_cache()
     with pytest.raises(SeedError, match="PXE_MAX_SEED_BYTES"):
         write_image_seed(1, OsFamily.linux, "x" * 40)
+
+
+def _factory_linux_rendered() -> str:
+    from src.seed_render import dummy_values, substitute_yaml
+
+    return substitute_yaml(factory_seed_text(OsFamily.linux), dummy_values())
+
+
+def _late_commands(text: str) -> list:
+    return [str(cmd) for cmd in yaml.safe_load(text)["autoinstall"]["late-commands"]]
+
+
+def test_complete_linux_user_data_orders_uefi_before_reboot():
+    from src.seed_render import complete_linux_user_data
+
+    for policy in ("pxe", "disk"):
+        filled = complete_linux_user_data(
+            _factory_linux_rendered(),
+            public_url="http://192.168.100.250:8080",
+            next_boot_device=policy,
+            machine_id="12",
+        )
+        cmds = _late_commands(filled)
+        index = next(i for i, cmd in enumerate(cmds) if "uefi-boot-order.py" in cmd)
+        assert "echo b > /proc/sysrq-trigger" in cmds[index + 1]
+        assert any("/events" in cmd and "--post-file" in cmd for cmd in cmds[:index])
+        order_cmd = cmds[index]
+        assert f"python3 /run/pxe-uefi-boot-order.py {policy} 12 || true" in order_cmd
+        assert '"http://192.168.100.250:8080/boot-files/uefi-boot-order.py"' in order_cmd
+        assert "sysrq-trigger" not in order_cmd
+        assert "reboot -f" not in order_cmd
+
+
+def test_complete_linux_user_data_uefi_order_idempotent():
+    from src.seed_render import complete_linux_user_data
+
+    kwargs = {"public_url": "http://pxe.test:8080", "next_boot_device": "pxe", "machine_id": "12"}
+    filled = complete_linux_user_data(_factory_linux_rendered(), **kwargs)
+    again = complete_linux_user_data(filled, **kwargs)
+    assert sum("uefi-boot-order.py" in cmd for cmd in _late_commands(again)) == 1
+
+
+def test_complete_linux_user_data_skips_uefi_order_without_policy():
+    from src.seed_render import complete_linux_user_data
+
+    for policy, machine_id in (("", "12"), ("pxe", ""), ("cdrom", "12"), ("pxe", "12; reboot")):
+        filled = complete_linux_user_data(
+            _factory_linux_rendered(),
+            public_url="http://pxe.test:8080",
+            next_boot_device=policy,
+            machine_id=machine_id,
+        )
+        assert "uefi-boot-order" not in filled
+
+
+def test_complete_linux_user_data_uefi_order_before_reboot_f():
+    from src.seed_render import complete_linux_user_data
+
+    filled = complete_linux_user_data(
+        "#cloud-config\nautoinstall:\n  version: 1\n  late-commands:\n    - echo done\n    - reboot -f\n",
+        next_boot_device="disk",
+        machine_id="7",
+    )
+    cmds = _late_commands(filled)
+    assert cmds[0] == "echo done"
+    assert "uefi-boot-order.py disk 7" in cmds[1]
+    assert "{{public_url}}/boot-files/uefi-boot-order.py" in cmds[1]
+    assert cmds[2] == "reboot -f"
+    assert len(cmds) == 3
+
+
+def test_render_selected_seed_uses_machine_next_boot_device(client):
+    from src.db import session_scope
+    from src.inventory.service import create_image, deploy_machine, touch_machine
+    from src.seed_render import render_selected_seed
+
+    with session_scope() as db:
+        machine = touch_machine(db, mac="02:00:00:00:00:51", uuid=None, client_ip="10.0.0.8")
+        machine.hostname = "boot1"
+        machine.next_boot_device = "disk"
+        image = create_image(
+            db,
+            name="u24-order",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
+        deploy_machine(db, machine, image=image, actor="admin")
+        db.commit()
+        rendered = render_selected_seed(db, machine)
+        mid = int(machine.id)
+    order = [cmd for cmd in _late_commands(rendered) if "uefi-boot-order.py" in cmd]
+    assert len(order) == 1
+    assert f"uefi-boot-order.py disk {mid} || true" in order[0]
+    assert '"http://pxe.test:8080/boot-files/uefi-boot-order.py"' in order[0]

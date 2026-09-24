@@ -40,6 +40,12 @@
       {% endif %}
     </label>
     <label>Hostname <input name="hostname" value="{{ machine.hostname or overlay.hostname or '' }}" placeholder="lab-node-01" {% if deploying %}disabled{% endif %}></label>
+    <label>Next Boot Device <select name="next_boot_device" {% if deploying %}disabled{% endif %}>
+      {% for value, label in next_boot_devices %}
+      <option value="{{ value }}" {% if (machine.next_boot_device or 'pxe') == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select></label>
+    <p class="meta">Applied at the end of the next install. PXE: network boot stays first (IPv4 PXE, then the installed OS), so the host keeps getting the boot menu; first-boot reboots wait out the menu countdown. Local disk: the installed OS boots first and network entries move to the end. On a deployed machine, Save stages a reimage.</p>
     <label>Local user <input name="username" value="{{ account.username }}" placeholder="root or Administrator" {% if deploying %}disabled{% endif %}></label>
     <label>Password <input type="password" name="password" autocomplete="new-password" placeholder="{% if account.set %}set — leave blank to keep{% else %}required to deploy{% endif %}" {% if deploying %}disabled{% endif %}></label>
     <p class="meta">Username is visible. Password is write-only ({% if account.set %}set{% else %}not set{% endif %}). Save stores a new password. Deploy uses this account or the imaging default in Settings.</p>

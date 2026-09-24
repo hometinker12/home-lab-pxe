@@ -38,7 +38,7 @@ from ..inventory.service import (
     update_staged_attempt,
     upsert_local_account,
 )
-from ..models import AccountKind, MachineState, OsFamily
+from ..models import AccountKind, MachineState, NextBootDevice, OsFamily
 from ..security import VaultError
 from ..seed_render import validate_seed_template
 from ..seed_store import (
@@ -127,6 +127,19 @@ def _resolved_timezone(db: Session, timezone: str, overlay: dict) -> str:
     return tz
 
 
+_NEXT_BOOT_DEVICES = [(NextBootDevice.pxe.value, "PXE"), (NextBootDevice.disk.value, "Local disk")]
+
+
+def _normalized_next_boot_device(value: str | None) -> str | None:
+    """Return a valid next-boot-device value, or None when the form left it blank."""
+    choice = (value or "").strip().lower()
+    if not choice:
+        return None
+    if choice not in {d.value for d in NextBootDevice}:
+        raise ValueError("Choose a valid next boot device")
+    return choice
+
+
 def _apply_guest_fields(
     db: Session,
     machine,
@@ -141,9 +154,13 @@ def _apply_guest_fields(
     allow_blank_hostname: bool,
     write_seed: bool,
     delete_empty_seed: bool,
+    next_boot_device: str | None = None,
 ) -> None:
+    boot_device = _normalized_next_boot_device(next_boot_device)
     overlay = load_overlay(machine.guest_overlay)
     tz = _resolved_timezone(db, timezone, overlay)
+    if boot_device is not None:
+        machine.next_boot_device = boot_device
     if hostname.strip() or allow_blank_hostname:
         apply_hostname(machine, hostname)
     overlay.update(
@@ -286,6 +303,7 @@ def _detail(request: Request, db: Session, machine, *, error=None, notice=None):
         in {MachineState.deploying.value, MachineState.imaging.value, MachineState.staged.value},
         cc_view=cc_view,
         cc_schema=cc_schema,
+        next_boot_devices=_NEXT_BOOT_DEVICES,
     )
 
 
@@ -445,6 +463,7 @@ def machine_save(
     username: str = Form(""),
     password: str = Form(""),
     image_id: int | None = Form(default=None),
+    next_boot_device: str = Form(""),
     db: Session = Depends(get_db),
     user: str = Depends(require_user),
 ):
@@ -477,6 +496,7 @@ def machine_save(
             allow_blank_hostname=True,
             write_seed=True,
             delete_empty_seed=True,
+            next_boot_device=next_boot_device,
         )
         assigned = get_image(db, machine.assigned_image_id)
         if machine.state == MachineState.disabled.value:
@@ -515,6 +535,7 @@ def machine_deploy(
     unattend_xml: str = Form(""),
     cc_json: str | None = Form(default=None),
     cc_extra_yaml: str = Form(""),
+    next_boot_device: str = Form(""),
     db: Session = Depends(get_db),
     user: str = Depends(require_user),
 ):
@@ -551,6 +572,7 @@ def machine_deploy(
             allow_blank_hostname=False,
             write_seed=True,
             delete_empty_seed=False,
+            next_boot_device=next_boot_device,
         )
         if password:
             upsert_local_account(
