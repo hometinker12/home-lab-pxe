@@ -1,0 +1,305 @@
+---
+name: commit-and-release
+description: Full home-lab-pxe commit workflow. Use whenever the user says "commit" or "commit all pending changes" — runs local lint/test/Trivy gates, commits and pushes develop, waits for SHA-matched CI, runs the security-reviewer gate, then PRs and merges develop into release and watches release smoke. Never promotes to main.
+---
+
+# Commit and release workflow
+
+When the user asks to **commit** (or "commit all pending changes"), perform this full sequence without asking for confirmation:
+
+**Workflow path:** commit → push → **wait for matching CI (blocking; SHA-matched green required)** → **adversarial security review (blocking)** → PR to `release` → merge → watch integration smoke until green. On any CI or security-gate failure, fix on **`develop`** and **restart from §1 Commit**. **Never open a PR while CI is pending or red, or while security review is FAIL.**
+
+**Stop at `release`.** Do **not** open PRs to `main`, merge to `main`, or push to `main` as part of this workflow. Docker publish ([`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)) runs automatically on push to `main` after a manual `release` → `main` merge.
+
+Work on **`develop`** unless the user specifies another branch.
+
+## Branch and CI map
+
+| Stage | Branch | Workflow | Jobs to watch |
+|-------|--------|----------|---------------|
+| Unit tests | `develop` | [`.github/workflows/pxe-smoke.yml`](.github/workflows/pxe-smoke.yml) | `pytest (ubuntu)` |
+| Container PXE smoke | `develop` and `release` | same workflow | `PXE and Docker image smoke` (local `docker build` only — never `docker push`) |
+| Develop commit gate | `develop` | same workflow | `develop commit smoke gate` (needs both jobs above) |
+| Docker Hub + GitHub Release | `main` | [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) | `Test`, `Build and smoke-test container`, `Build and publish`, `Create GitHub Release` |
+
+Promotion path: **`develop` → `release`** (end of the default commit workflow). **`release` → `main`** is a separate, explicit request and triggers Docker publish.
+
+Until `src/` and `tests/` exist, the develop job may pass as a bootstrap skip. After the first application commit, **both** `pytest (ubuntu)` and `PXE and Docker image smoke` must be green on `develop`. The container job builds the image on the runner and **must not** `docker push`.
+
+### Docker Hub GitHub secrets (do not put in README)
+
+Set these on the repository (**Settings → Secrets and variables → Actions**) before the first `main` publish:
+
+| Secret | Value |
+|--------|--------|
+| `DOCKERHUB_USERNAME` | Docker Hub username that owns `hometinker12/home-lab-pxe` |
+| `DOCKERHUB_TOKEN` | Docker Hub [access token](https://hub.docker.com/settings/security) with permission to push that image |
+
+No Cosign key is stored in GitHub. Signing uses GitHub Actions OIDC (`id-token: write` on the publish job).
+
+## 1. Commit
+
+1. Run `git status`, `git diff`, and `git log --oneline -5` in parallel.
+2. **Local test gate (changed files)** — before staging, run scoped checks. See [Local test gate](#local-test-gate-changed-files) below. **Do not stage, commit, or push until this gate passes.**
+3. **Docs alignment** — when the diff touches user-facing behavior, config, or APIs, verify `CHANGELOG.md` `[Unreleased]`, `.env.example`, and `VERSION` stay aligned. See [Docs alignment review](#docs-alignment-review) below. **Do not update `README.md` unless the user explicitly asked to change it in this request.**
+4. **Smoke coverage review** — when the diff touches production-facing PXE/API/auth behavior, verify CI smoke tests still cover it. See [Smoke test coverage review](#smoke-test-coverage-review) below.
+5. Stage all relevant source changes (exclude `__pycache__/`, `.pytest_cache/`, build artifacts, secrets, ISOs/images, `.cursor/*.log`, and `.claude/settings.local.json`). Include CHANGELOG/VERSION/.env.example fixes from step 3 in the same commit. Include `README.md` only when the user explicitly requested a README update.
+6. Write a concise commit message focused on **why**; match recent repo style.
+7. Commit and verify with `git status`.
+8. **Local Trivy gate** — before push, scan the Docker image on this machine. See [Local Trivy gate](#local-trivy-gate-before-push) below. **Do not push until this gate passes.**
+9. Push `develop` to `origin` (`git push origin develop`).
+
+### Local test gate (changed files)
+
+Run on **every** commit (including fix-loop commits). Scope = all files that would be included in the commit: modified, staged, and untracked source files from `git status` / `git diff --name-only` / `git diff --cached --name-only` / `git ls-files --others --exclude-standard`.
+
+**Python paths:** `src/**/*.py`, `tests/**/*.py`, `scripts/**/*.py`, `pyproject.toml`, `requirements*.txt`.
+
+**When at least one Python source file changed:**
+
+1. Install dev deps if needed:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+```
+
+2. Run Ruff (config in `pyproject.toml`; install with `python -m pip install ruff` if missing):
+
+```powershell
+python -m ruff check src tests
+python -m ruff format --check src tests
+```
+
+On format failure, auto-fix then re-check:
+
+```powershell
+python -m ruff format src tests
+python -m ruff format --check src tests
+```
+
+3. Run pytest:
+   - Changed `tests/test_*.py` → run those files: `python -m pytest tests/test_foo.py tests/test_bar.py`
+   - Changed `src/**` without matching test file → run full suite if the diff is non-trivial (routes, auth, boot policy, cloud-init, security); skip for docs-only or `.cursor/` / `.claude/` config edits
+   - Default when unsure: `python -m pytest`
+
+4. **Stop** on any lint or test failure — fix on **`develop`**, include fixes in the commit, and re-run this gate from step 1.
+
+**Skip** only when the pending diff has **no** Python source files (e.g. markdown/docs only, pure `.cursor/` / `.claude/` rule, agent, or skill edits with no app code). When in doubt, run the gate.
+
+Note Ruff auto-fixes in the commit body or PR summary when format changed files.
+
+**How to run (optional):** Delegate to **`test-runner`** (`.claude/agents/test-runner.md`) to keep logs out of the main context.
+
+### Local Trivy gate (before push)
+
+Run **after** a successful commit and **before** `git push origin develop`. Mirrors the CI Trivy gate in [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) and the release PXE smoke job: High/Critical, `ignore-unfixed`, `os,library`, `.trivyignore`, non-zero exit on findings.
+
+**When to run:** whenever the pending push can change the production image contents, including changes under `Dockerfile`, `requirements*.txt`, `pyproject.toml`, `src/**`, `scripts/entrypoint.sh`, or `.trivyignore`. **When in doubt, run.**
+
+**Skip** only for clearly non-image diffs (markdown/docs only, pure `.cursor/` / `.claude/` agent/rule/skill edits, test-only changes with no `src/` or dependency edits) **or** when no `Dockerfile` exists yet.
+
+```powershell
+powershell -File scripts/trivy-local-scan.ps1
+```
+
+Requires Docker. Uses a local `trivy` CLI when present; otherwise runs `aquasec/trivy` via Docker against a saved image tar.
+
+**Stop** on failure — fix vulnerabilities (or a reviewed `.trivyignore` entry), commit the fix, re-run this gate, then push. Do not push a red Trivy scan.
+
+### Docs alignment review
+
+Run when the diff touches routes, env vars, Docker/Compose, boot policy, cloud-init, Windows guest-init, local-account encryption, admin UI, or public API behavior.
+
+Checklist:
+
+| Artifact | Update when… |
+|----------|--------------|
+| `README.md` | **Never**, unless the user explicitly asked to update `README.md` in this request. See `.claude/rules/readme.md`. Capability and install deltas go in CHANGELOG / `.env.example` / PLAN / ARCHITECTURE instead. |
+| `CHANGELOG.md` | Any user-visible fix, feature, or breaking change |
+| `.env.example` | New or renamed environment variables |
+| `VERSION` | Release-bound changes (usually when preparing a release merge, not every commit) |
+| `PLAN.md` | Only when architecture or milestone status changes — not required every commit |
+
+Return **PASS** when aligned or **SKIP** when docs-only / internal refactor with no user-facing delta.
+
+### Smoke test coverage review
+
+Run when the diff touches production-facing behavior that CI smoke tests are meant to catch:
+
+| Area | Trigger paths (non-exhaustive) |
+|------|------------------------------|
+| Inventory / machines API | `src/routes/machines.py`, `src/inventory/**` |
+| Auth / sessions / API keys | `src/auth.py`, `src/routes/auth_pages.py`, `src/security.py`, `src/rbac.py` |
+| Boot policy / iPXE | `src/boot/**`, `src/routes/ipxe.py` |
+| cloud-init | `src/cloudinit/**`, `src/routes/cloudinit.py` |
+| Windows guest-init | `src/windows/**` |
+| Local-account encryption | `src/security.py`, `src/inventory/**` |
+| Admin UI / forms | `src/web.py`, `src/templates/**`, `src/static/**` |
+| Health | `src/routes/health.py` |
+| Container / DHCP / TFTP | `Dockerfile`, `docker-compose.yml`, `scripts/entrypoint.sh` |
+| CI smoke | `.github/workflows/pxe-smoke.yml` |
+
+**When triggered:**
+
+1. Delegate to **`code-reviewer`** (read-only) via the Agent tool (`subagent_type: code-reviewer`, `run_in_background: false`) with this prompt shape:
+
+   ```
+   Compare uncommitted changes against CI smoke test coverage.
+   Read .github/workflows/pxe-smoke.yml.
+   For each production-impacting change, state whether an existing smoke step already covers it (job name + assertion) or mark it GAP.
+   Output: covered items (brief), GAP list (file/symbol + suggested workflow step or new check), and pass/fail.
+   ```
+
+2. If the subagent reports **GAP** items in scope for CI smoke (new public route, changed auth/CSRF, new boot-policy behavior, Docker hardening regression, etc.):
+   - **Stop** — do not proceed to staging, commit, push, or release.
+   - Extend the appropriate workflow job (`pytest` or `pxe-smoke-linux`).
+   - Re-run the smoke coverage review until the subagent passes.
+3. If the subagent passes, note smoke coverage in the commit body or PR summary (e.g. "smoke: covered by pxe-smoke-linux GET /ipxe/{mac}" or "smoke: no new checks — internal refactor only").
+
+**Skip** when the diff is clearly unrelated (docs-only, comments, pure CSS with no routing/auth impact). When in doubt, run the review.
+
+## 2. Wait for CI — **hard gate before PR**
+
+After pushing to **`develop`**, **§2 is mandatory and blocking** before opening a PR to **`release`**.
+
+**Do not** `gh pr create`, `gh pr merge`, or tell the user the release step is ready until **all** [CI green preconditions](#ci-green-preconditions) are satisfied for the **exact commit SHA** you just pushed.
+
+### CI green preconditions
+
+All of the following must be true before opening or merging a promotion PR:
+
+1. You pushed a commit to the source branch and recorded its **full SHA** (`git rev-parse HEAD` after push).
+2. You ran `gh run list --workflow=<workflow-file> --branch <branch> --limit 5` and identified the run whose **`head SHA`** matches that push SHA.
+3. You ran `gh run watch <run-id> --exit-status` for that run and it **exited 0**.
+4. You verified the run conclusion is **`success`** and **every required job** for that stage is green.
+5. If CI is still **`in_progress`** or **`queued`**, keep watching; **do not** proceed while waiting.
+
+If any precondition fails, CI is **red or incomplete** — go to [§2.2 Diagnose CI failures](#22-diagnose-ci-failures) and **restart from §1 Commit**.
+
+### 2.1 Watch CI after push to `develop`
+
+Workflow: **`pxe-smoke.yml`** on branch **`develop`**.
+
+Required green jobs: **`pytest (ubuntu)`**, **`PXE and Docker image smoke (ubuntu + Docker)`**, and **`develop commit smoke gate`**.
+
+```powershell
+git rev-parse HEAD
+gh run list --workflow=pxe-smoke.yml --branch develop --limit 5
+gh run watch <run-id> --exit-status
+```
+
+On failure:
+
+```powershell
+gh run view <run-id> --log-failed
+```
+
+### 2.2 Diagnose CI failures
+
+1. Delegate to **`ci-investigator`** (Agent tool, `subagent_type: ci-investigator`) with run ID, branch, workflow file name, and the failed job/step name from `gh run view`.
+2. For pytest failures, run scoped local checks via **`test-runner`** before committing a fix.
+3. Fix the root cause on **`develop`**, then **restart from §1 Commit**.
+
+## 3. Security review — **hard gate before any `release` promotion**
+
+After §2 is green for the exact push SHA, and **before** opening or merging a PR that updates `release`, run an adversarial security review of the changes that would land on `release`.
+
+**Hard gate:** Do **not** run `gh pr create`, `gh pr merge`, or otherwise push/promote commits onto **`release`** until this review returns **PASS**. A **FAIL** (any High or Medium confidence finding) stops the workflow here.
+
+### 3.1 When to run
+
+Run on **every** full commit→release promotion (default when the user says "commit" without narrowing scope).
+
+**Skip** only when the pending promotion diff is clearly non-security (docs-only markdown, comments-only, pure `.cursor/` / `.claude/` agent/rule/skill edits with no `src/`, `tests/`, `scripts/`, Docker, or workflow changes). When in doubt, run the review.
+
+**Commit-only** requests (user explicitly narrows to commit/push `develop` without release) may skip this section; still do not promote to `release` later without running it.
+
+### 3.2 Invoke `security-reviewer`
+
+1. Delegate to **`security-reviewer`** (read-only) via the Agent tool (`subagent_type: security-reviewer`, `run_in_background: false`) with this prompt shape:
+
+   ```
+   Full Repository Path: <absolute repository path>
+   Diff: branch changes
+   Base Branch: release
+   Custom Instructions: Adversarial security review for develop→release promotion. FAIL the gate if any High or Medium confidence finding exists. Review only the merge-base diff against release plus directly affected auth/crypto/boot-policy call sites.
+   ```
+
+2. Treat the subagent **Verdict** as authoritative:
+   - **FAIL** (any High or Medium confidence finding) → **Stop**. Do not create or merge a release PR. Report findings to the user (compact table: Confidence, Severity, Location, Finding). Fix on **`develop`**, then **restart from §1 Commit**.
+   - **PASS** (no High/Medium findings; Low-only is allowed) → proceed to §4. Note "security: PASS" in the PR body.
+   - If the subagent is blocked or crashes → treat as **FAIL**; retry once; if still blocked, stop and report—do not promote to `release`.
+
+3. Do **not** downgrade High/Medium findings yourself to proceed. Only a clean re-review after fixes may PASS.
+
+## 4. Pull request `develop` → `release` — **only after §2 green and §3 PASS**
+
+**Hard gate:** Do **not** run `gh pr create` until §2 preconditions are satisfied for the pushed commit **and** §3 security review is **PASS**.
+
+1. Create a PR: **head `develop` → base `release`** via `gh pr create`.
+2. Title: short summary of the main change. Body: Summary bullets + Test plan checklist + smoke coverage note + docs note + **security: PASS** + **CI run URL** and **matching commit SHA**.
+
+## 5. Merge to `release` — **only after §2 green on PR head and §3 PASS**
+
+**Hard gate:** Do **not** run `gh pr merge` until the PR head commit has a green **`pxe-smoke.yml`** pytest run **and** §3 security review is **PASS** for that same change set. If new commits landed on the PR after the review, re-run §3 on the updated head before merge.
+
+1. Merge the PR with `gh pr merge --merge` (or `--squash` only if the user requests it).
+2. Pull latest: `git checkout develop; git pull origin develop`.
+
+## 6. Watch integration smoke on `release`
+
+After merge to **`release`**, wait for [`.github/workflows/pxe-smoke.yml`](.github/workflows/pxe-smoke.yml):
+
+Required green job:
+
+- **`PXE and Docker image smoke (ubuntu + Docker)`**
+
+```powershell
+gh run list --workflow=pxe-smoke.yml --branch release --limit 5
+gh run watch <run-id> --exit-status
+```
+
+- Watch the run whose **`head SHA`** matches the merge commit on **`release`**.
+
+On failure:
+
+```powershell
+gh run view <run-id> --log-failed
+```
+
+Diagnose with **`ci-investigator`**, fix on **`develop`**, and **restart from §1 Commit** (full loop through develop CI → security review → release PR → release smoke).
+
+## 7. Completion criteria
+
+Report to the user when the requested scope is done:
+
+**Commit only** — stop after §2 green on **`develop`**; report pytest CI status and commit SHA.
+
+**Full release (default when user says "commit" without narrowing scope)** — report when **all** of the following are true:
+
+- **`develop`** pytest CI green for the feature commit(s).
+- **§3 security review PASS** (no High/Medium confidence findings) before the release PR/merge.
+- **`release`** PXE + Docker smoke green for the merge commit.
+- Include commit SHAs, CI run URLs (`gh run view <run-id> --web`), security verdict, and a one-line confirmation.
+
+Do **not** proceed to `main` or Docker publish unless the user explicitly asks in a separate request.
+
+## Shell notes (Windows / PowerShell)
+
+- Use `;` instead of `&&` to chain commands.
+- Prefer `git commit -m "title" -m "body"` over bash heredocs.
+
+## Do not
+
+- Proceed with commit before the **local test gate** passes.
+- **Push to `develop` before the local Trivy gate passes** (when the gate applies).
+- Proceed when production-impacting changes lack CI smoke coverage.
+- **Open or merge a PR to `release` before §3 security review PASS** — High or Medium confidence findings are a hard stop.
+- Downgrade or ignore High/Medium security findings to force a release promotion.
+- **Push to `main`**, merge to `main`, or open a **`release` → `main`** PR as part of this workflow.
+- **Open a promotion PR before CI green preconditions are satisfied** for the exact pushed commit SHA.
+- **Merge while CI is red, in progress, or green only for a different SHA** than the PR head.
+- Skip CI monitoring or exit the workflow while a required pipeline is still running or failed.
+- Skip CI failure investigation — use **`ci-investigator`** for failed steps.
+- Stop after the develop→release merge if §6 release smoke is still pending or failed — keep the fix loop going until release smoke is green.
+- Create empty commits when there is nothing to commit — report that instead.
