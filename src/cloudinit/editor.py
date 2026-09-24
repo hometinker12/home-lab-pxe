@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from ..seed_store import SeedError
+from .generated_nodes import ALIASES
 from .schema import MODELED_KEYS, NODES, node_label_for_key
 
 _MAX_EDITOR_BYTES = 256 * 1024
@@ -169,17 +170,39 @@ def _parse_int(value: Any, key: str) -> int | None:
         raise SeedError(f"Expected an integer for {key}") from exc
 
 
-def _validate_password_value(value: Any, context: str) -> None:
+def _is_password_placeholder(value: Any) -> bool:
+    text = str(value)
+    if "{{password" in text or "{{password_hash}}" in text:
+        return True
+    if text.startswith(_SHIELDED_PREFIX) and text.endswith(_SHIELDED_SUFFIX):
+        token = text[len(_SHIELDED_PREFIX) : -len(_SHIELDED_SUFFIX)]
+        return token.startswith("password")
+    return False
+
+
+def _validate_password_value(value: Any, context: str, *, strict: bool = False) -> None:
     if _is_empty(value):
         return
     text = str(value)
-    if "{{password" in text or "{{password_hash}}" in text or text.startswith("$"):
+    if _is_password_placeholder(text):
         return
-    if text.startswith(_SHIELDED_PREFIX) and text.endswith(_SHIELDED_SUFFIX):
-        token = text[len(_SHIELDED_PREFIX) : -len(_SHIELDED_SUFFIX)]
-        if token.startswith("password"):
-            return
+    if not strict and text.startswith("$"):
+        return
     raise SeedError(f"Credential fields must use placeholders ({context})")
+
+
+def _rename_aliases(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_rename_aliases(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    renamed: dict = {}
+    for key, item in value.items():
+        canon = ALIASES.get(key, key)
+        if key != canon and canon in value:
+            continue
+        renamed[canon] = _rename_aliases(item)
+    return renamed
 
 
 def _enum_to_view(value: Any, choices: list[str]) -> str:
@@ -218,11 +241,9 @@ def _string_list_from_doc(value: Any) -> list[str] | dict | None:
 
 
 def _emit_string_list(value: Any, block_token: str | None = None) -> Any:
-    if _is_block_marker(value):
-        token = value["__pxe_block__"]
-        if token not in _BLOCK_MARKERS:
-            raise SeedError(f"Unknown block token {token!r}")
-        return _emit_block_scalar(token)
+    blocked = _block_scalar_from_value(value)
+    if blocked:
+        return blocked
     if isinstance(value, list):
         items = [_shield_value(str(v)) for v in value if not _is_empty(v)]
         return items or None
@@ -251,6 +272,8 @@ def _emit_object_field(field: dict, raw: dict) -> Any:
     if ftype == "string":
         if _is_empty(value):
             return None
+        if field.get("credential") or key in _PASSWORD_KEYS or key == "password":
+            _validate_password_value(value, key, strict=bool(field.get("credential") or key == "password"))
         return _shield_value(str(value))
     if ftype == "text":
         if _is_empty(value):
@@ -283,54 +306,211 @@ def _emit_object_field(field: dict, raw: dict) -> Any:
         return lines or None
     if ftype == "row_list":
         return _emit_row_list(field, value)
+    if ftype == "object":
+        emitted = _emit_object(field, raw)
+        if not emitted:
+            return None
+        return emitted.get(key)
+    if ftype == "disk_layout":
+        return _emit_layout(value)
+    if ftype == "flex":
+        return _emit_flex(value)
+    if ftype == "yaml_value":
+        return _emit_yaml_value(value, key)
+    if ftype == "all_or_list":
+        return _emit_all_or_list(value)
     return None
 
 
-def _emit_row_list(field: dict, rows: Any) -> list | None:
-    if not isinstance(rows, list):
+def _block_scalar_from_value(value: Any) -> str | None:
+    if _is_block_marker(value):
+        return _emit_block_scalar(value["__pxe_block__"])
+    if isinstance(value, str):
+        match = _PXE_BLOCK_RE.fullmatch(value)
+        if match and match.group(1) in _BLOCK_MARKERS:
+            return _emit_block_scalar(match.group(1))
+    if isinstance(value, list) and len(value) == 1:
+        return _block_scalar_from_value(value[0])
+    return None
+
+
+def _emit_layout(value: Any) -> Any:
+    if not isinstance(value, dict):
         return None
+    mode = str(value.get("mode") or "")
+    if mode in {"", "unset"}:
+        return None
+    if mode == "true":
+        return True
+    if mode == "false":
+        return False
+    if mode == "remove":
+        return "remove"
+    if mode != "custom":
+        return None
+    lines = value.get("lines") or []
+    if isinstance(lines, str):
+        lines = [line for line in lines.splitlines() if line.strip()]
+    parsed: list = []
+    for line in lines:
+        text = str(line).strip()
+        if not text:
+            continue
+        if "," in text:
+            parts: list = []
+            for piece in text.split(","):
+                item = piece.strip()
+                parts.append(int(item) if item.isdigit() else item)
+            parsed.append(parts)
+        elif text.isdigit():
+            parsed.append(int(text))
+        else:
+            parsed.append(text)
+    return parsed or None
+
+
+def _emit_flex(value: Any) -> Any:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if _is_empty(value):
+        return None
+    text = str(value).strip()
+    if text == "true":
+        return True
+    if text == "false":
+        return False
+    if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
+        return int(text)
+    return _shield_value(text)
+
+
+def _emit_yaml_value(value: Any, key: str) -> Any:
+    if _is_empty(value):
+        return None
+    if not isinstance(value, str):
+        return _shield_value(value)
+    try:
+        parsed = yaml.safe_load(shield_tokens(value))
+    except yaml.YAMLError as exc:
+        raise SeedError(f"Invalid YAML in {key}") from exc
+    return None if parsed is None else parsed
+
+
+def _emit_all_or_list(value: Any) -> Any:
+    if isinstance(value, dict) and value.get("all") is True:
+        return "all"
+    if value == "all":
+        return "all"
+    return _emit_string_list(value)
+
+
+def _coerce_rows(field: dict, rows: Any) -> list:
+    label = str(field.get("label") or field.get("key"))
+    if isinstance(rows, str):
+        if not rows.strip():
+            return []
+        try:
+            parsed = yaml.safe_load(shield_tokens(rows))
+        except yaml.YAMLError as exc:
+            raise SeedError(f"Invalid YAML in {label}") from exc
+        if parsed is None:
+            return []
+        if not isinstance(parsed, list):
+            raise SeedError(f"{label} must be a YAML list")
+        return parsed
+    if rows is None:
+        return []
+    if not isinstance(rows, list):
+        raise SeedError(f"{label} must be a list")
+    return rows
+
+
+def _emit_row_list(field: dict, rows: Any) -> list | dict | None:
+    rows = _coerce_rows(field, rows)
     item_fields = field.get("item_fields", [])
-    required_keys = {f["key"] for f in item_fields if f.get("required")}
-    out_rows: list[dict] = []
+    known = {item["key"] for item in item_fields}
+    required_keys = {item["key"] for item in item_fields if item.get("required")}
+    emit = field.get("emit") or "list"
+    key_field = field.get("key_field") or "name"
+    out_rows: list = []
+    mapped: dict = {}
     for row in rows:
         if not isinstance(row, dict):
+            if field.get("allow_scalars") and not _is_empty(row):
+                out_rows.append(_shield_value(row) if isinstance(row, str) else row)
             continue
-        if any(_is_empty(row.get(rk)) for rk in required_keys):
+        row = _normalize_user_row(row)
+        if field.get("entry_rule") == "chpasswd":
+            if _is_empty(row.get("name")):
+                raise SeedError("chpasswd user name is required")
+            kind = str(row.get("type") or "hash")
+            if kind != "RANDOM" and _is_empty(row.get("password")):
+                raise SeedError("chpasswd user password is required")
+        elif any(_is_empty(row.get(req)) for req in required_keys):
             continue
         emitted: dict = {}
         for item_field in item_fields:
             ikey = item_field["key"]
-            ivalue = row.get(ikey)
-            itype = item_field["type"]
-            if itype == "bool":
-                if ivalue is not None:
-                    emitted[ikey] = bool(ivalue)
-            elif itype == "enum":
-                choice = _enum_from_doc(ivalue, item_field.get("choices", []), ikey)
-                if choice is not None:
-                    emitted[ikey] = choice
-            elif itype == "string_list":
-                sl = _emit_string_list(ivalue, item_field.get("block_token"))
-                if sl is not None:
-                    emitted[ikey] = sl
-            elif itype == "string" and ikey == "groups":
-                if not _is_empty(ivalue):
-                    parts = [p.strip() for p in str(ivalue).split(",") if p.strip()]
-                    if parts:
-                        emitted[ikey] = parts
-            elif itype == "string":
-                if ikey in _PASSWORD_KEYS or ikey == "password":
-                    if not _is_empty(ivalue):
-                        _validate_password_value(ivalue, ikey)
-                if ikey in required_keys:
-                    emitted[ikey] = _shield_value(str(ivalue or ""))
-                elif not _is_empty(ivalue):
-                    emitted[ikey] = _shield_value(str(ivalue))
-            elif itype == "text":
-                if not _is_empty(ivalue):
-                    emitted[ikey] = _shield_value(str(ivalue))
+            if emit in {"mapping", "mapping_scalar", "list_or_map"} and ikey == key_field:
+                continue
+            if item_field["type"] == "string" and ikey == "groups" and not _is_empty(row.get(ikey)):
+                parts = [part.strip() for part in str(row.get(ikey)).split(",") if part.strip()]
+                if parts:
+                    emitted[ikey] = parts
+                continue
+            value = _emit_object_field(item_field, row)
+            if value is not None:
+                if emit == "list_or_map" and ikey == "value":
+                    emitted[ikey] = value
+                else:
+                    emitted[ikey] = value
+        if field.get("preserve_extra"):
+            for extra_key, extra_value in row.items():
+                if extra_key in known or str(extra_key).startswith("__"):
+                    continue
+                if not _is_empty(extra_value):
+                    emitted[extra_key] = _shield_value(extra_value)
+        if emit == "mapping_scalar":
+            name = str(row.get(key_field) or "").strip()
+            if not name:
+                continue
+            mapped[name] = emitted.get("value", row.get("value"))
+            continue
+        if emit == "mapping":
+            name = str(row.get(key_field) or "").strip()
+            if not name:
+                continue
+            mapped[name] = emitted
+            continue
+        if emit == "tuple":
+            values = []
+            for item_field in item_fields:
+                piece = emitted.get(item_field["key"], "")
+                values.append("" if piece is None else piece)
+            while values and _is_empty(values[-1]):
+                values.pop()
+            if values:
+                out_rows.append(values)
+            continue
+        if emit == "list_or_map":
+            out_rows.append(emitted)
+            continue
         if emitted:
             out_rows.append(emitted)
+    if emit == "mapping_scalar":
+        return mapped or None
+    if emit == "mapping":
+        return mapped or None
+    if emit == "list_or_map":
+        if any(isinstance(item, dict) and item.get("name") for item in out_rows):
+            named = {
+                str(item["name"]): item.get("value") for item in out_rows if isinstance(item, dict) and item.get("name")
+            }
+            return named or None
+        values = [item.get("value") for item in out_rows if isinstance(item, dict) and item.get("value") is not None]
+        return values or None
     return out_rows or None
 
 
@@ -340,11 +520,28 @@ def _emit_object(field: dict, raw: dict) -> dict | None:
     if not isinstance(obj_raw, dict):
         obj_raw = {}
     inner: dict = {}
+    known = {sub["key"] for sub in field.get("object_fields", [])}
     for sub in field.get("object_fields", []):
         sub_key = sub["key"]
         emitted = _emit_object_field(sub, obj_raw)
         if emitted is not None:
             inner[sub_key] = emitted
+    extra_text = obj_raw.get("__extra__")
+    if field.get("preserve_extra") and isinstance(extra_text, str) and extra_text.strip():
+        try:
+            extra = yaml.safe_load(shield_tokens(extra_text))
+        except yaml.YAMLError as exc:
+            raise SeedError(f"Invalid additional keys in {obj_key}") from exc
+        if extra is not None:
+            if not isinstance(extra, dict):
+                raise SeedError(f"Additional keys in {obj_key} must be a mapping")
+            for extra_key, extra_value in extra.items():
+                if extra_key in known or extra_key in MODELED_KEYS:
+                    raise SeedError(f"Move '{extra_key}' to the {node_label_for_key(extra_key)} section.")
+                inner[extra_key] = extra_value
+    required_sub = field.get("require_subkey")
+    if required_sub and _is_empty(inner.get(required_sub)):
+        return None
     if obj_key == "phone_home" and _is_empty(inner.get("url")):
         return None
     if obj_key == "power_state" and _is_empty(inner.get("mode")):
@@ -414,16 +611,98 @@ def _view_object_field(field: dict, value: Any) -> Any:
         return None
     if ftype == "row_list":
         return _view_row_list(field, value)
+    if ftype == "object":
+        if not isinstance(value, dict):
+            return None
+        viewed = _view_object(field, {field["key"]: value})
+        if not viewed:
+            return None
+        return viewed.get(field["key"])
+    if ftype == "disk_layout":
+        return _view_layout(value)
+    if ftype == "flex":
+        return _view_flex(value)
+    if ftype == "yaml_value":
+        return _view_yaml_value(value)
+    if ftype == "all_or_list":
+        if value == "all":
+            return {"all": True}
+        return _view_object_field({**field, "type": "string_list"}, value)
     return None
 
 
+def _view_layout(value: Any) -> dict | None:
+    if value is True:
+        return {"mode": "true"}
+    if value is False:
+        return {"mode": "false"}
+    if value == "remove":
+        return {"mode": "remove"}
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            if isinstance(item, list):
+                lines.append(", ".join(str(part) for part in item))
+            else:
+                lines.append(str(item))
+        return {"mode": "custom", "lines": lines}
+    return None
+
+
+def _view_flex(value: Any) -> Any:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    if _is_empty(value) or isinstance(value, (dict, list)):
+        return None
+    return _unshield_value(value)
+
+
+def _view_yaml_value(value: Any) -> str | None:
+    if _is_empty(value):
+        return None
+    if isinstance(value, str):
+        return str(_unshield_value(value))
+    text = yaml.safe_dump(value, default_flow_style=False, sort_keys=False).rstrip()
+    return unshield_scalars(text)
+
+
 def _view_row_list(field: dict, rows: Any) -> list | None:
+    emit = field.get("emit") or "list"
+    key_field = field.get("key_field") or "name"
+    if emit in {"mapping", "mapping_scalar"} and isinstance(rows, dict):
+        converted = []
+        for name, payload in rows.items():
+            if emit == "mapping_scalar":
+                converted.append({key_field: name, "value": payload})
+            elif isinstance(payload, dict):
+                converted.append({key_field: name, **payload})
+            else:
+                converted.append({key_field: name, "value": payload})
+        rows = converted
+    elif emit == "list_or_map" and isinstance(rows, dict):
+        rows = [{key_field: name, "value": payload} for name, payload in rows.items()]
+    elif emit == "list_or_map" and isinstance(rows, list):
+        rows = [{"value": item} if not isinstance(item, dict) else item for item in rows]
+    elif emit == "tuple" and isinstance(rows, list):
+        converted = []
+        item_fields = field.get("item_fields", [])
+        for item in rows:
+            if isinstance(item, list):
+                converted.append({item_fields[i]["key"]: item[i] for i in range(min(len(item), len(item_fields)))})
+            elif isinstance(item, dict):
+                converted.append(item)
+        rows = converted
     if not isinstance(rows, list):
         return None
     item_fields = field.get("item_fields", [])
-    out: list[dict] = []
+    out: list = []
+    known = {item["key"] for item in item_fields}
     for row in rows:
         if not isinstance(row, dict):
+            if field.get("allow_scalars") and not _is_empty(row):
+                out.append(_unshield_value(row))
             continue
         normalized = _normalize_user_row(row)
         viewed: dict = {}
@@ -455,7 +734,15 @@ def _view_row_list(field: dict, rows: Any) -> list | None:
                 elif not _is_empty(ivalue):
                     viewed[ikey] = str(_unshield_value(ivalue))
             else:
-                viewed[ikey] = _unshield_value(ivalue) if not _is_empty(ivalue) else ""
+                viewed_value = _view_object_field(item_field, ivalue)
+                if viewed_value is not None:
+                    viewed[ikey] = viewed_value
+        if field.get("preserve_extra"):
+            for extra_key, extra_value in normalized.items():
+                if extra_key in known or str(extra_key).startswith("__"):
+                    continue
+                if not _is_empty(extra_value):
+                    viewed[extra_key] = _unshield_value(extra_value)
         if viewed:
             out.append(viewed)
     return out or None
@@ -474,6 +761,11 @@ def _view_object(field: dict, cc: dict) -> dict | None:
         viewed = _view_object_field(sub, obj[sub_key])
         if viewed is not None:
             inner[sub_key] = viewed
+    if field.get("preserve_extra"):
+        known = {sub["key"] for sub in field.get("object_fields", [])}
+        extra = {key: value for key, value in obj.items() if key not in known}
+        if extra:
+            inner["__extra__"] = yaml.safe_dump(extra, default_flow_style=False, sort_keys=False).rstrip("\n")
     return {obj_key: inner} if inner else None
 
 
@@ -713,7 +1005,7 @@ def _build_view_doc(cc: dict) -> dict:
 def cloud_config_view(seed_text: str) -> dict:
     """Return mode, structured doc, and extra_yaml for unknown keys."""
     parsed, mode = _parse_seed(seed_text)
-    cc = _cloud_config_mapping(parsed, mode)
+    cc = _rename_aliases(_cloud_config_mapping(parsed, mode))
     extra = {k: v for k, v in cc.items() if k not in MODELED_KEYS}
     doc = _build_view_doc(cc)
     extra_yaml = ""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 import yaml
@@ -263,6 +264,172 @@ def test_editor_preview_view_and_apply(client):
     after = _parsed_autoinstall(applied.json()["seed"])
     assert before["early-commands"] == after["early-commands"]
     assert before["user-data"] == after["user-data"]
+
+
+def test_disk_setup_example_round_trip():
+    seed = """#cloud-config
+device_aliases:
+  my_alias: /dev/sdb
+disk_setup:
+  /dev/sdd:
+    layout: true
+    overwrite: true
+    table_type: mbr
+  my_alias:
+    layout: [50, 50]
+    overwrite: true
+    table_type: gpt
+  swap_disk:
+    layout:
+      - [100, 82]
+    overwrite: true
+    table_type: gpt
+fs_setup:
+  - label: fs1
+    filesystem: ext4
+    device: my_alias.1
+mounts:
+  - [my_alias.1, /mnt1]
+  - [swap_disk.1, none, swap, sw, "0", "0"]
+"""
+    view = cloud_config_view(seed)
+    out = apply_cloudinit_editor(seed, json.dumps(view["doc"]), "")
+    parsed = yaml.safe_load(shield_tokens(out))
+    assert parsed["device_aliases"]["my_alias"] == "/dev/sdb"
+    assert parsed["disk_setup"]["/dev/sdd"]["layout"] is True
+    assert parsed["disk_setup"]["my_alias"]["layout"] == [50, 50]
+    assert parsed["disk_setup"]["swap_disk"]["layout"] == [[100, 82]]
+    assert parsed["fs_setup"][0]["device"] == "my_alias.1"
+    assert parsed["mounts"][0] == ["my_alias.1", "/mnt1"]
+    assert parsed["mounts"][1][0] == "swap_disk.1"
+
+
+def test_fan_apt_yum_ansible_round_trip():
+    seed = """#cloud-config
+fan:
+  config: "10.0.0.0/8 eth0/16 dhcp\\n"
+  config_path: /etc/network/fan
+apt:
+  primary:
+    - uri: http://archive.ubuntu.com/ubuntu
+      arches: [default]
+yum_repos:
+  epel:
+    baseurl: http://example.test/epel
+    name: EPEL
+    enabled: true
+ansible:
+  install_method: pip
+  pull:
+    url: https://example.test/playbooks.git
+"""
+    view = cloud_config_view(seed)
+    out = apply_cloudinit_editor(seed, json.dumps(view["doc"]), "")
+    parsed = yaml.safe_load(out)
+    assert "dhcp" in parsed["fan"]["config"]
+    assert parsed["apt"]["primary"][0]["uri"] == "http://archive.ubuntu.com/ubuntu"
+    assert parsed["yum_repos"]["epel"]["baseurl"] == "http://example.test/epel"
+    assert parsed["ansible"]["pull"]["url"] == "https://example.test/playbooks.git"
+
+
+def test_hyphen_alias_and_extra_disk_key():
+    seed = """#cloud-config
+ca_certs:
+  remove-defaults: true
+  trusted: []
+disk_setup:
+  /dev/sdb:
+    table_type: gpt
+    custom_flag: keep-me
+"""
+    view = cloud_config_view(seed)
+    ca = view["doc"]["ca_certs"]
+    assert ca["remove_defaults"] is True
+    out = apply_cloudinit_editor(seed, json.dumps(view["doc"]), "")
+    parsed = yaml.safe_load(out)
+    assert parsed["ca_certs"]["remove_defaults"] is True
+    assert "remove-defaults" not in parsed["ca_certs"]
+    assert parsed["disk_setup"]["/dev/sdb"]["custom_flag"] == "keep-me"
+
+
+def test_users_scalar_and_block_token_round_trip():
+    seed = """#cloud-config
+users:
+  - default
+  - name: {{username}}
+    ssh_authorized_keys: {{ssh_keys}}
+"""
+    view = cloud_config_view(seed)
+    assert view["doc"]["users"][0] == "default"
+    assert view["doc"]["users"][1]["ssh_authorized_keys"] == {"__pxe_block__": "ssh_keys"}
+    out = apply_cloudinit_editor(seed, json.dumps(view["doc"]), "")
+    assert "\n  - default\n" in out or "\n- default\n" in out
+    user_data = out.split("users:", 1)[1]
+    assert "{{ssh_keys}}" in user_data
+    assert "{{ssh_keys}}" not in user_data.split("ssh_authorized_keys:", 1)[1].split("\n", 1)[0]
+
+
+def test_chpasswd_yaml_list_and_random():
+    seed = "#cloud-config\nhostname: box\n"
+    view = cloud_config_view(seed)
+    doc = view["doc"]
+    doc["chpasswd"] = {"users": "- name: root\n  password: {{password}}\n  type: hash\n"}
+    out = apply_cloudinit_editor(seed, json.dumps(doc), "")
+    parsed = yaml.safe_load(shield_tokens(out))
+    assert parsed["chpasswd"]["users"][0]["name"] == "root"
+    doc["chpasswd"] = {"users": [{"name": "root", "type": "RANDOM"}]}
+    out = apply_cloudinit_editor(seed, json.dumps(doc), "")
+    parsed = yaml.safe_load(out)
+    assert parsed["chpasswd"]["users"][0]["type"] == "RANDOM"
+    assert "password" not in parsed["chpasswd"]["users"][0]
+    doc["chpasswd"] = {"users": [{"type": "hash", "password": "{{password}}"}]}
+    with pytest.raises(SeedError, match="name is required"):
+        apply_cloudinit_editor(seed, json.dumps(doc), "")
+    doc["chpasswd"] = {"users": [{"name": "root", "password": "hunter2", "type": "text"}]}
+    with pytest.raises(SeedError, match="Credential fields must use placeholders"):
+        apply_cloudinit_editor(seed, json.dumps(doc), "")
+
+
+def test_ubuntu_pro_zypper_and_grub_key():
+    seed = """#cloud-config
+ubuntu_advantage:
+  token: secret-token
+zypper:
+  repos:
+    - id: oss
+      baseurl: http://example.test/oss
+grub_dpkg:
+  grub-pc/install_devices: /dev/sda
+"""
+    view = cloud_config_view(seed)
+    assert "ubuntu_pro" in view["doc"]
+    assert "ubuntu_advantage" not in view["doc"]
+    out = apply_cloudinit_editor(seed, json.dumps(view["doc"]), "")
+    parsed = yaml.safe_load(out)
+    assert "ubuntu_pro" in parsed
+    assert "ubuntu_advantage" not in parsed
+    assert parsed["zypper"]["repos"][0]["id"] == "oss"
+    assert parsed["grub_dpkg"]["grub-pc/install_devices"] == "/dev/sda"
+
+
+def test_placeholders_are_not_emitted_when_empty():
+    from src.cloudinit.schema import NODES
+
+    examples = json.loads(
+        Path(__file__).parents[1].joinpath("src/cloudinit/module_examples.json").read_text(encoding="utf-8")
+    )
+    assert examples["version"] == "26.2"
+    assert "disk_setup" in examples["placeholders"]
+    assert "fan.config" in examples["placeholders"]
+    disk = next(node for node in NODES if node["id"] == "disk_setup")
+    fan = next(node for node in NODES if node["id"] == "fan")
+    assert all(field["type"] != "yaml" for field in disk["fields"])
+    assert all(field["type"] != "yaml" for field in fan["fields"])
+    seed = "#cloud-config\nhostname: box\n"
+    view = cloud_config_view(seed)
+    out = apply_cloudinit_editor(seed, json.dumps(view["doc"]), "")
+    assert "disk_setup" not in out
+    assert "fan:" not in out
 
 
 def test_editor_preview_requires_login(client):

@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - Linux machine and image pages keep the raw user-data file. Editor, next to Copy Default on a machine, opens the cloud-config node list in a dialog. Apply writes that list back into the file and leaves the autoinstall installer section unchanged. Empty optional keys are omitted.
+- Cloud-init modules that were a single YAML box, including disk setup, filesystems, mounts, and the network modules, now have fields from the cloud-init 26.2 module reference. Empty inputs show the documentation example until you type. Lists of objects use an entry form, Add, and an editable YAML list.
 
 ## [0.3.6] - 2026-09-22
 

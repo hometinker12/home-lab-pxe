@@ -115,7 +115,7 @@ NODES: list[dict] = [
                                 "key": "type",
                                 "label": "Type",
                                 "type": "enum",
-                                "choices": ["", "hash", "text"],
+                                "choices": ["", "hash", "text", "RANDOM"],
                             },
                         ],
                     },
@@ -143,6 +143,7 @@ NODES: list[dict] = [
             {"key": "allow_public_ssh_keys", "label": "Allow public SSH keys", "type": "bool"},
             {"key": "ssh_pwauth", "label": "SSH password authentication", "type": "bool"},
             {"key": "no_ssh_fingerprints", "label": "No SSH fingerprints", "type": "bool"},
+            {"key": "emit_keys_to_console", "label": "Emit keys to console", "type": "bool"},
             {
                 "key": "__yaml_ssh__",
                 "label": "Host keys",
@@ -340,6 +341,7 @@ NODES: list[dict] = [
                     {"key": "searchdomains", "label": "Search domains", "type": "string_list"},
                     {"key": "domain", "label": "Domain", "type": "string"},
                     {"key": "options", "label": "Options (key:value per line)", "type": "lines", "parser": "options"},
+                    {"key": "sortlist", "label": "Sortlist", "type": "string_list"},
                 ],
             },
         ],
@@ -359,6 +361,8 @@ NODES: list[dict] = [
                     {"key": "ntp_client", "label": "NTP client", "type": "string"},
                     {"key": "servers", "label": "Servers", "type": "string_list"},
                     {"key": "pools", "label": "Pools", "type": "string_list"},
+                    {"key": "peers", "label": "Peers", "type": "string_list"},
+                    {"key": "allow", "label": "Allow", "type": "string_list"},
                 ],
             },
         ],
@@ -375,7 +379,7 @@ NODES: list[dict] = [
                 "type": "object",
                 "object_fields": [
                     {"key": "url", "label": "URL", "type": "string"},
-                    {"key": "post", "label": "POST fields", "type": "string_list"},
+                    {"key": "post", "label": "POST fields", "type": "all_or_list"},
                     {"key": "tries", "label": "Tries", "type": "int"},
                 ],
             },
@@ -401,6 +405,7 @@ NODES: list[dict] = [
                     {"key": "message", "label": "Message", "type": "string"},
                     {"key": "timeout", "label": "Timeout", "type": "int"},
                     {"key": "condition", "label": "Condition", "type": "string"},
+                    {"key": "delay", "label": "Delay", "type": "flex"},
                 ],
             },
         ],
@@ -704,6 +709,91 @@ NODES: list[dict] = [
 ]
 
 
+def _compose_nodes(hand: list[dict]) -> list[dict]:
+    from .generated_nodes import GENERATED_NODES, PATCHES
+
+    drop = {node["id"] for node in GENERATED_NODES} | {"reporting", "fs_setup"}
+    nodes = [node for node in hand if node["id"] not in drop]
+    for node in nodes:
+        extra = PATCHES.get(node["id"]) or []
+        if not extra:
+            continue
+        if node["id"] == "users":
+            node["fields"][0]["item_fields"].extend(extra)
+            node["fields"][0]["preserve_extra"] = True
+            node["fields"][0]["allow_scalars"] = True
+        elif node["id"] == "write_files":
+            node["fields"][0]["item_fields"].extend(extra)
+            node["fields"][0]["preserve_extra"] = True
+        elif node["id"] == "ntp":
+            node["fields"][0]["object_fields"].extend(extra)
+            node["fields"][0]["preserve_extra"] = True
+        elif node["id"] == "ssh":
+            node["fields"] = [field for field in node["fields"] if field.get("type") != "yaml"]
+            node["fields"].extend(extra)
+        elif node["id"] == "keys_to_console":
+            node["fields"].extend(extra)
+    for node in GENERATED_NODES:
+        if node["id"] == "yum_repos":
+            node["fields"] = PATCHES.get("yum_repos", []) + node["fields"]
+        if node["id"] == "passwords":
+            continue
+    nodes.extend(GENERATED_NODES)
+    chpasswd = next(
+        field for node in nodes if node["id"] == "passwords" for field in node["fields"] if field["key"] == "chpasswd"
+    )
+    users = next(field for field in chpasswd["object_fields"] if field["key"] == "users")
+    users["entry_rule"] = "chpasswd"
+    users["preserve_extra"] = True
+    for item in users["item_fields"]:
+        if item["key"] == "password":
+            item["credential"] = True
+            item["placeholder"] = "{{password}}"
+    password = next(
+        field for node in nodes if node["id"] == "passwords" for field in node["fields"] if field["key"] == "password"
+    )
+    password["credential"] = True
+    password["placeholder"] = "{{password}}"
+    _apply_placeholders(nodes)
+    return nodes
+
+
+def _apply_placeholders(nodes: list[dict]) -> None:
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).with_name("module_examples.json")
+    if not path.is_file():
+        return
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    placeholders = payload.get("placeholders") or {}
+
+    def walk(fields: list[dict], prefix: str) -> None:
+        for field in fields:
+            key = field.get("key")
+            dotted = f"{prefix}.{key}" if prefix else str(key)
+            if field.get("credential"):
+                field.setdefault(
+                    "placeholder", "{{password_hash}}" if key in {"passwd", "hashed_passwd"} else "{{password}}"
+                )
+            elif (
+                "placeholder" not in field
+                and dotted in placeholders
+                and field.get("type") in {"string", "text", "flex", "yaml_value"}
+            ):
+                field["placeholder"] = placeholders[dotted]
+            if field.get("type") == "object":
+                walk(field.get("object_fields") or [], dotted)
+            if field.get("type") == "row_list":
+                example = placeholders.get(dotted)
+                if example and "placeholder" not in field:
+                    field["placeholder"] = example
+                walk(field.get("item_fields") or [], dotted)
+
+    for node in nodes:
+        walk(node.get("fields") or [], "")
+
+
 def _collect_modeled_keys() -> frozenset[str]:
     keys: set[str] = set()
     for node in NODES:
@@ -729,9 +819,13 @@ def _collect_modeled_keys() -> frozenset[str]:
                 key = field.get("key")
                 if key and not str(key).startswith("__yaml_"):
                     keys.add(key)
+    from .generated_nodes import ALIASES
+
+    keys.update(ALIASES)
     return frozenset(keys)
 
 
+NODES = _compose_nodes(NODES)
 MODELED_KEYS: frozenset[str] = _collect_modeled_keys()
 
 _KEY_LABELS: dict[str, str] = {}

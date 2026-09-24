@@ -137,14 +137,18 @@
 
     function wrapLabel(field, control) {
       const label = el("label");
-      label.append(document.createTextNode(field.label || field.key));
+      const title = field.label || field.key;
+      label.append(document.createTextNode(field.required ? `${title} *` : title));
       label.append(control);
       return label;
     }
 
     function textInput(field, path) {
       const input = el("input");
-      input.type = "text";
+      input.type = field.secret ? "password" : "text";
+      if (field.placeholder) {
+        input.placeholder = field.placeholder;
+      }
       const value = getPath(state, path);
       input.value = value === null || value === undefined ? "" : String(value);
       if (disabled) {
@@ -169,7 +173,10 @@
 
     function plainTextarea(field, path) {
       const ta = el("textarea", field.type === "text" ? "seed-editor" : "");
-      ta.rows = field.type === "text" ? 5 : 4;
+      ta.rows = field.type === "text" || field.type === "yaml_value" ? 5 : 4;
+      if (field.placeholder) {
+        ta.placeholder = field.placeholder;
+      }
       const value = getPath(state, path);
       ta.value = value === null || value === undefined ? "" : String(value);
       if (disabled) {
@@ -186,6 +193,9 @@
       const value = getPath(state, path);
       const ta = el("textarea");
       ta.rows = 5;
+      if (field.placeholder) {
+        ta.placeholder = field.placeholder;
+      }
       ta.value = Array.isArray(value) ? value.join("\n") : "";
       if (disabled) {
         ta.disabled = true;
@@ -261,7 +271,16 @@
         choices.unshift("");
       }
       for (const choice of choices) {
-        const label = choice === "" ? "Unset" : choice === "true" ? "True" : choice === "false" ? "False" : choice;
+        const label =
+          choice === ""
+            ? field.default !== undefined && field.default !== null && field.default !== ""
+              ? `Unset (default: ${field.default})`
+              : "Unset"
+            : choice === "true"
+              ? "True"
+              : choice === "false"
+                ? "False"
+                : choice;
         const opt = el("option", "", label);
         opt.value = choice;
         sel.append(opt);
@@ -340,31 +359,258 @@
       return fs;
     }
 
-    function renderRowList(node, field, path) {
-      const wrap = el("div", "cc-rowlist");
-      wrap.append(el("span", "cc-rowlist-label", field.label || field.key));
-      const value = getPath(state, path);
-      const rows = Array.isArray(value) ? value : [];
-      rows.forEach((row, index) => {
-        wrap.append(renderRow(node, field, path, index));
-      });
-      const addBtn = el("button", "btn-ghost btn-sm", "Add row");
-      addBtn.type = "button";
-      if (disabled) {
-        addBtn.disabled = true;
-      } else {
-        addBtn.addEventListener("click", () => {
-          let list = getPath(state, path);
-          if (!Array.isArray(list)) {
-            list = [];
-            setPath(state, path, list);
+    function yamlScalar(value) {
+      if (value && typeof value === "object" && value.__pxe_block__) {
+        return `{{${value.__pxe_block__}}}`;
+      }
+      if (value === null || value === undefined) {
+        return "null";
+      }
+      if (typeof value === "number" || typeof value === "boolean") {
+        return String(value);
+      }
+      const text = String(value);
+      if (text === "" || /[:#{}[\],&*!|>'"%@`]|^\s|\s$/.test(text) || text.includes("\n")) {
+        return JSON.stringify(text);
+      }
+      return text;
+    }
+
+    function dumpYamlList(rows) {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return "";
+      }
+      return rows
+        .map((row) => {
+          if (row === null || typeof row !== "object" || Array.isArray(row)) {
+            return `- ${yamlScalar(row)}`;
           }
-          list.push(newRow(field));
+          const keys = Object.keys(row).filter((key) => row[key] !== "" && row[key] !== null && row[key] !== undefined);
+          if (keys.length === 0) {
+            return "- {}";
+          }
+          const lines = keys.map((key, index) => {
+            const rendered = Array.isArray(row[key]) ? row[key].map((item) => yamlScalar(item)).join(", ") : yamlScalar(row[key]);
+            return `${index === 0 ? "- " : "  "}${key}: ${rendered}`;
+          });
+          return lines.join("\n");
+        })
+        .join("\n");
+    }
+
+    function parseYamlList(text) {
+      const rows = [];
+      let current = null;
+      for (const raw of text.split("\n")) {
+        if (!raw.trim()) {
+          continue;
+        }
+        const item = raw.match(/^-\s*(.*)$/);
+        if (item) {
+          if (current) {
+            rows.push(current);
+          }
+          const rest = item[1];
+          if (!rest || rest === "{}") {
+            current = {};
+            continue;
+          }
+          const keyed = rest.match(/^([^:]+):\s*(.*)$/);
+          if (!keyed) {
+            current = parseScalar(rest);
+            rows.push(current);
+            current = null;
+            continue;
+          }
+          current = {};
+          current[keyed[1].trim()] = parseScalar(keyed[2]);
+          continue;
+        }
+        const nested = raw.match(/^\s+([^:]+):\s*(.*)$/);
+        if (nested && current && typeof current === "object" && !Array.isArray(current)) {
+          current[nested[1].trim()] = parseScalar(nested[2]);
+          continue;
+        }
+        throw new Error("List items must start with '-'");
+      }
+      if (current) {
+        rows.push(current);
+      }
+      return rows;
+    }
+
+    function parseScalar(text) {
+      const trimmed = text.trim();
+      if (trimmed === "true") {
+        return true;
+      }
+      if (trimmed === "false") {
+        return false;
+      }
+      if (trimmed === "null" || trimmed === "") {
+        return "";
+      }
+      if (/^-?\d+$/.test(trimmed)) {
+        return Number(trimmed);
+      }
+      const block = trimmed.match(/^\{\{([a-z_]+)\}\}$/);
+      if (block && (block[1] === "ssh_keys" || block[1] === "packages")) {
+        return { __pxe_block__: block[1] };
+      }
+      if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        return trimmed.slice(1, -1);
+      }
+      return trimmed;
+    }
+
+    function renderDiskLayout(field, path) {
+      const wrap = el("fieldset", "cc-row");
+      const current = getPath(state, path) || {};
+      const sel = el("select");
+      for (const [value, label] of [
+        ["", "Unset"],
+        ["true", "One partition"],
+        ["false", "No partitions"],
+        ["remove", "Remove table"],
+        ["custom", "Custom"],
+      ]) {
+        const opt = el("option", "", label);
+        opt.value = value;
+        sel.append(opt);
+      }
+      sel.value = current.mode || "";
+      const lines = el("textarea");
+      lines.rows = 4;
+      lines.placeholder = "50\n100, 82";
+      lines.value = Array.isArray(current.lines) ? current.lines.join("\n") : "";
+      lines.hidden = sel.value !== "custom";
+      if (disabled) {
+        sel.disabled = true;
+        lines.disabled = true;
+      } else {
+        sel.addEventListener("change", () => {
+          lines.hidden = sel.value !== "custom";
+          setPath(state, path, { mode: sel.value, lines: lines.value.split("\n") });
+          sync();
+        });
+        lines.addEventListener("input", () => {
+          setPath(state, path, { mode: "custom", lines: lines.value.split("\n") });
+          sync();
+        });
+      }
+      wrap.append(wrapLabel(field, sel), lines);
+      return wrap;
+    }
+
+    function renderAllOrList(node, field, path) {
+      const wrap = el("div");
+      const current = getPath(state, path);
+      const all = current && typeof current === "object" && current.all === true;
+      const checkLabel = el("label", "check");
+      const box = el("input");
+      box.type = "checkbox";
+      box.checked = all;
+      checkLabel.append(box, document.createTextNode(" Post all fields"));
+      const list = listTextarea(field, path);
+      list.hidden = all;
+      if (!disabled) {
+        box.addEventListener("change", () => {
+          if (box.checked) {
+            setPath(state, path, { all: true });
+            list.hidden = true;
+          } else {
+            setPath(state, path, []);
+            list.hidden = false;
+          }
           sync();
           renderDetail(currentNode);
         });
       }
-      wrap.append(addBtn);
+      wrap.append(checkLabel, list);
+      return wrap;
+    }
+
+    function renderRowList(node, field, path) {
+      const wrap = el("div", "cc-rowlist");
+      wrap.append(el("span", "cc-rowlist-label", field.label || field.key));
+      const form = el("fieldset", "cc-row");
+      const ordered = (field.item_fields || []).slice().sort((a, b) => Number(Boolean(b.required)) - Number(Boolean(a.required)));
+      for (const item of ordered) {
+        form.append(renderField(node, item, `__draft__.${path}.${item.key}`));
+      }
+      const error = el("p", "alert alert-error", "");
+      error.hidden = true;
+      const addBtn = el("button", "btn-ghost btn-sm", "Add");
+      addBtn.type = "button";
+      const box = el("textarea", "seed-editor");
+      box.rows = 8;
+      const current = getPath(state, path);
+      box.value = typeof current === "string" ? current : dumpYamlList(Array.isArray(current) ? current : []);
+      if (!box.value && field.placeholder) {
+        box.placeholder = field.placeholder;
+      }
+      if (disabled) {
+        addBtn.disabled = true;
+        box.disabled = true;
+      } else {
+        addBtn.addEventListener("click", () => {
+          let list = getPath(state, path);
+          if (typeof list === "string") {
+            try {
+              list = parseYamlList(list);
+            } catch (err) {
+              error.hidden = false;
+              error.textContent = err instanceof Error ? err.message : "Invalid list";
+              return;
+            }
+          }
+          if (!Array.isArray(list)) {
+            list = [];
+          }
+          const row = {};
+          for (const item of field.item_fields || []) {
+            const value = getPath(state, `__draft__.${path}.${item.key}`);
+            if (!isEmptyValue(value)) {
+              row[item.key] = value;
+            }
+          }
+          const missing = (field.item_fields || []).filter((item) => item.required && isEmptyValue(row[item.key]));
+          if (field.entry_rule === "chpasswd") {
+            if (isEmptyValue(row.name)) {
+              missing.push({ label: "Name" });
+            }
+            if (row.type !== "RANDOM" && isEmptyValue(row.password) && isEmptyValue(row.name) === false) {
+              missing.push({ label: "Password" });
+            }
+          }
+          if (missing.length) {
+            error.hidden = false;
+            error.textContent = `Required: ${missing.map((item) => item.label || item.key).join(", ")}`;
+            return;
+          }
+          error.hidden = true;
+          list.push(row);
+          setPath(state, path, list);
+          for (const item of field.item_fields || []) {
+            setPath(state, `__draft__.${path}.${item.key}`, item.type === "bool" ? null : "");
+          }
+          sync();
+          renderDetail(currentNode);
+        });
+        box.addEventListener("input", () => {
+          try {
+            const parsed = box.value.trim() ? parseYamlList(box.value) : [];
+            setPath(state, path, parsed);
+            error.hidden = true;
+          } catch (err) {
+            setPath(state, path, box.value);
+            error.hidden = false;
+            error.textContent = err instanceof Error ? err.message : "Invalid list";
+          }
+          sync();
+        });
+      }
+      wrap.append(form, error, addBtn, box);
       return wrap;
     }
 
@@ -373,6 +619,17 @@
       wrap.append(el("span", "cc-rowlist-label", field.label || field.key));
       for (const sub of field.object_fields || []) {
         wrap.append(renderField(node, sub, `${path}.${sub.key}`));
+      }
+      const extra = getPath(state, `${path}.__extra__`);
+      if (typeof extra === "string" && extra.trim()) {
+        const ta = el("textarea", "seed-editor");
+        ta.rows = 4;
+        ta.value = extra;
+        ta.addEventListener("input", () => {
+          setPath(state, `${path}.__extra__`, ta.value);
+          sync();
+        });
+        wrap.append(wrapLabel({ key: "__extra__", label: "Additional keys" }, ta));
       }
       return wrap;
     }
@@ -384,6 +641,18 @@
       }
       if (type === "row_list") {
         return renderRowList(node, field, path);
+      }
+      if (type === "disk_layout") {
+        return renderDiskLayout(field, path);
+      }
+      if (type === "all_or_list") {
+        return renderAllOrList(node, field, path);
+      }
+      if (type === "yaml_value") {
+        return plainTextarea(field, path);
+      }
+      if (type === "flex") {
+        return textInput(field, path);
       }
       if (type === "yaml") {
         return yamlTextarea(node, field);
