@@ -18,6 +18,8 @@ images/
 !.cursor/rules/**
 !.cursor/skills/
 !.cursor/skills/**
+# Claude Code — track project agents, rules, and skills; ignore per-user settings
+.claude/settings.local.json
 docker-compose.override.yml
 
 # Pytest cache and artifacts
