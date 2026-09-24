@@ -61,7 +61,7 @@
         <option value="{{ value }}" {% if (machine.next_boot_device or 'pxe') == value %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select></label>
-      <p class="field-help span">Applied at the end of the next install. PXE: network boot stays first (IPv4 PXE, then the installed OS), so the host keeps getting the boot menu; first-boot reboots wait out the menu countdown. Local disk: the installed OS boots first and network entries move to the end. On a deployed machine, Save stages a reimage.</p>
+      <p class="field-help span">Applied at the end of the next install. PXE: network boot stays first (IPv4 PXE, then the installed OS), so the host keeps getting the boot menu; first-boot reboots wait out the menu countdown. Local disk: the installed OS boots first and network entries move to the end. Save only stores changes; Deploy or Stage reimage queues an install.</p>
     </div>
     <h3 class="section-label">Local account</h3>
     <div class="form-grid">
@@ -76,13 +76,27 @@
   </div>
 </form>
 
-<section class="card card-flush">
-  <header class="card-head">
-    <div class="card-head-main">
-      <h2 class="card-title">Guest init</h2>
-      {% if image %}<span class="chip">{{ family }}</span>{% endif %}
+<details class="card" data-section="lifecycle">
+  <summary><span class="summary-title">Lifecycle</span></summary>
+  <div class="card-body">
+    <div class="btn-row">
+      {% if can_abort %}
+      <form method="post" action="/machines/{{ machine.id }}/abort" onsubmit="return confirm('Abort this install? Guest-init stops and the host returns to the boot menu or deployed state.');"><button type="submit" class="btn-secondary">Abort install</button></form>
+      {% endif %}
+      <form method="post" action="/machines/{{ machine.id }}/stage" onsubmit="return confirm('Stage a reimage? The next PXE boot installs the assigned image.');"><button type="submit" class="btn-secondary" {% if deploying %}disabled{% endif %}>Stage reimage</button></form>
+      <form method="post" action="/machines/{{ machine.id }}/mark-deployed" onsubmit="return confirm('Mark this machine deployed without waiting for the installer?');"><button type="submit" class="btn-secondary">Mark deployed</button></form>
+      {% if machine.state == "disabled" %}
+      <form method="post" action="/machines/{{ machine.id }}/enable" class="push-end"><button type="submit" class="btn-secondary">Enable</button></form>
+      {% else %}
+      <form method="post" action="/machines/{{ machine.id }}/disable" class="push-end" onsubmit="return confirm('Disable this machine? It will no longer be served a boot image.');"><button type="submit" class="btn-danger">Disable</button></form>
+      {% endif %}
+      <form method="post" action="/machines/{{ machine.id }}/delete" onsubmit="return confirm('Delete this machine from inventory? The next PXE boot with this MAC will register as unknown.');"><button type="submit" class="btn-danger">Delete</button></form>
     </div>
-  </header>
+  </div>
+</details>
+
+<details class="card" data-section="guest-init">
+  <summary><span class="summary-title">Guest init</span>{% if image %}<span class="summary-meta">{{ family }}</span>{% endif %}</summary>
   <div class="card-body">
     {% if overlay.raw_overlay %}
     <p class="alert alert-error" role="status">This machine still has a legacy raw overlay. Saving a machine seed file replaces it.</p>
@@ -141,36 +155,10 @@
       <button type="submit" form="machine-save" {% if deploying %}disabled{% endif %}>Save</button>
     </div>
   </div>
-</section>
+</details>
 
-<section class="card card-flush">
-  <header class="card-head">
-    <div class="card-head-main"><h2 class="card-title">Lifecycle</h2></div>
-  </header>
-  <div class="card-body">
-    <div class="btn-row">
-      {% if can_abort %}
-      <form method="post" action="/machines/{{ machine.id }}/abort" onsubmit="return confirm('Abort this install? Guest-init stops and the host returns to the boot menu or deployed state.');"><button type="submit" class="btn-secondary">Abort install</button></form>
-      {% endif %}
-      <form method="post" action="/machines/{{ machine.id }}/stage" onsubmit="return confirm('Stage a reimage? The next PXE boot installs the assigned image.');"><button type="submit" class="btn-secondary" {% if deploying %}disabled{% endif %}>Stage reimage</button></form>
-      <form method="post" action="/machines/{{ machine.id }}/mark-deployed" onsubmit="return confirm('Mark this machine deployed without waiting for the installer?');"><button type="submit" class="btn-secondary">Mark deployed</button></form>
-      {% if machine.state == "disabled" %}
-      <form method="post" action="/machines/{{ machine.id }}/enable" class="push-end"><button type="submit" class="btn-secondary">Enable</button></form>
-      {% else %}
-      <form method="post" action="/machines/{{ machine.id }}/disable" class="push-end" onsubmit="return confirm('Disable this machine? It will no longer be served a boot image.');"><button type="submit" class="btn-danger">Disable</button></form>
-      {% endif %}
-      <form method="post" action="/machines/{{ machine.id }}/delete" onsubmit="return confirm('Delete this machine from inventory? The next PXE boot with this MAC will register as unknown.');"><button type="submit" class="btn-danger">Delete</button></form>
-    </div>
-  </div>
-</section>
-
-<section class="card card-flush">
-  <header class="card-head">
-    <div class="card-head-main">
-      <h2 class="card-title">Recent boots</h2>
-      <span class="count">{{ events|length }}</span>
-    </div>
-  </header>
+<details class="card" data-section="recent-boots">
+  <summary><span class="summary-title">Recent boots</span><span class="summary-meta">{{ events|length }}</span></summary>
   <div class="card-body">
     {% if events %}
     <ul class="event-list">
@@ -182,7 +170,7 @@
     <p class="empty-state">None yet.</p>
     {% endif %}
   </div>
-</section>
+</details>
 {% if cc_view %}
 {% include "cloudinit_editor.html" %}
 {% endif %}

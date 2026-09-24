@@ -48,7 +48,7 @@ def test_add_machine_rejects_duplicate_and_invalid_mac(client):
     assert "not-a-mac" in invalid.text
 
 
-def test_deployed_seed_edit_stages_once(client):
+def test_deployed_seed_save_does_not_stage(client):
     login(client)
     from src.db import session_scope
     from src.inventory.service import mark_deployed, register_machine
@@ -77,19 +77,53 @@ def test_deployed_seed_edit_stages_once(client):
     from src.db import session_scope as scope2
 
     with scope2() as db:
-        jobs = db.exec(select(StagedJob)).all()
-        assert len(jobs) == 1
-    detail = client.get(f"/machines/{mid}")
-    assert "staged" in detail.text
+        assert db.exec(select(StagedJob)).all() == []
+    assert client.get(f"/api/machines/{mid}").json()["state"] == "deployed"
+    staged = client.post(f"/machines/{mid}/stage", follow_redirects=False)
+    assert staged.status_code in {302, 303}
+    assert client.get(f"/api/machines/{mid}").json()["state"] == "staged"
     saved_again = client.post(
         f"/machines/{mid}/save",
         data={"hostname": "n1", "timezone": "UTC", "user_data": body + "# again\n"},
         follow_redirects=False,
     )
     assert saved_again.status_code in {302, 303}
+    assert client.get(f"/api/machines/{mid}").json()["state"] == "staged"
     with scope2() as db:
         jobs = db.exec(select(StagedJob)).all()
         assert len(jobs) == 1
+
+
+def test_deployed_account_save_does_not_stage(client):
+    login(client)
+    from src.db import session_scope
+    from src.inventory.service import mark_deployed, register_machine
+
+    with session_scope() as db:
+        image = create_image(
+            db,
+            name="acct-linux",
+            os_family=OsFamily.linux,
+            kernel_path="ubuntu/vmlinuz",
+            initrd_path="ubuntu/initrd",
+            actor="admin",
+        )
+        machine = register_machine(db, mac="02:00:00:00:00:54", hostname="acct", actor="admin")
+        deploy_machine(db, machine, image=image, actor="admin")
+        mark_deployed(db, machine, actor="admin")
+        db.commit()
+        mid = int(machine.id)
+    saved = client.post(
+        f"/machines/{mid}/account",
+        data={"username": "root", "password": "account-only-secret"},
+        follow_redirects=False,
+    )
+    assert saved.status_code in {302, 303}
+    row = client.get(f"/api/machines/{mid}").json()
+    assert row["state"] == "deployed"
+    assert row["account_password_set"] is True
+    with session_scope() as db:
+        assert db.exec(select(StagedJob)).all() == []
 
 
 def test_deploying_edit_rejected(client):
@@ -187,7 +221,7 @@ def test_deployed_hostname_save_persists(client):
     assert saved.status_code in {302, 303}
     row = client.get(f"/api/machines/{mid}").json()
     assert row["hostname"] == "named-host"
-    assert row["state"] == "staged"
+    assert row["state"] == "deployed"
     page = client.get(f"/machines/{mid}")
     assert "named-host" in page.text
     assert 'id="machine-save"' in page.text
@@ -547,3 +581,26 @@ def test_next_boot_device_missing_field_keeps_value(client):
     )
     assert again.status_code in {302, 303}
     assert _stored_next_boot_device(mid) == "disk"
+
+
+def test_save_keeps_pending_state_and_layout(client):
+    login(client)
+    mid = _register_plain_machine("02:00:00:00:00:95")
+    assert client.get(f"/api/machines/{mid}").json()["state"] == "pending"
+    saved = client.post(
+        f"/machines/{mid}/save",
+        data={"hostname": "just-saved", "timezone": "UTC"},
+        follow_redirects=False,
+    )
+    assert saved.status_code in {302, 303}
+    row = client.get(f"/api/machines/{mid}").json()
+    assert row["hostname"] == "just-saved"
+    assert row["state"] == "pending"
+    page = client.get(f"/machines/{mid}").text
+    deployment = page.index('id="machine-save"')
+    lifecycle = page.index('data-section="lifecycle"')
+    guest = page.index('data-section="guest-init"')
+    boots = page.index('data-section="recent-boots"')
+    assert deployment < lifecycle < guest < boots
+    for section in ("lifecycle", "guest-init", "recent-boots"):
+        assert f'<details class="card" data-section="{section}">' in page

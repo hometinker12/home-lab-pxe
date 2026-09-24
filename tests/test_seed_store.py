@@ -88,7 +88,7 @@ def test_complete_linux_user_data_fills_unattended_keys():
     assert "|| true" in filled
     assert "optional: true" in filled
     assert "en*" in filled
-    assert "sizing-policy:" in filled
+    assert "name: direct" in filled and "sizing-policy:" not in filled
     assert "sysrq-trigger" in filled
     assert "phy80211" in filled
 
