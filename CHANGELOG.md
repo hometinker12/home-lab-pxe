@@ -2,7 +2,29 @@
 
 ## [Unreleased]
 
-- Linux machine and image pages edit cloud-config modules in a node list; empty optional keys are omitted from `user-data`; the autoinstall installer section is unchanged.
+## [0.3.7] - 2026-09-24
+
+### Added
+
+- Linux machine and image pages keep the raw user-data file. **Editor**, next to Copy Default on a machine, opens the cloud-config editor in a dialog. Apply writes the result back into the file and leaves the autoinstall installer section unchanged. Empty optional keys are omitted.
+- The cloud-init editor covers every cloud-config key in the cloud-init 26.2 schema. Modules that were a single YAML box now have real fields: the default `user`, `apt` sources, `groups`, `runcmd`/`bootcmd` in shell or argv form, packages with versions and apt/snap sections, `ssh.emit_keys_to_console`, resolv.conf options, rsyslog configs, Ansible, Puppet, and the disk and network modules. Deprecated keys are hidden unless the seed uses them, and deprecated aliases such as `apt_update` are renamed with a notice.
+- A **Next Boot Device** dropdown on the machine page (**PXE** by default, or **Local disk**) sets the UEFI boot order at the end of the next Linux or Windows install. With PXE, IPv4 network boot stays first and the installed OS comes right after it, so the host keeps getting the boot menu. With Local disk, the installed OS boots first and network entries go last. PXE-first is only applied after the server confirms phone-home, so a lost callback cannot loop the host back into the installer. With PXE, Windows first-boot reboots (after specialize and from Cloudbase-Init) wait out the menu countdown. Legacy BIOS installs are unchanged.
+
+### Changed
+
+- The cloud-init editor is laid out as a full-height dialog: a module sidebar with search (`/`), a **Configured only** filter, configured dots and per-group counts; a fixed header; and a footer that keeps Cancel and Apply in view. Lists are edited as cards with move and remove buttons instead of a draft form and a YAML text box. Each module has Form and YAML tabs, a Docs link, Clear, and the documentation example. A Preview column shows the resulting user-data. Narrow screens get a full-screen editor with a module dropdown.
+- Closing the editor with unsaved changes (Cancel, Esc, or a click outside) asks first. Apply errors jump to the field that failed.
+- Autoinstall seeds show the installer section keys read-only on the editor overview.
+- The rest of the console uses the editor's layout: cards with a header and a footer action bar, page headers with the primary action on the right, grouped two-column forms with short key hints next to labels, status pills, icon buttons for row actions, and dashed empty states. Dialogs share one header/footer style. Settings, Boot menu, and Files no longer scroll sideways on phones.
+
+### Fixed
+
+- Opening the cloud-init editor and pressing Apply no longer drops or rewrites values the form could not show: the default `user`, `keyboard.layout`, `apt_pipelining`, string or mapping `groups` and `users`, list or `false` `sudo`, numeric `uid`, argv commands, package versions, resolv.conf option types, `write_files` gzip and `text/plain` encodings, integer file permissions, `growpart` mode `gpart`, `null` mount fields, and `chpasswd` keys. Anything the form cannot represent stays in Other keys (YAML) with a notice.
+- The SSH module no longer writes an invalid top-level `emit_keys_to_console`, and the editor no longer offers a `zypper_repos` key.
+- Machine and image pages still open when the stored user-data does not parse. Editor API responses are not cached.
+- Credential keys (`password`, `passwd`, `hashed_passwd`, `plain_text_passwd`, `chpasswd.users[].password`, legacy `chpasswd.list`) must be placeholders wherever they appear in the editor, including Other keys (YAML), Advanced YAML, and YAML-valued fields. Before, a literal typed there was written to the seed.
+- Saving user-data now rejects literal `plain_text_passwd` values and `hashed_passwd` values that are not a crypt hash (`$6$...`). It also checks list-item and quoted forms of credential keys, and credential keys inside flow mappings such as `{name: a, plain_text_passwd: ...}`. The editor uses the same rule: only `hashed_passwd` takes a crypt hash; every other credential key needs a placeholder.
+- Apply with no changes leaves the user-data file byte-for-byte unchanged. In autoinstall seeds, an edit rewrites only the `user-data` block, so the installer section keeps its original formatting.
 
 ## [0.3.6] - 2026-09-22
 

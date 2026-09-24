@@ -1,0 +1,26 @@
+# home-lab-pxe
+
+Docker-packaged PXE/iPXE server with a web console. It discovers machines on the LAN. **Unknown** and **disabled** systems continue to the next boot device after a timeout. Named hosts see a folder-based iPXE menu (Windows / Linux / Tools) with a countdown to local disk; picking an OS image starts that install. Linux installs use full cloud-init. Windows Server uses unattend.xml plus Cloudbase-Init. Staged console changes apply on the **next PXE boot** as a new image, not as in-place config management. Linux root and Windows local Administrator usernames/passwords are Fernet-encrypted at rest.
+
+## Invariants
+
+- Machine identity is MAC-primary, SMBIOS UUID secondary.
+- Unknown MAC → timeout then next boot device. Never auto-install.
+- Disabled → same as unknown (no folder menu).
+- Deploying (image assigned) → Imaging (installer started) → Deployed (phone-home). Imaging past the Settings timeout (default 15 minutes) → Timeout Error (folder menu; operator Redeploy or client pick).
+- Named / ready / deployed with no in-progress install → iPXE folder menu; default continue-to-disk countdown.
+- Deployed + staged job → next PXE serves the new image + guest-init (cloud-init or Cloudbase-Init).
+- Cloud-init, unattend.xml, Cloudbase-Init user-data, SSH keys, and local-account passwords are secrets — never log or echo them.
+- `ENCRYPTION_KEY` required in production; local-account username+password ciphertext only in SQLite.
+- PXE/DHCP/TFTP are LAN-only; do not expose them to the internet.
+
+## Layout (target)
+
+- `src/routes/` — HTTP routes (admin UI, inventory API, iPXE, cloud-init, Windows seeds).
+- `src/boot/` — boot-policy and iPXE script generation.
+- `src/cloudinit/` — per-machine Linux user-data / meta-data / vendor-data.
+- `src/windows/` — unattend.xml and Cloudbase-Init metadata.
+- `src/inventory/` — machine registry, lifecycle, encrypted local accounts.
+- `tests/` — pytest. Mock DHCP/TFTP; CI covers container smoke.
+
+See `PLAN.md` and `ARCHITECTURE.md` for architecture and milestones. This is **not** api-to-dns; do not add DNS-provider plugins or WinRM DNS jobs.

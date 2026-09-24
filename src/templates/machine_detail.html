@@ -3,8 +3,20 @@
 {% block body %}
 <p class="back"><a href="/machines">← Machines</a></p>
 <header class="page-header">
-  <h1>{{ machine.hostname or "(unnamed)" }} <span class="badge badge-{{ machine.state }}">{{ state_label(machine.state) }}</span></h1>
-  <p class="description"><code>{{ machine.mac }}</code> · UUID {{ machine.uuid or "—" }} · {{ machine.last_ip or "no IP" }}{% if machine.manufacturer or machine.product or machine.serial %} · {{ machine.manufacturer }} {{ machine.product }} {{ machine.serial }}{% endif %}</p>
+  <div class="page-header-row">
+    <div class="page-title">
+      <h1>{{ machine.hostname or "(unnamed)" }}</h1>
+      <span class="badge badge-{{ machine.state }}">{{ state_label(machine.state) }}</span>
+    </div>
+  </div>
+  <div class="page-meta">
+    <code class="chip" title="MAC address">{{ machine.mac }}</code>
+    <span class="chip" title="SMBIOS UUID">{% if machine.uuid %}<span class="chip-text">UUID</span> {{ machine.uuid }}{% else %}<span class="chip-text">no UUID</span>{% endif %}</span>
+    <span class="chip" title="Last IP">{% if machine.last_ip %}<span class="chip-text">IP</span> {{ machine.last_ip }}{% else %}<span class="chip-text">no IP</span>{% endif %}</span>
+    {% if machine.manufacturer or machine.product or machine.serial %}
+    <span class="chip chip-text" title="Hardware">{{ machine.manufacturer }} {{ machine.product }} {{ machine.serial }}</span>
+    {% endif %}
+  </div>
 </header>
 {% if notice %}<p class="alert alert-ok" role="status">{{ notice }}</p>{% endif %}
 {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
@@ -23,116 +35,155 @@
 </details>
 {% endif %}
 
-<section class="card">
-  <h2>Actions</h2>
-  <form id="machine-save" class="form" method="post" action="/machines/{{ machine.id }}/save">
-    <label>Image
-      {% if image_options %}
-      <select name="image_id" {% if not deploying %}required{% endif %}>
-        {% for opt in image_options %}
-        <option value="{{ opt.image.id }}" {% if machine.assigned_image_id == opt.image.id %}selected{% endif %} {% if opt.blocked and machine.assigned_image_id != opt.image.id %}disabled{% endif %}>
-          {{ opt.image.name }} ({{ opt.image.os_family }}{% if opt.blocked %} — {{ opt.reason }}{% endif %})
-        </option>
+<form id="machine-save" class="card card-flush" method="post" action="/machines/{{ machine.id }}/save">
+  <header class="card-head">
+    <div class="card-head-main"><h2 class="card-title">Deployment</h2></div>
+  </header>
+  <div class="card-body">
+    <h3 class="section-label">Image and boot</h3>
+    <div class="form-grid">
+      <label><span class="label-row"><span class="label-text">Image</span></span>
+        {% if image_options %}
+        <select name="image_id" {% if not deploying %}required{% endif %}>
+          {% for opt in image_options %}
+          <option value="{{ opt.image.id }}" {% if machine.assigned_image_id == opt.image.id %}selected{% endif %} {% if opt.blocked and machine.assigned_image_id != opt.image.id %}disabled{% endif %}>
+            {{ opt.image.name }} ({{ opt.image.os_family }}{% if opt.blocked %} — {{ opt.reason }}{% endif %})
+          </option>
+          {% endfor %}
+        </select>
+        {% else %}
+        <span class="field-help">No Linux or Windows images yet. Add one under Images first.</span>
+        {% endif %}
+      </label>
+      <label><span class="label-row"><span class="label-text">Hostname</span></span><input name="hostname" value="{{ machine.hostname or overlay.hostname or '' }}" placeholder="lab-node-01" {% if deploying %}disabled{% endif %}></label>
+      <label><span class="label-row"><span class="label-text">Next Boot Device</span><span class="key-hint">UEFI boot order</span></span><select name="next_boot_device" {% if deploying %}disabled{% endif %}>
+        {% for value, label in next_boot_devices %}
+        <option value="{{ value }}" {% if (machine.next_boot_device or 'pxe') == value %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
-      </select>
-      {% else %}
-      <span class="meta">No Linux or Windows images yet. Add one under Images first.</span>
-      {% endif %}
-    </label>
-    <label>Hostname <input name="hostname" value="{{ machine.hostname or overlay.hostname or '' }}" placeholder="lab-node-01" {% if deploying %}disabled{% endif %}></label>
-    <label>Local user <input name="username" value="{{ account.username }}" placeholder="root or Administrator" {% if deploying %}disabled{% endif %}></label>
-    <label>Password <input type="password" name="password" autocomplete="new-password" placeholder="{% if account.set %}set — leave blank to keep{% else %}required to deploy{% endif %}" {% if deploying %}disabled{% endif %}></label>
-    <p class="meta">Username is visible. Password is write-only ({% if account.set %}set{% else %}not set{% endif %}). Save stores a new password. Deploy uses this account or the imaging default in Settings.</p>
-    <div class="btn-row">
-      <button type="submit" formaction="/machines/{{ machine.id }}/deploy" {% if deploying or not image_options %}disabled{% endif %} onclick="return confirm('Deploy this image? The next PXE boot will install it.');">Deploy</button>
-      <button type="submit" class="btn-secondary" {% if deploying %}disabled{% endif %}>Save</button>
+      </select></label>
+      <p class="field-help span">Applied at the end of the next install. PXE: network boot stays first (IPv4 PXE, then the installed OS), so the host keeps getting the boot menu; first-boot reboots wait out the menu countdown. Local disk: the installed OS boots first and network entries move to the end. On a deployed machine, Save stages a reimage.</p>
     </div>
-  </form>
-  <hr class="sep">
-  <div class="btn-row">
-    {% if can_abort %}
-    <form method="post" action="/machines/{{ machine.id }}/abort" onsubmit="return confirm('Abort this install? Guest-init stops and the host returns to the boot menu or deployed state.');"><button type="submit" class="btn-secondary">Abort install</button></form>
-    {% endif %}
-    <form method="post" action="/machines/{{ machine.id }}/stage" onsubmit="return confirm('Stage a reimage? The next PXE boot installs the assigned image.');"><button type="submit" class="btn-secondary" {% if deploying %}disabled{% endif %}>Stage reimage</button></form>
-    <form method="post" action="/machines/{{ machine.id }}/mark-deployed" onsubmit="return confirm('Mark this machine deployed without waiting for the installer?');"><button type="submit" class="btn-secondary">Mark deployed</button></form>
-    {% if machine.state == "disabled" %}
-    <form method="post" action="/machines/{{ machine.id }}/enable"><button type="submit" class="btn-secondary">Enable</button></form>
-    {% else %}
-    <form method="post" action="/machines/{{ machine.id }}/disable" onsubmit="return confirm('Disable this machine? It will no longer be served a boot image.');"><button type="submit" class="btn-danger">Disable</button></form>
-    {% endif %}
-    <form method="post" action="/machines/{{ machine.id }}/delete" onsubmit="return confirm('Delete this machine from inventory? The next PXE boot with this MAC will register as unknown.');"><button type="submit" class="btn-danger">Delete</button></form>
+    <h3 class="section-label">Local account</h3>
+    <div class="form-grid">
+      <label><span class="label-row"><span class="label-text">Local user</span></span><input name="username" value="{{ account.username }}" placeholder="root or Administrator" {% if deploying %}disabled{% endif %}></label>
+      <label><span class="label-row"><span class="label-text">Password</span>{% if account.set %}<span class="badge badge-deployed">set</span>{% else %}<span class="badge badge-attention">not set</span>{% endif %}</span><input type="password" name="password" autocomplete="new-password" placeholder="{% if account.set %}set — leave blank to keep{% else %}required to deploy{% endif %}" {% if deploying %}disabled{% endif %}></label>
+      <p class="field-help span">Username is visible. Password is write-only ({% if account.set %}set{% else %}not set{% endif %}). Save stores a new password. Deploy uses this account or the imaging default in Settings.</p>
+    </div>
   </div>
-</section>
+  <div class="form-actions is-reversed">
+    <button type="submit" formaction="/machines/{{ machine.id }}/deploy" {% if deploying or not image_options %}disabled{% endif %} onclick="return confirm('Deploy this image? The next PXE boot will install it.');">Deploy</button>
+    <button type="submit" class="btn-secondary" {% if deploying %}disabled{% endif %}>Save</button>
+  </div>
+</form>
 
-<section class="card">
-  <h2>Guest init</h2>
-  {% if overlay.raw_overlay %}
-  <p class="alert alert-error" role="status">This machine still has a legacy raw overlay. Saving a machine seed file replaces it.</p>
-  {% endif %}
-  <div class="form">
-    <label>Timezone
-      <select form="machine-save" name="timezone" required {% if deploying %}disabled{% endif %}>
-        {% for tz in timezones %}
-        <option value="{{ tz }}" {% if tz == selected_timezone %}selected{% endif %}>{{ tz }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Packages (comma) <input form="machine-save" name="packages" value="{{ overlay.packages|join(', ') if overlay.packages else '' }}" {% if deploying %}disabled{% endif %}></label>
-    <label>SSH keys (one per line)
-      <textarea id="ssh-keys" form="machine-save" name="ssh_keys" rows="3" {% if deploying %}disabled{% endif %}>{{ overlay.ssh_keys|join('\n') if overlay.ssh_keys else '' }}</textarea>
-    </label>
-    <label>Add a public key file <input type="file" id="ssh-pub" accept=".pub,.txt,text/plain" {% if deploying %}disabled{% endif %}></label>
-    {% if image %}
-    {% if family == 'windows' %}
-    <label>
-      <span class="seed-label-row">Machine unattend.xml
-        <button type="submit" form="machine-save" formaction="/machines/{{ machine.id }}/seed/copy-default" class="btn-ghost btn-sm" {% if deploying %}disabled{% endif %}>Copy Default</button>
-      </span>
-      <textarea form="machine-save" name="unattend_xml" rows="16" class="seed-editor" {% if deploying %}disabled{% endif %}>{{ machine_seed }}</textarea>
-    </label>
-    {% else %}
-    <label>
-      <span class="seed-label-row">Machine user-data
-        <button type="submit" form="machine-save" formaction="/machines/{{ machine.id }}/seed/copy-default" class="btn-ghost btn-sm" {% if deploying %}disabled{% endif %}>Copy Default</button>
-      </span>
-      {% if not cc_view %}
-      <textarea form="machine-save" name="user_data" rows="16" class="seed-editor" {% if deploying %}disabled{% endif %}>{{ machine_seed }}</textarea>
-      {% endif %}
-    </label>
-    {% if cc_view %}
-    {% with form_id="machine-save", disabled=deploying %}
-    {% include "cloudinit_editor.html" %}
-    {% endwith %}
-    <noscript>
-      <textarea form="machine-save" name="user_data" rows="16" class="seed-editor">{{ machine_seed }}</textarea>
-    </noscript>
-    {% endif %}
-    {% endif %}
-    <p class="meta">Active seed: <code>{{ served_hint }}</code>.</p>
-    <details>
-      <summary>Placeholder help</summary>
-      <p class="meta">{{ placeholder_help }} Files → Install snapshots are the unrendered pin from Deploy. The installer fetches the filled HTTP seed.</p>
-    </details>
-    {% else %}
-    <p class="meta">Assign an image to edit a per-machine cloud-init or unattend file. Copy Default uses the image selected under Actions.</p>
-    <div class="btn-row">
-      <button type="submit" form="machine-save" formaction="/machines/{{ machine.id }}/seed/copy-default" class="btn-ghost btn-sm" {% if deploying %}disabled{% endif %}>Copy Default</button>
+<section class="card card-flush">
+  <header class="card-head">
+    <div class="card-head-main">
+      <h2 class="card-title">Guest init</h2>
+      {% if image %}<span class="chip">{{ family }}</span>{% endif %}
     </div>
+  </header>
+  <div class="card-body">
+    {% if overlay.raw_overlay %}
+    <p class="alert alert-error" role="status">This machine still has a legacy raw overlay. Saving a machine seed file replaces it.</p>
     {% endif %}
-    <div class="btn-row">
+    <div class="form-grid">
+      <label><span class="label-row"><span class="label-text">Timezone</span></span>
+        <select form="machine-save" name="timezone" required {% if deploying %}disabled{% endif %}>
+          {% for tz in timezones %}
+          <option value="{{ tz }}" {% if tz == selected_timezone %}selected{% endif %}>{{ tz }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label><span class="label-row"><span class="label-text">Packages</span><span class="key-hint">comma-separated</span></span><input form="machine-save" name="packages" value="{{ overlay.packages|join(', ') if overlay.packages else '' }}" {% if deploying %}disabled{% endif %}></label>
+      <label class="span"><span class="label-row"><span class="label-text">SSH keys</span><span class="key-hint">one per line</span></span>
+        <textarea id="ssh-keys" form="machine-save" name="ssh_keys" rows="3" class="seed-editor" {% if deploying %}disabled{% endif %}>{{ overlay.ssh_keys|join('\n') if overlay.ssh_keys else '' }}</textarea>
+      </label>
+      <label class="span"><span class="label-row"><span class="label-text">Add a public key file</span><span class="key-hint">.pub</span></span><input type="file" id="ssh-pub" accept=".pub,.txt,text/plain" {% if deploying %}disabled{% endif %}></label>
+      {% if image %}
+      {% if family == 'windows' %}
+      <label class="span">
+        <span class="label-row"><span class="label-text">Machine unattend.xml</span>
+          <span class="label-actions">
+            <button type="submit" form="machine-save" formaction="/machines/{{ machine.id }}/seed/copy-default" class="btn-ghost btn-sm" {% if deploying %}disabled{% endif %}>Copy Default</button>
+          </span>
+        </span>
+        <textarea form="machine-save" name="unattend_xml" rows="16" class="seed-editor" {% if deploying %}disabled{% endif %}>{{ machine_seed }}</textarea>
+      </label>
+      {% else %}
+      <label class="span">
+        <span class="label-row"><span class="label-text">Machine user-data</span><span class="key-hint">#cloud-config</span>
+          <span class="label-actions">
+            {% if cc_view %}
+            <button type="button" class="btn-ghost btn-sm" data-cc-open data-cc-dialog="cc-editor-dialog" {% if deploying %}disabled{% endif %}>Editor</button>
+            {% endif %}
+            <button type="submit" form="machine-save" formaction="/machines/{{ machine.id }}/seed/copy-default" class="btn-ghost btn-sm" {% if deploying %}disabled{% endif %}>Copy Default</button>
+          </span>
+        </span>
+        <textarea form="machine-save" name="user_data" rows="16" class="seed-editor" data-cc-seed {% if deploying %}disabled{% endif %}>{{ machine_seed }}</textarea>
+      </label>
+      {% endif %}
+      <div class="span">
+        <p class="field-help">Active seed: <code>{{ served_hint }}</code>.</p>
+        <details class="disclosure">
+          <summary>Placeholder help</summary>
+          <p class="field-help">{{ placeholder_help }} Files → Install snapshots are the unrendered pin from Deploy. The installer fetches the filled HTTP seed.</p>
+        </details>
+      </div>
+      {% else %}
+      <div class="span empty-state">
+        <p class="meta">Assign an image to edit a per-machine cloud-init or unattend file. Copy Default uses the image selected under Deployment.</p>
+        <button type="submit" form="machine-save" formaction="/machines/{{ machine.id }}/seed/copy-default" class="btn-ghost btn-sm" {% if deploying %}disabled{% endif %}>Copy Default</button>
+      </div>
+      {% endif %}
+    </div>
+    <div class="form-actions bleed is-sticky">
       <button type="submit" form="machine-save" {% if deploying %}disabled{% endif %}>Save</button>
     </div>
   </div>
 </section>
 
-<section class="card">
-  <h2>Recent boots</h2>
-  <ul class="event-list">
-    {% for ev in events %}
-    <li>{{ ev.at }} · {{ script_labels.get(ev.script_kind, ev.script_kind) }} · {{ ev.client_ip }}</li>
-    {% else %}
-    <li class="meta">None yet.</li>
-    {% endfor %}
-  </ul>
+<section class="card card-flush">
+  <header class="card-head">
+    <div class="card-head-main"><h2 class="card-title">Lifecycle</h2></div>
+  </header>
+  <div class="card-body">
+    <div class="btn-row">
+      {% if can_abort %}
+      <form method="post" action="/machines/{{ machine.id }}/abort" onsubmit="return confirm('Abort this install? Guest-init stops and the host returns to the boot menu or deployed state.');"><button type="submit" class="btn-secondary">Abort install</button></form>
+      {% endif %}
+      <form method="post" action="/machines/{{ machine.id }}/stage" onsubmit="return confirm('Stage a reimage? The next PXE boot installs the assigned image.');"><button type="submit" class="btn-secondary" {% if deploying %}disabled{% endif %}>Stage reimage</button></form>
+      <form method="post" action="/machines/{{ machine.id }}/mark-deployed" onsubmit="return confirm('Mark this machine deployed without waiting for the installer?');"><button type="submit" class="btn-secondary">Mark deployed</button></form>
+      {% if machine.state == "disabled" %}
+      <form method="post" action="/machines/{{ machine.id }}/enable" class="push-end"><button type="submit" class="btn-secondary">Enable</button></form>
+      {% else %}
+      <form method="post" action="/machines/{{ machine.id }}/disable" class="push-end" onsubmit="return confirm('Disable this machine? It will no longer be served a boot image.');"><button type="submit" class="btn-danger">Disable</button></form>
+      {% endif %}
+      <form method="post" action="/machines/{{ machine.id }}/delete" onsubmit="return confirm('Delete this machine from inventory? The next PXE boot with this MAC will register as unknown.');"><button type="submit" class="btn-danger">Delete</button></form>
+    </div>
+  </div>
 </section>
+
+<section class="card card-flush">
+  <header class="card-head">
+    <div class="card-head-main">
+      <h2 class="card-title">Recent boots</h2>
+      <span class="count">{{ events|length }}</span>
+    </div>
+  </header>
+  <div class="card-body">
+    {% if events %}
+    <ul class="event-list">
+      {% for ev in events %}
+      <li><span class="meta">{{ ev.at }}</span><span>{{ script_labels.get(ev.script_kind, ev.script_kind) }}</span><code>{{ ev.client_ip }}</code></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty-state">None yet.</p>
+    {% endif %}
+  </div>
+</section>
+{% if cc_view %}
+{% include "cloudinit_editor.html" %}
+{% endif %}
 {% endblock %}

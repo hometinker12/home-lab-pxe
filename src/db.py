@@ -152,6 +152,7 @@ def _migrate_schema() -> None:
             _add_column_if_missing(conn, "machine", "product", "product VARCHAR DEFAULT ''")
             _add_column_if_missing(conn, "machine", "serial", "serial VARCHAR DEFAULT ''")
             _add_column_if_missing(conn, "machine", "install_log", "install_log VARCHAR DEFAULT ''")
+            _add_column_if_missing(conn, "machine", "next_boot_device", "next_boot_device VARCHAR DEFAULT 'pxe'")
             _dedupe_machine_uuids(conn)
             conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_machine_uuid ON machine(uuid)"))
         if "localaccount" in tables:

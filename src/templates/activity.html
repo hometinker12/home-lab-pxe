@@ -2,7 +2,9 @@
 {% block title %}Activity — home-lab-pxe{% endblock %}
 {% block body %}
 <header class="page-header">
-  <h1>Activity</h1>
+  <div class="page-header-row">
+    <div class="page-title"><h1>Activity</h1></div>
+  </div>
   <p class="description">Audit trail of operator actions in the console, newest first.</p>
 </header>
 <form class="toolbar" method="get" action="/activity">
@@ -25,8 +27,8 @@
     <tbody>
       {% for e in entries %}
       <tr>
-        <td>{{ e.at }}</td>
-        <td>{{ e.actor }}</td>
+        <td class="cell-when">{{ e.at }}</td>
+        <td><span class="chip chip-text">{{ e.actor }}</span></td>
         <td>{{ e.label }}</td>
         <td>{% if e.href %}<a href="{{ e.href }}">{{ e.detail or e.action }}</a>{% else %}{{ e.detail }}{% endif %}</td>
       </tr>
@@ -36,8 +38,11 @@
     </tbody>
   </table>
 </div>
-<div class="btn-row">
-  {% if has_prev %}<a class="btn-ghost btn-sm" href="/activity?q={{ q }}&page={{ page - 1 }}">Previous</a>{% endif %}
-  {% if has_next %}<a class="btn-ghost btn-sm" href="/activity?q={{ q }}&page={{ page + 1 }}">Next</a>{% endif %}
+{% if has_prev or has_next %}
+<div class="pager" role="navigation" aria-label="Pages">
+  <span class="meta">Page {{ page }}</span>
+  {% if has_prev %}<a class="btn btn-ghost btn-sm" href="/activity?q={{ q }}&page={{ page - 1 }}">Previous</a>{% endif %}
+  {% if has_next %}<a class="btn btn-ghost btn-sm" href="/activity?q={{ q }}&page={{ page + 1 }}">Next</a>{% endif %}
 </div>
+{% endif %}
 {% endblock %}

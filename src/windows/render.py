@@ -7,6 +7,7 @@ import re
 
 from sqlmodel import Session
 
+from ..boot.uefi_order import inject_uefi_order_command
 from ..inventory.service import get_image, get_open_attempt, load_overlay, resolve_local_account
 from ..models import AccountKind, Image, InstallAttempt, Machine
 from ..seed_render import SeedRenderError, render_selected_seed
@@ -28,7 +29,7 @@ def render_unattend_legacy(db: Session, machine: Machine) -> str:
     password = ""
     if creds:
         username, password = creds
-    return f"""<?xml version="1.0" encoding="utf-8"?>
+    body = f"""<?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
@@ -55,6 +56,9 @@ def render_unattend_legacy(db: Session, machine: Machine) -> str:
   </settings>
 </unattend>
 """
+    return inject_uefi_order_command(
+        body, get_settings().public_url, str(machine.id or ""), str(machine.next_boot_device or "")
+    )
 
 
 def render_unattend(db: Session, machine: Machine) -> str:

@@ -52,6 +52,11 @@ class AccountKind(StrEnum):
     windows_administrator = "windows_administrator"
 
 
+class NextBootDevice(StrEnum):
+    pxe = "pxe"
+    disk = "disk"
+
+
 class ExtractStatus(StrEnum):
     idle = "idle"
     queued = "queued"
@@ -145,6 +150,7 @@ class Machine(SQLModel, table=True):
     assigned_image_id: int | None = Field(default=None, foreign_key="image.id")
     instance_id: str = Field(default_factory=lambda: uuid4().hex)
     guest_overlay: str = "{}"
+    next_boot_device: str = NextBootDevice.pxe.value
     imaging_started_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
 

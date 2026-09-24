@@ -1,13 +1,49 @@
-{# Schema-driven cloud-init node editor.
-   Context: cc_view ({doc, extra_yaml}), cc_schema (node list), form_id, disabled. #}
-<div class="cc-editor" data-cc-editor {% if disabled %}data-disabled="1"{% endif %}>
-  <script type="application/json" class="cc-schema">{{ cc_schema|tojson }}</script>
-  <script type="application/json" class="cc-doc">{{ cc_view.doc|tojson }}</script>
-  <div class="cc-nav" role="tablist" aria-label="Cloud-init modules"></div>
-  <div class="cc-detail"></div>
-  <details class="cc-advanced">
-    <summary>Advanced YAML</summary>
-    <p class="meta">Keys this form does not model. This is not the autoinstall installer block.</p>
-    <textarea name="cc_extra_yaml" rows="8" class="seed-editor" {% if form_id %}form="{{ form_id }}"{% endif %} {% if disabled %}disabled{% endif %}>{{ cc_view.extra_yaml }}</textarea>
-  </details>
-</div>
+{# Cloud-init node editor dialog.
+   Context: cc_view ({doc, extra_yaml, mode}), cc_schema (node list).
+   Not a .modal: cloudinit-editor.js owns close (confirm on unsaved changes). #}
+<dialog class="cc-editor-dialog" id="cc-editor-dialog" aria-labelledby="cc-editor-title">
+  <header class="cc-head">
+    <div class="cc-head-main">
+      <h2 id="cc-editor-title">Cloud-init editor</h2>
+      <span class="badge badge-ready" data-cc-mode hidden></span>
+    </div>
+    <div class="cc-head-actions">
+      <button type="button" class="btn-ghost btn-sm cc-preview-toggle" data-cc-preview-toggle aria-pressed="false" aria-controls="cc-preview">Preview</button>
+      <button type="button" class="icon-btn" data-cc-close aria-label="Close editor" title="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+  </header>
+  <p class="alert alert-error cc-error" data-cc-error hidden role="alert"></p>
+  <div class="cc-editor" data-cc-editor data-mode="{{ cc_view.mode or '' }}">
+    <script type="application/json" class="cc-schema">{{ cc_schema|tojson }}</script>
+    <script type="application/json" class="cc-doc">{{ cc_view.doc|tojson }}</script>
+    <div class="cc-side">
+      <div class="cc-side-tools">
+        <input type="search" class="cc-search" placeholder="Search modules and keys" aria-label="Search modules and keys" aria-keyshortcuts="/" autocomplete="off" spellcheck="false">
+        <label class="check cc-only-set"><input type="checkbox" class="cc-only-set-box"> Configured only</label>
+        <select class="cc-nav-select" aria-label="Module"></select>
+      </div>
+      <div class="cc-nav" role="navigation" aria-label="Cloud-init modules"></div>
+    </div>
+    <section class="cc-detail" aria-live="off"></section>
+    <aside class="cc-preview" id="cc-preview" hidden aria-label="Preview">
+      <div class="cc-preview-head">
+        <strong class="cc-preview-title">user-data after Apply</strong>
+        <span class="cc-preview-status meta" aria-live="polite"></span>
+      </div>
+      <p class="cc-preview-error" hidden></p>
+      <pre class="cc-preview-body"></pre>
+    </aside>
+    <div class="cc-extra-home" hidden>
+      <textarea data-cc-extra rows="12" class="seed-editor" spellcheck="false" aria-label="Other keys (YAML)">{{ cc_view.extra_yaml }}</textarea>
+    </div>
+  </div>
+  <footer class="cc-foot">
+    <p class="cc-status" data-cc-status aria-live="polite"></p>
+    <div class="btn-row">
+      <button type="button" class="btn-secondary" data-cc-cancel>Cancel</button>
+      <button type="button" data-cc-apply>Apply</button>
+    </div>
+  </footer>
+</dialog>

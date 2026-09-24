@@ -5,7 +5,7 @@ from starlette.datastructures import UploadFile
 from starlette.status import HTTP_303_SEE_OTHER
 
 from ..auth import require_user
-from ..cloudinit.editor import apply_cloudinit_editor, cloud_config_view
+from ..cloudinit.editor import apply_cloudinit_editor, safe_cloud_config_view
 from ..cloudinit.schema import NODES
 from ..db import get_db
 from ..extract_worker import schedule_extract
@@ -203,7 +203,7 @@ def _image_detail_context(request: Request, db: Session, image, *, error=None):
     cc_view = None
     cc_schema: list = []
     if family == OsFamily.linux:
-        cc_view = cloud_config_view(seed)
+        cc_view = safe_cloud_config_view(seed)
         cc_schema = NODES
     return render(
         request,
