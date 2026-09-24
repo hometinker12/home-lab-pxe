@@ -90,7 +90,7 @@ def guest_path(machine: dict, family: str, leaf: str) -> str:
 def folder_ids_from_tree(body: bytes) -> dict[str, int]:
     found: dict[str, int] = {}
     for match in re.finditer(
-        rb'href="/boot-menu\?folder=(\d+)" class="boot-tree-name[^"]*">([^<]+)',
+        rb'href="/boot-menu\?folder=(\d+)" class="boot-tree-name[^"]*"[^>]*>([^<]+)',
         body,
     ):
         found[match.group(2).decode().strip()] = int(match.group(1))
