@@ -36,3 +36,5 @@ __pycache__/
 htmlcov/
 coverage.xml
 *.lcov
+
+.vscode
