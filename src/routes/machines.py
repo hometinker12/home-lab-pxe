@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlmodel import Session
 from starlette.status import HTTP_303_SEE_OTHER
 
 from ..auth import require_user
-from ..cloudinit.editor import apply_cloudinit_editor, cloud_config_view
+from ..cloudinit.editor import apply_cloudinit_editor, cloud_config_preview, cloud_config_view, safe_cloud_config_view
 from ..cloudinit.schema import NODES
 from ..db import get_db
 from ..dhcp_runtime import default_timezone
@@ -38,7 +38,7 @@ from ..inventory.service import (
     update_staged_attempt,
     upsert_local_account,
 )
-from ..models import AccountKind, MachineState, OsFamily
+from ..models import AccountKind, MachineState, NextBootDevice, OsFamily
 from ..security import VaultError
 from ..seed_render import validate_seed_template
 from ..seed_store import (
@@ -127,6 +127,19 @@ def _resolved_timezone(db: Session, timezone: str, overlay: dict) -> str:
     return tz
 
 
+_NEXT_BOOT_DEVICES = [(NextBootDevice.pxe.value, "PXE"), (NextBootDevice.disk.value, "Local disk")]
+
+
+def _normalized_next_boot_device(value: str | None) -> str | None:
+    """Return a valid next-boot-device value, or None when the form left it blank."""
+    choice = (value or "").strip().lower()
+    if not choice:
+        return None
+    if choice not in {d.value for d in NextBootDevice}:
+        raise ValueError("Choose a valid next boot device")
+    return choice
+
+
 def _apply_guest_fields(
     db: Session,
     machine,
@@ -141,9 +154,13 @@ def _apply_guest_fields(
     allow_blank_hostname: bool,
     write_seed: bool,
     delete_empty_seed: bool,
+    next_boot_device: str | None = None,
 ) -> None:
+    boot_device = _normalized_next_boot_device(next_boot_device)
     overlay = load_overlay(machine.guest_overlay)
     tz = _resolved_timezone(db, timezone, overlay)
+    if boot_device is not None:
+        machine.next_boot_device = boot_device
     if hostname.strip() or allow_blank_hostname:
         apply_hostname(machine, hostname)
     overlay.update(
@@ -260,7 +277,7 @@ def _detail(request: Request, db: Session, machine, *, error=None, notice=None):
     cc_view = None
     cc_schema: list = []
     if family == OsFamily.linux and machine_seed.strip():
-        cc_view = cloud_config_view(machine_seed)
+        cc_view = safe_cloud_config_view(machine_seed)
         cc_schema = NODES
     return render(
         request,
@@ -286,6 +303,7 @@ def _detail(request: Request, db: Session, machine, *, error=None, notice=None):
         in {MachineState.deploying.value, MachineState.imaging.value, MachineState.staged.value},
         cc_view=cc_view,
         cc_schema=cc_schema,
+        next_boot_devices=_NEXT_BOOT_DEVICES,
     )
 
 
@@ -391,35 +409,50 @@ def machines_create(
 
 
 _EDITOR_MAX_BYTES = 256 * 1024
+_NO_STORE = {"Cache-Control": "no-store"}
+
+
+def _editor_response(body: dict, status_code: int = 200) -> JSONResponse:
+    return JSONResponse(body, status_code=status_code, headers=_NO_STORE)
+
+
+def _editor_error(detail: str, *, node: str | None = None, path: str | None = None) -> JSONResponse:
+    body: dict = {"detail": detail}
+    if node:
+        body["node"] = node
+    if path:
+        body["path"] = path
+    return _editor_response(body, status_code=400)
 
 
 @router.post("/api/cloud-init/editor")
 async def cloudinit_editor_preview(request: Request, user: str = Depends(require_user)):
-    """Turn the open seed file into editor fields, or write those fields back into the file."""
+    """Turn the open seed file into editor fields, preview fields as YAML, or write them back into the file."""
     del user
     try:
         payload = await request.json()
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="Expected JSON") from exc
+    except Exception:
+        return _editor_error("Expected JSON")
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Expected a JSON object")
+        return _editor_error("Expected a JSON object")
     seed = payload.get("seed") if isinstance(payload.get("seed"), str) else ""
     if len(seed.encode("utf-8")) > _EDITOR_MAX_BYTES:
-        raise HTTPException(status_code=400, detail="Seed exceeds 256 KiB")
+        return _editor_error("Seed exceeds 256 KiB")
     action = str(payload.get("action") or "")
     try:
         if action == "view":
-            view = cloud_config_view(seed)
-            return {"doc": view["doc"], "extra_yaml": view["extra_yaml"], "mode": view["mode"]}
-        if action == "apply":
+            return _editor_response(cloud_config_view(seed))
+        if action in {"apply", "preview"}:
             cc_json = payload.get("cc_json") if isinstance(payload.get("cc_json"), str) else ""
             extra = payload.get("cc_extra_yaml") if isinstance(payload.get("cc_extra_yaml"), str) else ""
             if not cc_json.strip():
                 raise SeedError("Editor document is empty")
-            return {"seed": apply_cloudinit_editor(seed, cc_json, extra)}
+            if action == "preview":
+                return _editor_response(cloud_config_preview(seed, cc_json, extra))
+            return _editor_response({"seed": apply_cloudinit_editor(seed, cc_json, extra)})
     except SeedError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    raise HTTPException(status_code=400, detail="Unknown action")
+        return _editor_error(str(exc), node=getattr(exc, "node", None), path=getattr(exc, "path", None))
+    return _editor_error("Unknown action")
 
 
 @router.get("/machines/{machine_id}", response_class=HTMLResponse)
@@ -445,6 +478,7 @@ def machine_save(
     username: str = Form(""),
     password: str = Form(""),
     image_id: int | None = Form(default=None),
+    next_boot_device: str = Form(""),
     db: Session = Depends(get_db),
     user: str = Depends(require_user),
 ):
@@ -477,6 +511,7 @@ def machine_save(
             allow_blank_hostname=True,
             write_seed=True,
             delete_empty_seed=True,
+            next_boot_device=next_boot_device,
         )
         assigned = get_image(db, machine.assigned_image_id)
         if machine.state == MachineState.disabled.value:
@@ -515,6 +550,7 @@ def machine_deploy(
     unattend_xml: str = Form(""),
     cc_json: str | None = Form(default=None),
     cc_extra_yaml: str = Form(""),
+    next_boot_device: str = Form(""),
     db: Session = Depends(get_db),
     user: str = Depends(require_user),
 ):
@@ -551,6 +587,7 @@ def machine_deploy(
             allow_blank_hostname=False,
             write_seed=True,
             delete_empty_seed=False,
+            next_boot_device=next_boot_device,
         )
         if password:
             upsert_local_account(

@@ -1,0 +1,31 @@
+# README.md — explicit-request only
+
+**Do not create, edit, or rewrite `README.md` unless the user explicitly asked for a README change in this conversation or task.** Capability, install, env, and UI work still go in `CHANGELOG.md`, `.env.example`, `PLAN.md`, `ARCHITECTURE.md`, and the rest of the docs. Existing README text is not a cue to “keep it aligned.”
+
+## Hard rule for agents
+
+- If the user did **not** say to update `README.md` (or “the readme”), leave that file untouched: no wording tweaks, no screenshot swaps, no env-table sync, no badge or install-step edits.
+- Docs-alignment, commit, and release workflows **skip** `README.md` by default.
+- If a checklist, skill, or older note says to update README when install/run or capabilities change, **ignore it** unless the current user request names README.
+- Do **not** “fix” README because other files changed. Do **not** revert or reformat README while doing unrelated work.
+
+## When the user *does* explicitly ask
+
+`README.md` is public: what the app is, how to install it, and how to run it. It is not a changelog, CI runbook, or maintainer diary.
+
+### Put in README (only in that explicit-request pass)
+
+- What the product is
+- How to copy `.env`, start Compose, open the console, pull the published image
+- Operator-facing capabilities (DHCP/TFTP, console, images, cloud-init, Windows)
+- Links to `ARCHITECTURE.md`, `PLAN.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`, `.env.example`, `LICENSE.md`
+
+### Keep out of README
+
+- GitHub Actions secrets (`DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`) and Cosign/OIDC notes
+- Branch promotion (`develop` → `release` → `main`)
+- Workflow job names, smoke-test inventories, Trivy/Cosign internals
+- Release-cut steps (VERSION bump, CHANGELOG cut, merge to `main`)
+- Running commentary on what CI currently covers
+
+Put that in `.claude/skills/commit-and-release/SKILL.md` (agents) or `CONTRIBUTING.md` (human contributors). User-visible history belongs in `CHANGELOG.md`.

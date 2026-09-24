@@ -15,8 +15,9 @@ import yaml
 from passlib.hash import sha512_crypt
 from sqlmodel import Session
 
+from .boot.uefi_order import inject_uefi_order_command, valid_policy_args
 from .models import AccountKind, Image, InstallAttempt, Machine, OsFamily
-from .seed_store import SeedError, factory_seed_text, read_image_seed, read_machine_seed, read_seed
+from .seed_store import CRYPT_HASH_RE, SeedError, factory_seed_text, read_image_seed, read_machine_seed, read_seed
 from .settings import get_settings
 
 TOKEN_RE = re.compile(r"\{\{([a-z_]+)\}\}")
@@ -64,14 +65,85 @@ def password_hash_for(password: str, instance_id: str) -> str:
     return sha512_crypt.using(salt=_stable_salt(instance_id), rounds=5000).hash(password)
 
 
+_SECRET_KEYS = (
+    "password",
+    "passwd",
+    "hashed_password",
+    "hashed_passwd",
+    "hashed-passwd",
+    "plain_text_passwd",
+    "plain-text-passwd",
+    "secret",
+)
+# A block-mapping key line, optionally a list item (``- key:``, ``- - key:``) and optionally quoted.
+_SECRET_LINE_RE = re.compile(
+    r"(?:-\s+)*([\"']?)(" + "|".join(re.escape(key) for key in _SECRET_KEYS) + r")\1\s*:",
+    flags=re.IGNORECASE,
+)
+_SECRET_KEY_SET = frozenset(_SECRET_KEYS)
+# Keys that may also hold a crypt hash (same rule as the cloud-init editor). Everything else is
+# placeholder-only.
+_HASH_KEYS = frozenset({"hashed_passwd", "hashed-passwd"})
+_SENTINEL_PASSWORD = "PXE-SENTINEL-PASSWORD"
+
+
+def _has_password_placeholder(text: str) -> bool:
+    return "{{password" in text
+
+
+def _is_crypt_hash(value: str) -> bool:
+    return bool(CRYPT_HASH_RE.fullmatch(value.strip()))
+
+
+def _line_scalar(rest: str) -> str:
+    """Plain or quoted scalar after ``key:`` on one line, without a trailing comment."""
+    text = re.split(r"\s+#", rest.strip(), maxsplit=1)[0].strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        return text[1:-1]
+    return text
+
+
+def _reject_flow_secrets(value: Any) -> None:
+    """Catch flow-style mappings (``{name: a, plain_text_passwd: x}``) that the line check cannot see.
+
+    Runs on the template parsed with placeholders swapped for sentinels, so a placeholder value
+    shows up as its sentinel.
+    """
+    if isinstance(value, list):
+        for item in value:
+            _reject_flow_secrets(item)
+        return
+    if not isinstance(value, dict):
+        return
+    for key, item in value.items():
+        if isinstance(key, str) and key.lower() in _SECRET_KEY_SET:
+            if item is None or item == "":
+                continue
+            if isinstance(item, str) and key.lower() in _HASH_KEYS and _is_crypt_hash(item):
+                continue
+            if not (isinstance(item, str) and _SENTINEL_PASSWORD in item):
+                raise SeedError("Credential fields must use placeholders")
+            continue
+        _reject_flow_secrets(item)
+
+
 def _yaml_reject_literal_secrets(text: str) -> None:
     for raw in (text or "").splitlines():
         stripped = raw.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        match = re.match(r"(password|passwd|hashed_password|secret)\s*:", stripped, flags=re.IGNORECASE)
-        if match and "{{password" not in stripped and "{{password_hash}}" not in stripped:
-            raise SeedError("Credential fields must use placeholders")
+        match = _SECRET_LINE_RE.match(stripped)
+        if not match or _has_password_placeholder(stripped):
+            continue
+        if match.group(2).lower() in _HASH_KEYS and _is_crypt_hash(_line_scalar(stripped[match.end() :])):
+            continue
+        raise SeedError("Credential fields must use placeholders")
+    sentinels = {**dummy_values(), "password": _SENTINEL_PASSWORD, "password_hash": _SENTINEL_PASSWORD}
+    try:
+        parsed = yaml.safe_load(substitute_yaml(text, sentinels))
+    except (yaml.YAMLError, SeedRenderError):
+        return  # validate_seed_template reports invalid YAML / placeholders itself
+    _reject_flow_secrets(parsed)
 
 
 def _xml_reject_literal_secrets(text: str) -> None:
@@ -565,6 +637,32 @@ def _ensure_autoinstall_confirm_command(auto: dict, public_url: str) -> bool:
     return True
 
 
+def _uefi_order_command(public_url: str, policy: str, machine_id: str) -> str:
+    """Late-command that fetches and runs the BootOrder helper; always exits 0."""
+    base = (public_url or "{{public_url}}").rstrip("/")
+    url = f"{base}/boot-files/uefi-boot-order.py"
+    token = url if url.startswith("{{") else json.dumps(url)
+    return (
+        "wget -q --tries=3 --timeout=20 -O /run/pxe-uefi-boot-order.py "
+        f"{token} && python3 /run/pxe-uefi-boot-order.py {policy} {machine_id} || true"
+    )
+
+
+def _ensure_uefi_order_late_command(auto: dict, public_url: str, machine_id: str, policy: str) -> bool:
+    """Run the BootOrder helper just before the forced reboot, after phone-home."""
+    if not valid_policy_args(policy, machine_id):
+        return False
+    cmds = auto.get("late-commands")
+    if not isinstance(cmds, list):
+        cmds = []
+    if any("uefi-boot-order.py" in _command_text(cmd) for cmd in cmds):
+        return False
+    cmd = _uefi_order_command(public_url, policy, machine_id)
+    index = next((i for i, item in enumerate(cmds) if _has_force_reboot([item])), len(cmds))
+    auto["late-commands"] = [*cmds[:index], cmd, *cmds[index:]]
+    return True
+
+
 def _ensure_imaging_early_command(auto: dict, imaging_url: str) -> bool:
     url = imaging_url or "{{imaging_url}}"
     cmds = auto.get("early-commands")
@@ -685,6 +783,8 @@ def complete_linux_user_data(
     install_log_url: str = "",
     source_id: str = "",
     public_url: str = "",
+    next_boot_device: str = "",
+    machine_id: str = "",
 ) -> str:
     """Fill missing Subiquity autoinstall keys so NFS installs stay non-interactive."""
     try:
@@ -727,6 +827,8 @@ def complete_linux_user_data(
     if _sanitize_identity_username(auto):
         changed = True
     if _ensure_force_reboot_late_command(auto):
+        changed = True
+    if _ensure_uefi_order_late_command(auto, public_url, machine_id, next_boot_device):
         changed = True
     if _drop_empty_ssh_key_lists(parsed):
         changed = True
@@ -910,6 +1012,12 @@ def render_selected_seed(
         if family == OsFamily.windows:
             rendered = drop_empty_image_name_metadata(substitute_xml(text, values))
             ET.fromstring(rendered)
+            rendered = inject_uefi_order_command(
+                rendered,
+                str(values.get("public_url") or ""),
+                str(values.get("machine_id") or ""),
+                str(machine.next_boot_device or ""),
+            )
         else:
             rendered = substitute_yaml(text, values)
             if not machine_override:
@@ -922,6 +1030,8 @@ def render_selected_seed(
                 install_log_url=str(values.get("install_log_url") or ""),
                 source_id=str(values.get("source_id") or ""),
                 public_url=str(values.get("public_url") or ""),
+                next_boot_device=str(machine.next_boot_device or ""),
+                machine_id=str(values.get("machine_id") or ""),
             )
             yaml.safe_load(rendered)
     except (SeedRenderError, ET.ParseError, yaml.YAMLError) as exc:

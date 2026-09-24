@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -11,6 +12,10 @@ from .paths import UnsafePathError, resolve_under
 from .settings import get_settings
 
 _DEFAULTS_DIR = Path(__file__).resolve().parent / "defaults"
+
+# crypt(3) hash such as $6$rounds=5000$salt$hash, $y$j9T$salt$hash or $2b$12$...: the only literal a
+# ``hashed_passwd`` credential key may hold (editor and save validation share this).
+CRYPT_HASH_RE = re.compile(r"\$[0-9A-Za-z]{1,8}\$[./0-9A-Za-z$=,+-]+")
 
 
 class SeedError(ValueError):

@@ -232,6 +232,17 @@ stateDiagram-v2
 
 Identity: **MAC primary**, SMBIOS UUID secondary. A known UUID with a new MAC attaches that MAC when the previous NIC has been quiet for an hour. A UUID that still belongs to a recently seen MAC is left alone and the new MAC is registered on its own. **Timeout Error** and **Install failed** are wait-only (no guest-init); the operator Deploys again. The timer is Settings → Machines (default 60 minutes). Guest-init and imaging callbacks refresh it. New machines inherit the Settings default IANA timezone.
 
+### 2.5 UEFI boot order after install
+
+PXE cannot change firmware boot order, so the guest rewrites it at the end of the install, based on the machine's **Next Boot Device** (`pxe` by default, or `disk`). Both installers leave the new OS entry at the top of BootOrder.
+
+- **Linux (Ubuntu autoinstall):** a late-command runs after phone-home and before `sync` + sysrq `b`. It downloads `/boot-files/uefi-boot-order.py`, which runs `efibootmgr -o`.
+- **Windows:** a specialize `RunSynchronousCommand` in the existing `Microsoft-Windows-Deployment` component runs after the phone-home Order. It downloads `/boot-files/uefi-boot-order.ps1`, which runs `bcdedit /set {fwbootmgr} displayorder`.
+- **`pxe` order:** the entry that PXE-booted the installer (Linux `BootCurrent`), then IPv4 PXE entries, then the installed OS, then other network entries (IPv6/HTTP), then everything else. The folder menu's continue item runs `exit`, so firmware falls straight through to the disk.
+- **`disk` order:** disk, then other, then network.
+- **Phone-home gate:** before putting PXE first, the helper POSTs `/api/machines/{id}/events` and needs a 200 (it just marked Deployed) or a 409 (already out of the install states). Otherwise it leaves the order alone. Without this gate, a lost phone-home would PXE-boot back into the installer on every reboot. `decide_script` keeps serving the installer while the machine is Imaging, and the imaging callback refreshes the timer.
+- BIOS installs, firmware without network entries, and non-English Windows labels are left unchanged. Some firmware ignores or rebuilds BootOrder.
+
 ---
 
 ## 3. Web console

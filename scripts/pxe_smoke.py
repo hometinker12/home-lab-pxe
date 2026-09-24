@@ -90,7 +90,7 @@ def guest_path(machine: dict, family: str, leaf: str) -> str:
 def folder_ids_from_tree(body: bytes) -> dict[str, int]:
     found: dict[str, int] = {}
     for match in re.finditer(
-        rb'href="/boot-menu\?folder=(\d+)" class="boot-tree-name[^"]*">([^<]+)',
+        rb'href="/boot-menu\?folder=(\d+)" class="boot-tree-name[^"]*"[^>]*>([^<]+)',
         body,
     ):
         found[match.group(2).decode().strip()] = int(match.group(1))
@@ -235,6 +235,62 @@ def expect_dnsmasq_ipxe_handoff(container: str) -> None:
     expect("dhcp-boot=tag:ipxe," in conf and "boot.ipxe" in conf, "dnsmasq missing iPXE HTTP boot.ipxe")
 
 
+def editor_call(client, payload: dict):
+    status, headers, body = client.request(
+        "POST",
+        "/api/cloud-init/editor",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        parsed = json.loads(body or b"{}")
+    except ValueError:
+        parsed = {}
+    return status, headers, parsed
+
+
+def check_cloudinit_editor(client, detail_path: str) -> None:
+    """Editor API view/preview/apply round trip (nothing is saved) plus the detail page's schema island."""
+    status, _, body = client.request("GET", detail_path)
+    expect(status == 200, f"{detail_path} {status}")
+    match = re.search(rb'<script type="application/json" class="cc-schema">(.*?)</script>', body, flags=re.S)
+    expect(match is not None, f"{detail_path} missing cc-schema island")
+    try:
+        schema = json.loads(match.group(1))
+    except ValueError:
+        fail(f"{detail_path} cc-schema island is not JSON")
+    expect(isinstance(schema, list) and any(node.get("id") == "users" for node in schema), "cc-schema nodes")
+
+    host = f"smoke-cc-{int(time.time())}"
+    seed = f"#cloud-config\nhostname: {host}\nusers:\n  - name: smoke\n    shell: /bin/bash\n"
+    status, headers, view = editor_call(client, {"action": "view", "seed": seed})
+    expect(status == 200, f"editor view {status}")
+    cache = {key.lower(): value for key, value in headers.items()}.get("cache-control", "")
+    expect("no-store" in cache, f"editor view Cache-Control {cache!r}")
+    doc = view.get("doc") or {}
+    expect(doc.get("hostname") == host, "editor view doc missing hostname")
+
+    doc["hostname"] = f"{host}-edited"
+    request = {"seed": seed, "cc_json": json.dumps(doc), "cc_extra_yaml": view.get("extra_yaml") or ""}
+    status, headers, preview = editor_call(client, {"action": "preview", **request})
+    expect(status == 200, f"editor preview {status}")
+    expect(f"hostname: {host}-edited" in (preview.get("seed") or ""), "editor preview missing change")
+    expect(f"{host}-edited" in ((preview.get("node_yaml") or {}).get("hostname") or ""), "editor preview node_yaml")
+    status, _, applied = editor_call(client, {"action": "apply", **request})
+    expect(status == 200, f"editor apply {status}")
+    applied_seed = applied.get("seed") or ""
+    expect(f"hostname: {host}-edited" in applied_seed and "name: smoke" in applied_seed, "editor apply missing change")
+
+    literal = "SmokeLiteral-not-a-placeholder"
+    doc["users"][0]["__extra__"] = f"plain_text_passwd: {literal}\n"
+    status, _, rejected = editor_call(
+        client, {"action": "apply", "seed": seed, "cc_json": json.dumps(doc), "cc_extra_yaml": ""}
+    )
+    expect(status == 400, f"editor apply must reject a literal in Other keys YAML ({status})")
+    expect(rejected.get("path") == "users[0].__extra__", f"editor rejection path {rejected.get('path')!r}")
+    expect(literal not in json.dumps(rejected), "editor rejection echoed the literal")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
@@ -275,6 +331,15 @@ def main() -> None:
         compile(body.decode(), "autoinstall-confirm.py", "exec")
     except SyntaxError as exc:
         fail(f"autoinstall confirm helper is not valid Python: {exc}")
+
+    status, _, body = c.request("GET", "/boot-files/uefi-boot-order.py")
+    expect(status == 200 and b"efibootmgr" in body, "uefi boot order python helper")
+    try:
+        compile(body.decode(), "uefi-boot-order.py", "exec")
+    except SyntaxError as exc:
+        fail(f"uefi boot order helper is not valid Python: {exc}")
+    status, _, body = c.request("GET", "/boot-files/uefi-boot-order.ps1")
+    expect(status == 200 and b"bcdedit" in body, "uefi boot order PowerShell helper")
 
     mac = "de-ad-be-ef-00-01"
     status, _, body = c.request("GET", f"/ipxe/{mac}")
@@ -700,6 +765,7 @@ def main() -> None:
         },
     )
     expect(status in {200, 303, 302}, f"edit image seed {status}")
+    check_cloudinit_editor(c, f"/images/{linux_image_id}")
     status, _, body = c.request("GET", f"/images/{linux_image_id}")
     expect(b'data-os="linux,tool"' in body or b'data-os="linux"' in body, "linux image fields")
     expect(b'data-os="windows"' in body, "windows image fields")
@@ -896,6 +962,7 @@ def main() -> None:
     expect("event=imaging" in user_data, "autoinstall early-commands must ping imaging")
     expect("phy80211" in user_data, "autoinstall must unbind live Wi-Fi before netplan apply")
     expect("autoinstall-confirm.py" in user_data, "autoinstall must fetch the confirmation helper")
+    expect("uefi-boot-order.py" in user_data, "autoinstall must run the UEFI boot order helper")
     expect("optional: true" in user_data, "netplan catch-all NICs must be optional")
     expect("\n  identity:" in user_data, "autoinstall must include identity")
     expect("\n  timezone:" not in user_data, "timezone must not be an autoinstall root key")
@@ -1066,6 +1133,7 @@ def main() -> None:
     expect(b"windowsPE" in body, "unattend missing windowsPE")
     expect(b"/IMAGE/NAME" in body and b"Windows Server 2022 SERVERSTANDARD" in body, "unattend missing selected image name")
     expect(b"<Value>2</Value>" in body, "unattend missing selected wim index")
+    expect(b"uefi-boot-order.ps1" in body, "unattend must run the UEFI boot order helper in specialize")
     status, _, body = c.request("GET", guest_path(win_live, "windows", "startnet.cmd"))
     expect(status == 200 and b"pxe-media" in body, "startnet missing SMB share")
     expect(b"event=imaging" in body, "WinPE startnet must ping imaging")

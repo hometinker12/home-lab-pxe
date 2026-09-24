@@ -472,3 +472,78 @@ def test_copy_default_rejected_while_deploying(client):
     response = client.post(f"/machines/{mid}/seed/copy-default", data={"image_id": str(image_id)})
     assert response.status_code == 200
     assert "deploy is in progress" in response.text
+
+
+def _register_plain_machine(mac: str) -> int:
+    from src.db import session_scope
+    from src.inventory.service import register_machine
+
+    with session_scope() as db:
+        machine = register_machine(db, mac=mac, hostname="boot-order", actor="admin")
+        db.commit()
+        return int(machine.id)
+
+
+def _stored_next_boot_device(mid: int) -> str:
+    from src.db import session_scope
+    from src.models import Machine
+
+    with session_scope() as db:
+        return db.get(Machine, mid).next_boot_device
+
+
+def test_next_boot_device_defaults_to_pxe(client):
+    login(client)
+    mid = _register_plain_machine("02:00:00:00:00:91")
+    assert _stored_next_boot_device(mid) == "pxe"
+    page = client.get(f"/machines/{mid}")
+    assert 'name="next_boot_device"' in page.text
+    assert 'value="pxe" selected' in page.text
+    assert 'value="disk" selected' not in page.text
+    assert "Local disk" in page.text
+
+
+def test_next_boot_device_save_stores_disk(client):
+    login(client)
+    mid = _register_plain_machine("02:00:00:00:00:92")
+    saved = client.post(
+        f"/machines/{mid}/save",
+        data={"hostname": "boot-order", "timezone": "UTC", "next_boot_device": " Disk "},
+        follow_redirects=False,
+    )
+    assert saved.status_code in {302, 303}
+    assert _stored_next_boot_device(mid) == "disk"
+    page = client.get(f"/machines/{mid}")
+    assert 'value="disk" selected' in page.text
+
+
+def test_next_boot_device_rejects_unknown_value(client):
+    login(client)
+    mid = _register_plain_machine("02:00:00:00:00:93")
+    saved = client.post(
+        f"/machines/{mid}/save",
+        data={"hostname": "renamed", "timezone": "UTC", "next_boot_device": "usb"},
+        follow_redirects=False,
+    )
+    assert saved.status_code == 200
+    assert "Choose a valid next boot device" in saved.text
+    assert _stored_next_boot_device(mid) == "pxe"
+    assert client.get(f"/api/machines/{mid}").json()["hostname"] == "boot-order"
+
+
+def test_next_boot_device_missing_field_keeps_value(client):
+    login(client)
+    mid = _register_plain_machine("02:00:00:00:00:94")
+    first = client.post(
+        f"/machines/{mid}/save",
+        data={"hostname": "boot-order", "timezone": "UTC", "next_boot_device": "disk"},
+        follow_redirects=False,
+    )
+    assert first.status_code in {302, 303}
+    again = client.post(
+        f"/machines/{mid}/save",
+        data={"hostname": "boot-order", "timezone": "UTC"},
+        follow_redirects=False,
+    )
+    assert again.status_code in {302, 303}
+    assert _stored_next_boot_device(mid) == "disk"

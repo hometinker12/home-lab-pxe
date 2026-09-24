@@ -1,0 +1,740 @@
+{
+  "version": "26.2",
+  "placeholders": {
+    "ansible": "package_name: ansible-core\ninstall_method: distro\npull:\n- url: https://github.com/holmanb/vmboot.git\n  playbook_names:\n  - ubuntu.yml",
+    "ansible.package_name": "ansible-core",
+    "ansible.install_method": "distro",
+    "ansible.pull": "- url: https://github.com/holmanb/vmboot.git\n  playbook_names:\n  - ubuntu.yml",
+    "ansible.pull.url": "https://github.com/holmanb/vmboot.git",
+    "ansible.pull.playbook_names": "- ubuntu.yml",
+    "apk_repos": "preserve_repositories: true",
+    "apk_repos.preserve_repositories": "true",
+    "apt": "preserve_sources_list: false\ndisable_suites:\n- $RELEASE-updates\n- backports\n- $RELEASE\n- mysuite\nprimary:\n- arches:\n  - amd64\n  - i386\n  - default\n  uri: http://us.archive.ubuntu.com/ubuntu\n  search:\n  - http://cool.but-sometimes-unreachable.com/ubuntu\n  - http://us.archive.ubuntu.com/ubuntu\n  search_dns: false\n- arches:\n  - s390x\n  - arm64\n  uri: http://archive-to-use-for-arm64.example.com/ubuntu\nsecurity:\n- arches:\n  - default\n  search_dns: true\nsources_list: 'deb $MIRROR $RELEASE main restricted\n\n  deb-src $MIRROR $RELEASE main restricted\n\n  deb $PRIMARY $RELEASE universe restricted\n\n  deb $SECURITY $RELEASE-security multiverse\n\n  '\ndebconf_selections:\n  set1: the-package the-package/some-flag boolean true\nconf: \"APT {\\n    Get {\\n        Assume-Yes 'true';\\n        Fix-Broken 'true';\\n\\\n  \\    }\\n}\\n\"\nproxy: http://[[user][:pass]@]host[:port]/\nhttp_proxy: http://[[user][:pass]@]host[:port]/\nftp_proxy: ftp://[[user][:pass]@]host[:port]/\nhttps_proxy: https://[[user][:pass]@]host[:port]/\nsources:\n  source1:\n    keyid: keyid\n    keyserver: keyserverurl\n    source: deb [signed-by=$KEY_FILE] http://<url>/ bionic main\n  source2:\n    source: ppa:<ppa-name>\n  source3:\n    source: deb $MIRROR $RELEASE multiverse\n    key: '------BEGIN PGP PUBLIC KEY BLOCK-------\n\n      <key data>\n\n      ------END PGP PUBLIC KEY BLOCK-------\n\n      '\n  source4:\n    source: deb $MIRROR $RELEASE multiverse\n    append: false\n    key: '------BEGIN PGP PUBLIC KEY BLOCK-------\n\n      <key data>\n\n      ------END PGP PUBLIC KEY BLOCK-------\n\n      '",
+    "apt.preserve_sources_list": "false",
+    "apt.disable_suites": "- $RELEASE-updates\n- backports\n- $RELEASE\n- mysuite",
+    "apt.primary": "- arches:\n  - amd64\n  - i386\n  - default\n  uri: http://us.archive.ubuntu.com/ubuntu\n  search:\n  - http://cool.but-sometimes-unreachable.com/ubuntu\n  - http://us.archive.ubuntu.com/ubuntu\n  search_dns: false\n- arches:\n  - s390x\n  - arm64\n  uri: http://archive-to-use-for-arm64.example.com/ubuntu",
+    "apt.primary.arches": "- amd64\n- i386\n- default",
+    "apt.primary.uri": "http://us.archive.ubuntu.com/ubuntu",
+    "apt.primary.search": "- http://cool.but-sometimes-unreachable.com/ubuntu\n- http://us.archive.ubuntu.com/ubuntu",
+    "apt.primary.search_dns": "false",
+    "apt.security": "- arches:\n  - default\n  search_dns: true",
+    "apt.security.arches": "- default",
+    "apt.security.search_dns": "true",
+    "apt.sources_list": "'deb $MIRROR $RELEASE main restricted\n\n  deb-src $MIRROR $RELEASE main restricted\n\n  deb $PRIMARY $RELEASE universe restricted\n\n  deb $SECURITY $RELEASE-security multiverse\n\n  '",
+    "apt.debconf_selections": "set1: the-package the-package/some-flag boolean true",
+    "apt.debconf_selections.set1": "the-package the-package/some-flag boolean true",
+    "apt.conf": "\"APT {\\n    Get {\\n        Assume-Yes 'true';\\n        Fix-Broken 'true';\\n    }\\n\\\n  }\\n\"",
+    "apt.proxy": "http://[[user][:pass]@]host[:port]/",
+    "apt.http_proxy": "http://[[user][:pass]@]host[:port]/",
+    "apt.ftp_proxy": "ftp://[[user][:pass]@]host[:port]/",
+    "apt.https_proxy": "https://[[user][:pass]@]host[:port]/",
+    "apt.sources": "source1:\n  keyid: keyid\n  keyserver: keyserverurl\n  source: deb [signed-by=$KEY_FILE] http://<url>/ bionic main\nsource2:\n  source: ppa:<ppa-name>\nsource3:\n  source: deb $MIRROR $RELEASE multiverse\n  key: '------BEGIN PGP PUBLIC KEY BLOCK-------\n\n    <key data>\n\n    ------END PGP PUBLIC KEY BLOCK-------\n\n    '\nsource4:\n  source: deb $MIRROR $RELEASE multiverse\n  append: false\n  key: '------BEGIN PGP PUBLIC KEY BLOCK-------\n\n    <key data>\n\n    ------END PGP PUBLIC KEY BLOCK-------\n\n    '",
+    "apt.sources.source1": "keyid: keyid\nkeyserver: keyserverurl\nsource: deb [signed-by=$KEY_FILE] http://<url>/ bionic main",
+    "apt.sources.source1.keyid": "keyid",
+    "apt.sources.source1.keyserver": "keyserverurl",
+    "apt.sources.source1.source": "deb [signed-by=$KEY_FILE] http://<url>/ bionic main",
+    "apt.sources.source2": "source: ppa:<ppa-name>",
+    "apt.sources.source2.source": "ppa:<ppa-name>",
+    "apt.sources.source3": "source: deb $MIRROR $RELEASE multiverse\nkey: '------BEGIN PGP PUBLIC KEY BLOCK-------\n\n  <key data>\n\n  ------END PGP PUBLIC KEY BLOCK-------\n\n  '",
+    "apt.sources.source3.source": "deb $MIRROR $RELEASE multiverse",
+    "apt.sources.source3.key": "'------BEGIN PGP PUBLIC KEY BLOCK-------\n\n  <key data>\n\n  ------END PGP PUBLIC KEY BLOCK-------\n\n  '",
+    "apt.sources.source4": "source: deb $MIRROR $RELEASE multiverse\nappend: false\nkey: '------BEGIN PGP PUBLIC KEY BLOCK-------\n\n  <key data>\n\n  ------END PGP PUBLIC KEY BLOCK-------\n\n  '",
+    "apt.sources.source4.source": "deb $MIRROR $RELEASE multiverse",
+    "apt.sources.source4.append": "false",
+    "apt.sources.source4.key": "'------BEGIN PGP PUBLIC KEY BLOCK-------\n\n  <key data>\n\n  ------END PGP PUBLIC KEY BLOCK-------\n\n  '",
+    "apt_pipelining": "false",
+    "bootcmd": "- echo 192.168.1.130 us.archive.ubuntu.com > /etc/hosts\n- - cloud-init-per\n  - once\n  - mymkfs\n  - mkfs\n  - /dev/vdb",
+    "byobu_by_default": "enable-user",
+    "ca_certs": "remove_defaults: true\ntrusted:\n- single_line_cert\n- '-----BEGIN CERTIFICATE-----\n\n  YOUR-ORGS-TRUSTED-CA-CERT-HERE\n\n  -----END CERTIFICATE-----\n\n  '",
+    "ca_certs.remove_defaults": "true",
+    "ca_certs.trusted": "- single_line_cert\n- '-----BEGIN CERTIFICATE-----\n\n  YOUR-ORGS-TRUSTED-CA-CERT-HERE\n\n  -----END CERTIFICATE-----\n\n  '",
+    "chef": "directories:\n- /etc/chef\n- /var/log/chef\nencrypted_data_bag_secret: /etc/chef/encrypted_data_bag_secret\nenvironment: _default\ninitial_attributes:\n  apache:\n    keepalive: false\n    prefork:\n      maxclients: 100\ninstall_type: omnibus\nlog_level: :auto\nomnibus_url_retries: 2\nrun_list:\n- recipe[apache2]\n- role[db]\nserver_url: https://chef.yourorg.com:4000\nssl_verify_mode: :verify_peer\nvalidation_cert: system\nvalidation_name: yourorg-validator",
+    "chef.directories": "- /etc/chef\n- /var/log/chef",
+    "chef.encrypted_data_bag_secret": "/etc/chef/encrypted_data_bag_secret",
+    "chef.environment": "_default",
+    "chef.initial_attributes": "apache:\n  keepalive: false\n  prefork:\n    maxclients: 100",
+    "chef.initial_attributes.apache": "keepalive: false\nprefork:\n  maxclients: 100",
+    "chef.initial_attributes.apache.keepalive": "false",
+    "chef.initial_attributes.apache.prefork": "maxclients: 100",
+    "chef.initial_attributes.apache.prefork.maxclients": "100",
+    "chef.install_type": "omnibus",
+    "chef.log_level": ":auto",
+    "chef.omnibus_url_retries": "2",
+    "chef.run_list": "- recipe[apache2]\n- role[db]",
+    "chef.server_url": "https://chef.yourorg.com:4000",
+    "chef.ssl_verify_mode": ":verify_peer",
+    "chef.validation_cert": "system",
+    "chef.validation_name": "yourorg-validator",
+    "disable_ec2_metadata": "true",
+    "device_aliases": "my_alias: /dev/sdb\nswap_disk: /dev/sdc",
+    "device_aliases.my_alias": "/dev/sdb",
+    "device_aliases.swap_disk": "/dev/sdc",
+    "disk_setup": "/dev/sdd:\n  layout: true\n  overwrite: true\n  table_type: mbr\nmy_alias:\n  layout:\n  - 50\n  - 50\n  overwrite: true\n  table_type: gpt\nswap_disk:\n  layout:\n  - - 100\n    - 82\n  overwrite: true\n  table_type: gpt",
+    "disk_setup./dev/sdd": "layout: true\noverwrite: true\ntable_type: mbr",
+    "disk_setup./dev/sdd.layout": "true",
+    "disk_setup./dev/sdd.overwrite": "true",
+    "disk_setup./dev/sdd.table_type": "mbr",
+    "disk_setup.my_alias": "layout:\n- 50\n- 50\noverwrite: true\ntable_type: gpt",
+    "disk_setup.my_alias.layout": "- 50\n- 50",
+    "disk_setup.my_alias.overwrite": "true",
+    "disk_setup.my_alias.table_type": "gpt",
+    "disk_setup.swap_disk": "layout:\n- - 100\n  - 82\noverwrite: true\ntable_type: gpt",
+    "disk_setup.swap_disk.layout": "- - 100\n  - 82",
+    "disk_setup.swap_disk.overwrite": "true",
+    "disk_setup.swap_disk.table_type": "gpt",
+    "fs_setup": "- cmd: mkfs -t %(filesystem)s -L %(label)s %(device)s\n  device: my_alias.1\n  filesystem: ext4\n  label: fs1\n- device: my_alias.2\n  filesystem: ext4\n  label: fs2\n- device: swap_disk.1\n  filesystem: swap\n  label: swap\n- device: /dev/sdd1\n  filesystem: ext4\n  label: fs3",
+    "fs_setup.cmd": "mkfs -t %(filesystem)s -L %(label)s %(device)s",
+    "fs_setup.device": "my_alias.1",
+    "fs_setup.filesystem": "ext4",
+    "fs_setup.label": "fs1",
+    "mounts": "- - my_alias.1\n  - /mnt1\n- - my_alias.2\n  - /mnt2\n- - swap_disk.1\n  - none\n  - swap\n  - sw\n  - '0'\n  - '0'\n- - /dev/sdd1\n  - /mnt3",
+    "fan": "config: '# fan 240\n\n  10.0.0.0/8 eth0/16 dhcp\n\n  10.0.0.0/8 eth1/16 dhcp off\n\n  # fan 241\n\n  241.0.0.0/8 eth0/16 dhcp\n\n  '\nconfig_path: /etc/network/fan",
+    "fan.config": "'# fan 240\n\n  10.0.0.0/8 eth0/16 dhcp\n\n  10.0.0.0/8 eth1/16 dhcp off\n\n  # fan 241\n\n  241.0.0.0/8 eth0/16 dhcp\n\n  '",
+    "fan.config_path": "/etc/network/fan",
+    "final_message": "'cloud-init has finished\n\n  version: $version\n\n  timestamp: $timestamp\n\n  datasource: $datasource\n\n  uptime: $uptime\n\n  '",
+    "growpart": "devices:\n- /\nignore_growroot_disabled: false\nmode: auto",
+    "growpart.devices": "- /",
+    "growpart.ignore_growroot_disabled": "false",
+    "growpart.mode": "auto",
+    "grub_dpkg": "enabled: true\ngrub-pc/install_devices: /dev/sda\ngrub-pc/install_devices_empty: false\ngrub-efi/install_devices: /dev/sda",
+    "grub_dpkg.enabled": "true",
+    "grub_dpkg.grub-pc/install_devices": "/dev/sda",
+    "grub_dpkg.grub-pc/install_devices_empty": "false",
+    "grub_dpkg.grub-efi/install_devices": "/dev/sda",
+    "updates": "network:\n  when:\n  - hotplug",
+    "updates.network": "when:\n- hotplug",
+    "updates.network.when": "- hotplug",
+    "keyboard": "layout: us",
+    "keyboard.layout": "us",
+    "ssh": "emit_keys_to_console: false",
+    "ssh.emit_keys_to_console": "false",
+    "landscape": "client:\n  url: https://landscape.canonical.com/message-system\n  ping_url: http://landscape.canonical.com/ping\n  data_path: /var/lib/landscape/client\n  http_proxy: http://my.proxy.com/foobar\n  https_proxy: https://my.proxy.com/foobar\n  tags: server,cloud\n  computer_title: footitle\n  registration_key: fookey\n  account_name: fooaccount",
+    "landscape.client": "url: https://landscape.canonical.com/message-system\nping_url: http://landscape.canonical.com/ping\ndata_path: /var/lib/landscape/client\nhttp_proxy: http://my.proxy.com/foobar\nhttps_proxy: https://my.proxy.com/foobar\ntags: server,cloud\ncomputer_title: footitle\nregistration_key: fookey\naccount_name: fooaccount",
+    "landscape.client.url": "https://landscape.canonical.com/message-system",
+    "landscape.client.ping_url": "http://landscape.canonical.com/ping",
+    "landscape.client.data_path": "/var/lib/landscape/client",
+    "landscape.client.http_proxy": "http://my.proxy.com/foobar",
+    "landscape.client.https_proxy": "https://my.proxy.com/foobar",
+    "landscape.client.tags": "server,cloud",
+    "landscape.client.computer_title": "footitle",
+    "landscape.client.registration_key": "fookey",
+    "landscape.client.account_name": "fooaccount",
+    "locale": "ar_AE",
+    "lxd": "init:\n  storage_backend: dir",
+    "lxd.init": "storage_backend: dir",
+    "lxd.init.storage_backend": "dir",
+    "mcollective": "conf:\n  loglevel: debug\n  plugin.stomp.host: dbhost\n  public-cert: '-------BEGIN CERTIFICATE--------\n\n    <cert data>\n\n    -------END CERTIFICATE--------\n\n    '\n  private-cert: '-------BEGIN CERTIFICATE--------\n\n    <cert data>\n\n    -------END CERTIFICATE--------\n\n    '",
+    "mcollective.conf": "loglevel: debug\nplugin.stomp.host: dbhost\npublic-cert: '-------BEGIN CERTIFICATE--------\n\n  <cert data>\n\n  -------END CERTIFICATE--------\n\n  '\nprivate-cert: '-------BEGIN CERTIFICATE--------\n\n  <cert data>\n\n  -------END CERTIFICATE--------\n\n  '",
+    "mcollective.conf.loglevel": "debug",
+    "mcollective.conf.plugin.stomp.host": "dbhost",
+    "mcollective.conf.public-cert": "'-------BEGIN CERTIFICATE--------\n\n  <cert data>\n\n  -------END CERTIFICATE--------\n\n  '",
+    "mcollective.conf.private-cert": "'-------BEGIN CERTIFICATE--------\n\n  <cert data>\n\n  -------END CERTIFICATE--------\n\n  '",
+    "mount_default_fields": "- None\n- None\n- auto\n- defaults,nofail\n- '0'\n- '2'",
+    "swap": "filename: /my/swapfile\nsize: auto\nmaxsize: 10485760",
+    "swap.filename": "/my/swapfile",
+    "swap.size": "auto",
+    "swap.maxsize": "10485760",
+    "ntp": "enabled: true\nntp_client: chrony",
+    "ntp.enabled": "true",
+    "ntp.ntp_client": "chrony",
+    "package_reboot_if_required": "true",
+    "package_update": "true",
+    "package_upgrade": "true",
+    "packages": "- pwgen\n- pastebinit\n- - libpython3.8\n  - 3.8.10-0ubuntu1~20.04.2\n- snap:\n  - certbot\n  - - juju\n    - --edge\n  - - lxd\n    - --channel=5.15/stable\n- apt:\n  - mg",
+    "phone_home": "post: all\nurl: http://example.com/{{ v1.instance_id }}/",
+    "phone_home.post": "all",
+    "phone_home.url": "http://example.com/{{ v1.instance_id }}/",
+    "power_state": "delay: now\nmode: poweroff\nmessage: Powering off\ntimeout: 2\ncondition: true",
+    "power_state.delay": "now",
+    "power_state.mode": "poweroff",
+    "power_state.message": "Powering off",
+    "power_state.timeout": "2",
+    "power_state.condition": "true",
+    "puppet": "install: true\nversion: 7.7.0\ninstall_type: aio\ncollection: puppet7\naio_install_url: https://git.io/JBhoQ\ncleanup: true\nconf_file: /etc/puppet/puppet.conf\nssl_dir: /var/lib/puppet/ssl\ncsr_attributes_path: /etc/puppet/csr_attributes.yaml\nexec: true\nexec_args:\n- --test\nconf:\n  agent:\n    server: puppetserver.example.org\n    certname: '%i.%f'\n  ca_cert: '-----BEGIN CERTIFICATE-----\n\n    MIICCTCCAXKgAwIBAgIBATANBgkqhkiG9w0BAQUFADANMQswCQYDVQQDDAJjYTAe\n\n    Fw0xMDAyMTUxNzI5MjFaFw0xNTAyMTQxNzI5MjFaMA0xCzAJBgNVBAMMAmNhMIGf\n\n    MA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCu7Q40sm47/E1Pf+r8AYb/V/FWGPgc\n\n    b014OmNoX7dgCxTDvps/h8Vw555PdAFsW5+QhsGr31IJNI3kSYprFQcYf7A8tNWu\n\n    1MASW2CfaEiOEi9F1R3R4Qlz4ix+iNoHiUDTjazw/tZwEdxaQXQVLwgTGRwVa+aA\n\n    qbutJKi93MILLwIDAQABo3kwdzA4BglghkgBhvhCAQ0EKxYpUHVwcGV0IFJ1Ynkv\n\n    T3BlblNTTCBHZW5lcmF0ZWQgQ2VydGlmaWNhdGUwDwYDVR0TAQH/BAUwAwEB/zAd\n\n    BgNVHQ4EFgQUu4+jHB+GYE5Vxo+ol1OAhevspjAwCwYDVR0PBAQDAgEGMA0GCSqG\n\n    SIb3DQEBBQUAA4GBAH/rxlUIjwNb3n7TXJcDJ6MMHUlwjr03BDJXKb34Ulndkpaf\n\n    +GAlzPXWa7bO908M9I8RnPfvtKnteLbvgTK+h+zX1XCty+S2EQWk29i2AdoqOTxb\n\n    hppiGMp0tT5Havu4aceCXiy2crVcudj3NFciy8X66SoECemW9UYDCb9T5D0d\n\n    -----END CERTIFICATE-----\n\n    '\ncsr_attributes:\n  custom_attributes:\n    1.2.840.113549.1.9.7: 342thbjkt82094y0uthhor289jnqthpc2290\n  extension_requests:\n    pp_uuid: ED803750-E3C7-44F5-BB08-41A04433FE2E\n    pp_image_name: my_ami_image\n    pp_preshared_key: 342thbjkt82094y0uthhor289jnqthpc2290",
+    "puppet.install": "true",
+    "puppet.version": "7.7.0",
+    "puppet.install_type": "aio",
+    "puppet.collection": "puppet7",
+    "puppet.aio_install_url": "https://git.io/JBhoQ",
+    "puppet.cleanup": "true",
+    "puppet.conf_file": "/etc/puppet/puppet.conf",
+    "puppet.ssl_dir": "/var/lib/puppet/ssl",
+    "puppet.csr_attributes_path": "/etc/puppet/csr_attributes.yaml",
+    "puppet.exec": "true",
+    "puppet.exec_args": "- --test",
+    "puppet.conf": "agent:\n  server: puppetserver.example.org\n  certname: '%i.%f'\nca_cert: '-----BEGIN CERTIFICATE-----\n\n  MIICCTCCAXKgAwIBAgIBATANBgkqhkiG9w0BAQUFADANMQswCQYDVQQDDAJjYTAe\n\n  Fw0xMDAyMTUxNzI5MjFaFw0xNTAyMTQxNzI5MjFaMA0xCzAJBgNVBAMMAmNhMIGf\n\n  MA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCu7Q40sm47/E1Pf+r8AYb/V/FWGPgc\n\n  b014OmNoX7dgCxTDvps/h8Vw555PdAFsW5+QhsGr31IJNI3kSYprFQcYf7A8tNWu\n\n  1MASW2CfaEiOEi9F1R3R4Qlz4ix+iNoHiUDTjazw/tZwEdxaQXQVLwgTGRwVa+aA\n\n  qbutJKi93MILLwIDAQABo3kwdzA4BglghkgBhvhCAQ0EKxYpUHVwcGV0IFJ1Ynkv\n\n  T3BlblNTTCBHZW5lcmF0ZWQgQ2VydGlmaWNhdGUwDwYDVR0TAQH/BAUwAwEB/zAd\n\n  BgNVHQ4EFgQUu4+jHB+GYE5Vxo+ol1OAhevspjAwCwYDVR0PBAQDAgEGMA0GCSqG\n\n  SIb3DQEBBQUAA4GBAH/rxlUIjwNb3n7TXJcDJ6MMHUlwjr03BDJXKb34Ulndkpaf\n\n  +GAlzPXWa7bO908M9I8RnPfvtKnteLbvgTK+h+zX1XCty+S2EQWk29i2AdoqOTxb\n\n  hppiGMp0tT5Havu4aceCXiy2crVcudj3NFciy8X66SoECemW9UYDCb9T5D0d\n\n  -----END CERTIFICATE-----\n\n  '",
+    "puppet.conf.agent": "server: puppetserver.example.org\ncertname: '%i.%f'",
+    "puppet.conf.agent.server": "puppetserver.example.org",
+    "puppet.conf.agent.certname": "'%i.%f'",
+    "puppet.conf.ca_cert": "'-----BEGIN CERTIFICATE-----\n\n  MIICCTCCAXKgAwIBAgIBATANBgkqhkiG9w0BAQUFADANMQswCQYDVQQDDAJjYTAe\n\n  Fw0xMDAyMTUxNzI5MjFaFw0xNTAyMTQxNzI5MjFaMA0xCzAJBgNVBAMMAmNhMIGf\n\n  MA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCu7Q40sm47/E1Pf+r8AYb/V/FWGPgc\n\n  b014OmNoX7dgCxTDvps/h8Vw555PdAFsW5+QhsGr31IJNI3kSYprFQcYf7A8tNWu\n\n  1MASW2CfaEiOEi9F1R3R4Qlz4ix+iNoHiUDTjazw/tZwEdxaQXQVLwgTGRwVa+aA\n\n  qbutJKi93MILLwIDAQABo3kwdzA4BglghkgBhvhCAQ0EKxYpUHVwcGV0IFJ1Ynkv\n\n  T3BlblNTTCBHZW5lcmF0ZWQgQ2VydGlmaWNhdGUwDwYDVR0TAQH/BAUwAwEB/zAd\n\n  BgNVHQ4EFgQUu4+jHB+GYE5Vxo+ol1OAhevspjAwCwYDVR0PBAQDAgEGMA0GCSqG\n\n  SIb3DQEBBQUAA4GBAH/rxlUIjwNb3n7TXJcDJ6MMHUlwjr03BDJXKb34Ulndkpaf\n\n  +GAlzPXWa7bO908M9I8RnPfvtKnteLbvgTK+h+zX1XCty+S2EQWk29i2AdoqOTxb\n\n  hppiGMp0tT5Havu4aceCXiy2crVcudj3NFciy8X66SoECemW9UYDCb9T5D0d\n\n  -----END CERTIFICATE-----\n\n  '",
+    "puppet.csr_attributes": "custom_attributes:\n  1.2.840.113549.1.9.7: 342thbjkt82094y0uthhor289jnqthpc2290\nextension_requests:\n  pp_uuid: ED803750-E3C7-44F5-BB08-41A04433FE2E\n  pp_image_name: my_ami_image\n  pp_preshared_key: 342thbjkt82094y0uthhor289jnqthpc2290",
+    "puppet.csr_attributes.custom_attributes": "1.2.840.113549.1.9.7: 342thbjkt82094y0uthhor289jnqthpc2290",
+    "puppet.csr_attributes.custom_attributes.1.2.840.113549.1.9.7": "342thbjkt82094y0uthhor289jnqthpc2290",
+    "puppet.csr_attributes.extension_requests": "pp_uuid: ED803750-E3C7-44F5-BB08-41A04433FE2E\npp_image_name: my_ami_image\npp_preshared_key: 342thbjkt82094y0uthhor289jnqthpc2290",
+    "puppet.csr_attributes.extension_requests.pp_uuid": "ED803750-E3C7-44F5-BB08-41A04433FE2E",
+    "puppet.csr_attributes.extension_requests.pp_image_name": "my_ami_image",
+    "puppet.csr_attributes.extension_requests.pp_preshared_key": "342thbjkt82094y0uthhor289jnqthpc2290",
+    "rpi": "interfaces:\n  spi: true\n  i2c: true",
+    "rpi.interfaces": "spi: true\ni2c: true",
+    "rpi.interfaces.spi": "true",
+    "rpi.interfaces.i2c": "true",
+    "resize_rootfs": "false",
+    "manage_resolv_conf": "true",
+    "resolv_conf": "domain: example.com\nnameservers:\n- 8.8.8.8\n- 8.8.4.4\noptions:\n  rotate: true\n  timeout: 1\nsearchdomains:\n- foo.example.com\n- bar.example.com\nsortlist:\n- 10.0.0.1/255\n- 10.0.0.2",
+    "resolv_conf.domain": "example.com",
+    "resolv_conf.nameservers": "- 8.8.8.8\n- 8.8.4.4",
+    "resolv_conf.options": "rotate: true\ntimeout: 1",
+    "resolv_conf.options.rotate": "true",
+    "resolv_conf.options.timeout": "1",
+    "resolv_conf.searchdomains": "- foo.example.com\n- bar.example.com",
+    "resolv_conf.sortlist": "- 10.0.0.1/255\n- 10.0.0.2",
+    "rh_subscription": "username: joe@foo.bar\npassword: 1234abcd",
+    "rh_subscription.username": "joe@foo.bar",
+    "rh_subscription.password": "1234abcd",
+    "rsyslog": "remotes:\n  juju: 10.0.4.1\n  maas: 192.168.1.1\nservice_reload_command: auto",
+    "rsyslog.remotes": "juju: 10.0.4.1\nmaas: 192.168.1.1",
+    "rsyslog.remotes.juju": "10.0.4.1",
+    "rsyslog.remotes.maas": "192.168.1.1",
+    "rsyslog.service_reload_command": "auto",
+    "runcmd": "- - ls\n  - -l\n  - /\n- - sh\n  - -xc\n  - 'echo $(date) '': hello world!'''\n- - sh\n  - -c\n  - echo \"=========hello world'=========\"\n- ls -l /root",
+    "salt_minion": "conf:\n  file_client: local\n  fileserver_backend:\n  - gitfs\n  gitfs_remotes:\n  - https://github.com/_user_/_repo_.git\n  master: salt.example.com\nconfig_dir: /etc/salt\ngrains:\n  role:\n  - web\npkg_name: salt-minion\npki_dir: /etc/salt/pki/minion\nprivate_key: '------BEGIN PRIVATE KEY------\n\n  <key data>\n\n  ------END PRIVATE KEY-------\n\n  '\npublic_key: '------BEGIN PUBLIC KEY-------\n\n  <key data>\n\n  ------END PUBLIC KEY-------\n\n  '\nservice_name: salt-minion",
+    "salt_minion.conf": "file_client: local\nfileserver_backend:\n- gitfs\ngitfs_remotes:\n- https://github.com/_user_/_repo_.git\nmaster: salt.example.com",
+    "salt_minion.conf.file_client": "local",
+    "salt_minion.conf.fileserver_backend": "- gitfs",
+    "salt_minion.conf.gitfs_remotes": "- https://github.com/_user_/_repo_.git",
+    "salt_minion.conf.master": "salt.example.com",
+    "salt_minion.config_dir": "/etc/salt",
+    "salt_minion.grains": "role:\n- web",
+    "salt_minion.grains.role": "- web",
+    "salt_minion.pkg_name": "salt-minion",
+    "salt_minion.pki_dir": "/etc/salt/pki/minion",
+    "salt_minion.private_key": "'------BEGIN PRIVATE KEY------\n\n  <key data>\n\n  ------END PRIVATE KEY-------\n\n  '",
+    "salt_minion.public_key": "'------BEGIN PUBLIC KEY-------\n\n  <key data>\n\n  ------END PUBLIC KEY-------\n\n  '",
+    "salt_minion.service_name": "salt-minion",
+    "vendor_data": "enabled: true\nprefix: /usr/bin/ltrace",
+    "vendor_data.enabled": "true",
+    "vendor_data.prefix": "/usr/bin/ltrace",
+    "random_seed": "command:\n- sh\n- -c\n- dd if=/dev/urandom of=$RANDOM_SEED_FILE\ncommand_required: true\ndata: my random string\nencoding: raw\nfile: /dev/urandom",
+    "random_seed.command": "- sh\n- -c\n- dd if=/dev/urandom of=$RANDOM_SEED_FILE",
+    "random_seed.command_required": "true",
+    "random_seed.data": "my random string",
+    "random_seed.encoding": "raw",
+    "random_seed.file": "/dev/urandom",
+    "preserve_hostname": "true",
+    "password": "password1",
+    "ssh_pwauth": "true",
+    "snap": "assertions:\n  0: 'signed_assertion_blob_here\n\n    '\n  2: 'signed_assertion_blob_here\n\n    '\ncommands:\n  0: snap create-user --sudoer --known <snap-user>@mydomain.com\n  1: snap install canonical-livepatch\n  2: canonical-livepatch enable <AUTH_TOKEN>",
+    "snap.assertions": "0: 'signed_assertion_blob_here\n\n  '\n2: 'signed_assertion_blob_here\n\n  '",
+    "snap.assertions.0": "'signed_assertion_blob_here\n\n  '",
+    "snap.assertions.2": "'signed_assertion_blob_here\n\n  '",
+    "snap.commands": "0: snap create-user --sudoer --known <snap-user>@mydomain.com\n1: snap install canonical-livepatch\n2: canonical-livepatch enable <AUTH_TOKEN>",
+    "snap.commands.0": "snap create-user --sudoer --known <snap-user>@mydomain.com",
+    "snap.commands.1": "snap install canonical-livepatch",
+    "snap.commands.2": "canonical-livepatch enable <AUTH_TOKEN>",
+    "spacewalk": "activation_key: <key>\nproxy: <proxy host>\nserver: <url>",
+    "spacewalk.activation_key": "<key>",
+    "spacewalk.proxy": "<proxy host>",
+    "spacewalk.server": "<url>",
+    "allow_public_ssh_keys": "true",
+    "disable_root": "true",
+    "disable_root_opts": "no-port-forwarding,no-agent-forwarding,no-X11-forwarding",
+    "ssh_authorized_keys": "- ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAGEA3FSyQwBI6Z+nCSjUU ...\n- ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA3I7VUf2l5gSn5uavROsc5HRDpZ ...",
+    "ssh_deletekeys": "true",
+    "ssh_genkeytypes": "- rsa\n- ecdsa\n- ed25519",
+    "ssh_keys": "rsa_certificate: 'ssh-rsa-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQt ...\n\n  '\nrsa_private: '-----BEGIN RSA PRIVATE KEY-----\n\n  MIIBxwIBAAJhAKD0YSHy73nUgysO13XsJmd4fHiFyQ+00R7VVu2iV9Qco\n\n  ...\n\n  -----END RSA PRIVATE KEY-----\n\n  '\nrsa_public: ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAGEAoPRhIfLvedSDKw7Xd ...",
+    "ssh_keys.rsa_certificate": "'ssh-rsa-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQt ...\n\n  '",
+    "ssh_keys.rsa_private": "'-----BEGIN RSA PRIVATE KEY-----\n\n  MIIBxwIBAAJhAKD0YSHy73nUgysO13XsJmd4fHiFyQ+00R7VVu2iV9Qco\n\n  ...\n\n  -----END RSA PRIVATE KEY-----\n\n  '",
+    "ssh_keys.rsa_public": "ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAGEAoPRhIfLvedSDKw7Xd ...",
+    "ssh_publish_hostkeys": "blacklist:\n- rsa\nenabled: true",
+    "ssh_publish_hostkeys.blacklist": "- rsa",
+    "ssh_publish_hostkeys.enabled": "true",
+    "ssh_quiet_keygen": "true",
+    "no_ssh_fingerprints": "true",
+    "ssh_import_id": "- user\n- gh:user\n- lp:user",
+    "timezone": "America/New_York",
+    "autoinstall": "version: 1",
+    "autoinstall.version": "1",
+    "drivers": "nvidia:\n  license-accepted: true",
+    "drivers.nvidia": "license-accepted: true",
+    "drivers.nvidia.license-accepted": "true",
+    "ubuntu_pro": "token: <ubuntu_pro_token>",
+    "ubuntu_pro.token": "<ubuntu_pro_token>",
+    "manage_etc_hosts": "false",
+    "users": "- default",
+    "wireguard": "interfaces:\n- name: wg0\n  config_path: /etc/wireguard/wg0.conf\n  content: '[Interface]\n\n    PrivateKey = <private_key>\n\n    Address = <address>\n\n    [Peer]\n\n    PublicKey = <public_key>\n\n    Endpoint = <endpoint_ip>:<endpoint_ip_port>\n\n    AllowedIPs = <allowedip1>, <allowedip2>, ...\n\n    '\n- name: wg1\n  config_path: /etc/wireguard/wg1.conf\n  content: '[Interface]\n\n    PrivateKey = <private_key>\n\n    Address = <address>\n\n    [Peer]\n\n    PublicKey = <public_key>\n\n    Endpoint = <endpoint_ip>:<endpoint_ip_port>\n\n    AllowedIPs = <allowedip1>\n\n    '\nreadinessprobe:\n- systemctl restart service\n- curl https://webhook.endpoint/example\n- nc -zv some-service-fqdn 443",
+    "wireguard.interfaces": "- name: wg0\n  config_path: /etc/wireguard/wg0.conf\n  content: '[Interface]\n\n    PrivateKey = <private_key>\n\n    Address = <address>\n\n    [Peer]\n\n    PublicKey = <public_key>\n\n    Endpoint = <endpoint_ip>:<endpoint_ip_port>\n\n    AllowedIPs = <allowedip1>, <allowedip2>, ...\n\n    '\n- name: wg1\n  config_path: /etc/wireguard/wg1.conf\n  content: '[Interface]\n\n    PrivateKey = <private_key>\n\n    Address = <address>\n\n    [Peer]\n\n    PublicKey = <public_key>\n\n    Endpoint = <endpoint_ip>:<endpoint_ip_port>\n\n    AllowedIPs = <allowedip1>\n\n    '",
+    "wireguard.interfaces.name": "wg0",
+    "wireguard.interfaces.config_path": "/etc/wireguard/wg0.conf",
+    "wireguard.interfaces.content": "'[Interface]\n\n  PrivateKey = <private_key>\n\n  Address = <address>\n\n  [Peer]\n\n  PublicKey = <public_key>\n\n  Endpoint = <endpoint_ip>:<endpoint_ip_port>\n\n  AllowedIPs = <allowedip1>, <allowedip2>, ...\n\n  '",
+    "wireguard.readinessprobe": "- systemctl restart service\n- curl https://webhook.endpoint/example\n- nc -zv some-service-fqdn 443",
+    "write_files": "- encoding: b64\n  content: CiMgVGhpcyBmaWxlIGNvbnRyb2xzIHRoZSBzdGF0ZSBvZiBTRUxpbnV4...\n  owner: root:root\n  path: /etc/sysconfig/selinux\n  permissions: '0644'",
+    "write_files.encoding": "b64",
+    "write_files.content": "CiMgVGhpcyBmaWxlIGNvbnRyb2xzIHRoZSBzdGF0ZSBvZiBTRUxpbnV4...",
+    "write_files.owner": "root:root",
+    "write_files.path": "/etc/sysconfig/selinux",
+    "write_files.permissions": "'0644'",
+    "yum_repos": "my_repo:\n  baseurl: http://blah.org/pub/epel/testing/5/$basearch/",
+    "yum_repos.my_repo": "baseurl: http://blah.org/pub/epel/testing/5/$basearch/",
+    "yum_repos.my_repo.baseurl": "http://blah.org/pub/epel/testing/5/$basearch/",
+    "yum_repo_dir": "/store/custom/yum.repos.d",
+    "zypper": "config:\n  download.use_deltarpm: true\n  reposdir: /etc/zypp/repos.dir\n  servicesdir: /etc/zypp/services.d\nrepos:\n- autorefresh: 1\n  baseurl: http://dl.opensuse.org/dist/leap/v/repo/oss/\n  enabled: 1\n  id: opensuse-oss\n  name: os-oss\n- baseurl: http://dl.opensuse.org/dist/leap/v/update\n  id: opensuse-oss-update\n  name: os-oss-up",
+    "zypper.config": "download.use_deltarpm: true\nreposdir: /etc/zypp/repos.dir\nservicesdir: /etc/zypp/services.d",
+    "zypper.config.download.use_deltarpm": "true",
+    "zypper.config.reposdir": "/etc/zypp/repos.dir",
+    "zypper.config.servicesdir": "/etc/zypp/services.d",
+    "zypper.repos": "- autorefresh: 1\n  baseurl: http://dl.opensuse.org/dist/leap/v/repo/oss/\n  enabled: 1\n  id: opensuse-oss\n  name: os-oss\n- baseurl: http://dl.opensuse.org/dist/leap/v/update\n  id: opensuse-oss-update\n  name: os-oss-up",
+    "zypper.repos.autorefresh": "1",
+    "zypper.repos.baseurl": "http://dl.opensuse.org/dist/leap/v/repo/oss/",
+    "zypper.repos.enabled": "1",
+    "zypper.repos.id": "opensuse-oss",
+    "zypper.repos.name": "os-oss"
+  },
+  "examples": {
+    "cc_ansible": [
+      "ansible:\n  package_name: ansible-core\n  install_method: distro\n  pull:\n    - url: https://github.com/holmanb/vmboot.git\n      playbook_names: [ubuntu.yml]\n",
+      "ansible:\n  package_name: ansible-core\n  install_method: pip\n  pull:\n    - url: https://github.com/holmanb/vmboot.git\n      playbook_names: [ubuntu.yml, watermark.yml]\n"
+    ],
+    "cc_apk_configure": [
+      "apk_repos:\n  preserve_repositories: true\n",
+      "apk_repos:\n  alpine_repo:\n    community_enabled: true\n    version: 'v3.12'\n",
+      "apk_repos:\n  alpine_repo:\n    base_url: https://some-alpine-mirror/alpine\n    community_enabled: true\n    testing_enabled: true\n    version: edge\n  local_repo_base_url: https://my-local-server/local-alpine\n"
+    ],
+    "cc_apt_configure": [
+      "apt:\n  preserve_sources_list: false\n  disable_suites:\n    - $RELEASE-updates\n    - backports\n    - $RELEASE\n    - mysuite\n  primary:\n    - arches:\n        - amd64\n        - i386\n        - default\n      uri: http://us.archive.ubuntu.com/ubuntu\n      search:\n        - http://cool.but-sometimes-unreachable.com/ubuntu\n        - http://us.archive.ubuntu.com/ubuntu\n      search_dns: false\n    - arches:\n        - s390x\n        - arm64\n      uri: http://archive-to-use-for-arm64.example.com/ubuntu\n\n  security:\n    - arches:\n        - default\n      search_dns: true\n  sources_list: |\n      deb $MIRROR $RELEASE main restricted\n      deb-src $MIRROR $RELEASE main restricted\n      deb $PRIMARY $RELEASE universe restricted\n      deb $SECURITY $RELEASE-security multiverse\n  debconf_selections:\n      set1: the-package the-package/some-flag boolean true\n  conf: |\n      APT {\n          Get {\n              Assume-Yes 'true';\n              Fix-Broken 'true';\n          }\n      }\n  proxy: http://[[user][:pass]@]host[:port]/\n  http_proxy: http://[[user][:pass]@]host[:port]/\n  ftp_proxy: ftp://[[user][:pass]@]host[:port]/\n  https_proxy: https://[[user][:pass]@]host[:port]/\n  sources:\n      source1:\n          keyid: keyid\n          keyserver: keyserverurl\n          source: deb [signed-by=$KEY_FILE] http://<url>/ bionic main\n      source2:\n          source: ppa:<ppa-name>\n      source3:\n          source: deb $MIRROR $RELEASE multiverse\n          key: |\n              ------BEGIN PGP PUBLIC KEY BLOCK-------\n              <key data>\n              ------END PGP PUBLIC KEY BLOCK-------\n      source4:\n          source: deb $MIRROR $RELEASE multiverse\n          append: false\n          key: |\n              ------BEGIN PGP PUBLIC KEY BLOCK-------\n              <key data>\n              ------END PGP PUBLIC KEY BLOCK-------\n",
+      "apt:\n    sources_list: |\n      Types: deb\n      URIs: http://archive.ubuntu.com/ubuntu/\n      Suites: $RELEASE\n      Components: main\n"
+    ],
+    "cc_apt_pipelining": [
+      "apt_pipelining: false\n",
+      "apt_pipelining: os\n",
+      "apt_pipelining: 3\n"
+    ],
+    "cc_bootcmd": [
+      "bootcmd:\n- echo 192.168.1.130 us.archive.ubuntu.com > /etc/hosts\n- [cloud-init-per, once, mymkfs, mkfs, /dev/vdb]\n"
+    ],
+    "cc_byobu": [
+      "byobu_by_default: enable-user\n",
+      "byobu_by_default: disable-system\n"
+    ],
+    "cc_ca_certs": [
+      "ca_certs:\n  remove_defaults: true\n  trusted:\n  - single_line_cert\n  - |\n    -----BEGIN CERTIFICATE-----\n    YOUR-ORGS-TRUSTED-CA-CERT-HERE\n    -----END CERTIFICATE-----\n"
+    ],
+    "cc_chef": [
+      "chef:\n  directories: [/etc/chef, /var/log/chef]\n  encrypted_data_bag_secret: /etc/chef/encrypted_data_bag_secret\n  environment: _default\n  initial_attributes:\n    apache:\n      keepalive: false\n      prefork: {maxclients: 100}\n  install_type: omnibus\n  log_level: :auto\n  omnibus_url_retries: 2\n  run_list: ['recipe[apache2]', 'role[db]']\n  server_url: https://chef.yourorg.com:4000\n  ssl_verify_mode: :verify_peer\n  validation_cert: system\n  validation_name: yourorg-validator\n"
+    ],
+    "cc_disable_ec2_metadata": [
+      "disable_ec2_metadata: true\n"
+    ],
+    "cc_disk_setup": [
+      "device_aliases: {my_alias: /dev/sdb, swap_disk: /dev/sdc}\ndisk_setup:\n  /dev/sdd: {layout: true, overwrite: true, table_type: mbr}\n  my_alias:\n    layout: [50, 50]\n    overwrite: true\n    table_type: gpt\n  swap_disk:\n    layout:\n    - [100, 82]\n    overwrite: true\n    table_type: gpt\nfs_setup:\n- {cmd: mkfs -t %(filesystem)s -L %(label)s %(device)s, device: my_alias.1, filesystem: ext4,\n  label: fs1}\n- {device: my_alias.2, filesystem: ext4, label: fs2}\n- {device: swap_disk.1, filesystem: swap, label: swap}\n- {device: /dev/sdd1, filesystem: ext4, label: fs3}\nmounts:\n- [my_alias.1, /mnt1]\n- [my_alias.2, /mnt2]\n- [swap_disk.1, none, swap, sw, '0', '0']\n- [/dev/sdd1, /mnt3]\n"
+    ],
+    "cc_fan": [
+      "fan:\n  config: |\n    # fan 240\n    10.0.0.0/8 eth0/16 dhcp\n    10.0.0.0/8 eth1/16 dhcp off\n    # fan 241\n    241.0.0.0/8 eth0/16 dhcp\n  config_path: /etc/network/fan\n"
+    ],
+    "cc_final_message": [
+      "final_message: |\n  cloud-init has finished\n  version: $version\n  timestamp: $timestamp\n  datasource: $datasource\n  uptime: $uptime\n"
+    ],
+    "cc_growpart": [
+      "growpart:\n  devices: [/]\n  ignore_growroot_disabled: false\n  mode: auto\n",
+      "growpart:\n  devices: [/, /dev/vdb1]\n  ignore_growroot_disabled: true\n  mode: growpart\n"
+    ],
+    "cc_grub_dpkg": [
+      "grub_dpkg:\n  enabled: true\n  # BIOS mode (install_devices needs disk)\n  grub-pc/install_devices: /dev/sda\n  grub-pc/install_devices_empty: false\n  # EFI mode (install_devices needs partition)\n  grub-efi/install_devices: /dev/sda\n"
+    ],
+    "cc_install_hotplug": [
+      "updates:\n  network:\n    when: [hotplug]\n",
+      "updates:\n  network:\n    when: [boot, hotplug]\n"
+    ],
+    "cc_keyboard": [
+      "keyboard:\n  layout: us\n",
+      "keyboard:\n  layout: de\n  model: pc105\n  variant: nodeadkeys\n  options: compose:rwin\n",
+      "keyboard:\n  layout: gb\n  variant: gb-extd\n"
+    ],
+    "cc_keys_to_console": [
+      "ssh:\n  emit_keys_to_console: false\n",
+      "ssh_key_console_blacklist: [rsa]\n",
+      "ssh_fp_console_blacklist:\n- E25451E0221B5773DEBFF178ECDACB160995AA89\n- FE76292D55E8B28EE6DB2B34B2D8A784F8C0AAB0\n"
+    ],
+    "cc_landscape": [
+      "landscape:\n  client:\n    url: https://landscape.canonical.com/message-system\n    ping_url: http://landscape.canonical.com/ping\n    data_path: /var/lib/landscape/client\n    http_proxy: http://my.proxy.com/foobar\n    https_proxy: https://my.proxy.com/foobar\n    tags: server,cloud\n    computer_title: footitle\n    registration_key: fookey\n    account_name: fooaccount\n",
+      "landscape:\n  client:\n    computer_title: kiosk 1\n    account_name: Joe's Biz\n",
+      "apt:\n  sources:\n    trunk-testing-ppa:\n      source: ppa:landscape/self-hosted-beta\nlandscape:\n  client:\n    account_name: myaccount\n    computer_title: himom\n"
+    ],
+    "cc_locale": [
+      "locale: ar_AE\n",
+      "locale: fr_CA\nlocale_configfile: /etc/alternate_path/locale\n",
+      "locale: false\n"
+    ],
+    "cc_lxd": [
+      "lxd:\n  init:\n    storage_backend: dir\n",
+      "lxd:\n  init:\n    network_address: 0.0.0.0\n    network_port: 8443\n    storage_backend: zfs\n    storage_pool: datapool\n    storage_create_loop: 10\n  bridge:\n    mode: new\n    mtu: 1500\n    name: lxdbr0\n    ipv4_address: 10.0.8.1\n    ipv4_netmask: 24\n    ipv4_dhcp_first: 10.0.8.2\n    ipv4_dhcp_last: 10.0.8.3\n    ipv4_dhcp_leases: 250\n    ipv4_nat: true\n    ipv6_address: fd98:9e0:3744::1\n    ipv6_netmask: 64\n    ipv6_nat: true\n    domain: lxd\n",
+      "lxd:\n  preseed: |\n    config:\n      core.https_address: 192.168.1.1:9999\n    networks:\n      - config:\n          ipv4.address: 10.42.42.1/24\n          ipv4.nat: true\n          ipv6.address: fd42:4242:4242:4242::1/64\n          ipv6.nat: true\n        description: \"\"\n        name: lxdbr0\n        type: bridge\n        project: default\n    storage_pools:\n      - config:\n          size: 5GiB\n          source: /var/snap/lxd/common/lxd/disks/default.img\n        description: \"\"\n        name: default\n        driver: zfs\n    profiles:\n      - config: {}\n        description: Default LXD profile\n        devices:\n          eth0:\n            name: eth0\n            network: lxdbr0\n            type: nic\n          root:\n            path: /\n            pool: default\n            type: disk\n        name: default\n      - config: {}\n        security.nesting: true\n        devices:\n          eth0:\n            name: eth0\n            network: lxdbr0\n            type: nic\n          root:\n            path: /\n            pool: default\n            type: disk\n        name: nested\n    projects:\n      - config:\n          features.images: true\n          features.networks: true\n          features.profiles: true\n          features.storage.volumes: true\n        description: Default LXD project\n        name: default\n      - config:\n          features.images: false\n          features.networks: true\n          features.profiles: false\n          features.storage.volumes: false\n        description: Limited Access LXD project\n        name: limited\n"
+    ],
+    "cc_mcollective": [
+      "mcollective:\n  conf:\n    loglevel: debug\n    plugin.stomp.host: dbhost\n    public-cert: |\n      -------BEGIN CERTIFICATE--------\n      <cert data>\n      -------END CERTIFICATE--------\n    private-cert: |\n      -------BEGIN CERTIFICATE--------\n      <cert data>\n      -------END CERTIFICATE--------\n"
+    ],
+    "cc_mounts": [
+      "mounts:\n- [ /dev/ephemeral0, /mnt, auto, \"defaults,noexec\" ]\n- [ sdc, /opt/data ]\n- [ xvdh, /opt/data, auto, \"defaults,nofail\", \"0\", \"0\" ]\nmount_default_fields: [None, None, auto, \"defaults,nofail\", \"0\", \"2\"]\nswap:\n  filename: /my/swapfile\n  size: auto\n  maxsize: 10485760\n",
+      "swap:\n  filename: /swapfile\n  size: 2G\n  maxsize: 2G\n",
+      "mounts:\n- [ /dev/sr0, \"/mnt/Cdrom Drive\", auto, \"uid=1000,gid=1000\", \"0\", \"0\" ]\n"
+    ],
+    "cc_ntp": [
+      "ntp:\n  enabled: true\n  ntp_client: chrony  # Uses cloud-init default chrony configuration\n",
+      "ntp:\n  enabled: true\n  ntp_client: myntpclient\n  config:\n    confpath: /etc/myntpclient/myntpclient.conf\n    check_exe: myntpclientd\n    packages:\n    - myntpclient\n    service_name: myntpclient\n    template: |\n      ## template:jinja\n      # My NTP Client config\n      {% if pools -%}# pools{% endif %}\n      {% for pool in pools -%}\n      pool {{pool}} iburst\n      {% endfor %}\n      {%- if servers %}# servers\n      {% endif %}\n      {% for server in servers -%}\n      server {{server}} iburst\n      {% endfor %}\n      {% if peers -%}# peers{% endif %}\n      {% for peer in peers -%}\n      peer {{peer}}\n      {% endfor %}\n      {% if allow -%}# allow{% endif %}\n      {% for cidr in allow -%}\n      allow {{cidr}}\n      {% endfor %}\n  pools: [0.int.pool.ntp.org, 1.int.pool.ntp.org, ntp.myorg.org]\n  servers:\n  - ntp.server.local\n  - ntp.ubuntu.com\n  - 192.168.23.2\n  allow:\n  - 192.168.23.0/32\n  peers:\n  - km001\n  - km002\n"
+    ],
+    "cc_package_update_upgrade_install": [
+      "package_reboot_if_required: true\npackage_update: true\npackage_upgrade: true\npackages:\n- pwgen\n- pastebinit\n- [libpython3.8, 3.8.10-0ubuntu1~20.04.2]\n- snap:\n  - certbot\n  - [juju, --edge]\n  - [lxd, --channel=5.15/stable]\n- apt: [mg]\n",
+      "package_update: true\npackage_upgrade: true\nsnap:\n  commands:\n    00: snap refresh --hold=forever\npackage_reboot_if_required: true\n"
+    ],
+    "cc_phone_home": [
+      "phone_home: {post: all, url: 'http://example.com/{{ v1.instance_id }}/'}\n",
+      "phone_home:\n  post: [pub_key_rsa, pub_key_ecdsa, pub_key_ed25519, instance_id, hostname, fqdn]\n  tries: 5\n  url: http://example.com/{{ v1.instance_id }}/\n"
+    ],
+    "cc_power_state_change": [
+      "power_state:\n  delay: now\n  mode: poweroff\n  message: Powering off\n  timeout: 2\n  condition: true\n",
+      "power_state:\n  delay: 30\n  mode: reboot\n  message: Rebooting machine\n  condition: test -f /var/tmp/reboot_me\n"
+    ],
+    "cc_puppet": [
+      "puppet:\n  install: true\n  version: \"7.7.0\"\n  install_type: \"aio\"\n  collection: \"puppet7\"\n  aio_install_url: 'https://git.io/JBhoQ'\n  cleanup: true\n  conf_file: \"/etc/puppet/puppet.conf\"\n  ssl_dir: \"/var/lib/puppet/ssl\"\n  csr_attributes_path: \"/etc/puppet/csr_attributes.yaml\"\n  exec: true\n  exec_args: ['--test']\n  conf:\n    agent:\n      server: \"puppetserver.example.org\"\n      certname: \"%i.%f\"\n    ca_cert: |\n      -----BEGIN CERTIFICATE-----\n      MIICCTCCAXKgAwIBAgIBATANBgkqhkiG9w0BAQUFADANMQswCQYDVQQDDAJjYTAe\n      Fw0xMDAyMTUxNzI5MjFaFw0xNTAyMTQxNzI5MjFaMA0xCzAJBgNVBAMMAmNhMIGf\n      MA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCu7Q40sm47/E1Pf+r8AYb/V/FWGPgc\n      b014OmNoX7dgCxTDvps/h8Vw555PdAFsW5+QhsGr31IJNI3kSYprFQcYf7A8tNWu\n      1MASW2CfaEiOEi9F1R3R4Qlz4ix+iNoHiUDTjazw/tZwEdxaQXQVLwgTGRwVa+aA\n      qbutJKi93MILLwIDAQABo3kwdzA4BglghkgBhvhCAQ0EKxYpUHVwcGV0IFJ1Ynkv\n      T3BlblNTTCBHZW5lcmF0ZWQgQ2VydGlmaWNhdGUwDwYDVR0TAQH/BAUwAwEB/zAd\n      BgNVHQ4EFgQUu4+jHB+GYE5Vxo+ol1OAhevspjAwCwYDVR0PBAQDAgEGMA0GCSqG\n      SIb3DQEBBQUAA4GBAH/rxlUIjwNb3n7TXJcDJ6MMHUlwjr03BDJXKb34Ulndkpaf\n      +GAlzPXWa7bO908M9I8RnPfvtKnteLbvgTK+h+zX1XCty+S2EQWk29i2AdoqOTxb\n      hppiGMp0tT5Havu4aceCXiy2crVcudj3NFciy8X66SoECemW9UYDCb9T5D0d\n      -----END CERTIFICATE-----\n  csr_attributes:\n    custom_attributes:\n      1.2.840.113549.1.9.7: 342thbjkt82094y0uthhor289jnqthpc2290\n    extension_requests:\n      pp_uuid: ED803750-E3C7-44F5-BB08-41A04433FE2E\n      pp_image_name: my_ami_image\n      pp_preshared_key: 342thbjkt82094y0uthhor289jnqthpc2290\n",
+      "puppet:\n  install_type: \"packages\"\n  package_name: \"puppet\"\n  exec: false\n"
+    ],
+    "cc_raspberry_pi": [
+      "rpi:\n  interfaces:\n    spi: true\n    i2c: true\n",
+      "rpi:\n  interfaces:\n    serial: true\n",
+      "rpi:\n  interfaces:\n    serial:\n      # Pi 5 only | disabling hardware while enabling console\n      console: true\n      hardware: false\n",
+      "rpi:\n  interfaces:\n    # works on all Pi models\n    # only enables the UART hardware without binding it to the console\n    serial:\n      console: false\n      hardware: true\n",
+      "rpi:\n  enable_usb_gadget: true\n"
+    ],
+    "cc_resizefs": [
+      "resize_rootfs: false\n",
+      "resize_rootfs: noblock\n"
+    ],
+    "cc_resolv_conf": [
+      "manage_resolv_conf: true\nresolv_conf:\n  domain: example.com\n  nameservers: [8.8.8.8, 8.8.4.4]\n  options: {rotate: true, timeout: 1}\n  searchdomains: [foo.example.com, bar.example.com]\n  sortlist: [10.0.0.1/255, 10.0.0.2]\n"
+    ],
+    "cc_rh_subscription": [
+      "rh_subscription:\n  username: joe@foo.bar\n  ## Quote your password if it has symbols to be safe\n  password: '1234abcd'\n",
+      "rh_subscription:\n  activation_key: foobar\n  org: \"ABC\"\n",
+      "rh_subscription:\n  activation_key: foobar\n  org: 12345\n  auto_attach: true\n  service_level: self-support\n  add_pool:\n    - 1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\n    - 2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\n  enable_repo:\n    - repo-id-to-enable\n    - other-repo-id-to-enable\n  disable_repo:\n    - repo-id-to-disable\n    - other-repo-id-to-disable\n  # Alter the baseurl in /etc/rhsm/rhsm.conf\n  rhsm_baseurl: http://url\n  # Alter the server hostname in /etc/rhsm/rhsm.conf\n  server_hostname: foo.bar.com\n  # Set `subscription-manager release --set=6Server` then\n  # delete /var/cache/{dnf,yum}\n  release_version: 6Server\n"
+    ],
+    "cc_rsyslog": [
+      "rsyslog:\n  remotes: {juju: 10.0.4.1, maas: 192.168.1.1}\n  service_reload_command: auto\n",
+      "rsyslog:\n  config_dir: /opt/etc/rsyslog.d\n  config_filename: 99-late-cloud-config.conf\n  configs:\n  - '*.* @@192.158.1.1'\n  - {content: '*.*   @@192.0.2.1:10514', filename: 01-example.conf}\n  - {content: '*.*   @@syslogd.example.com\n\n      '}\n  remotes: {juju: 10.0.4.1, maas: 192.168.1.1}\n  service_reload_command: [your, syslog, restart, command]\n",
+      "rsyslog:\n  check_exe: rsyslogd\n  config_dir: /usr/local/etc/rsyslog.d\n  install_rsyslog: true\n  packages: [rsyslogd]\n"
+    ],
+    "cc_runcmd": [
+      "runcmd:\n- [ls, -l, /]\n- [sh, -xc, 'echo $(date) '': hello world!''']\n- [sh, -c, echo \"=========hello world'=========\"]\n- ls -l /root\n"
+    ],
+    "cc_salt_minion": [
+      "salt_minion:\n  conf:\n    file_client: local\n    fileserver_backend: [gitfs]\n    gitfs_remotes: ['https://github.com/_user_/_repo_.git']\n    master: salt.example.com\n  config_dir: /etc/salt\n  grains:\n    role: [web]\n  pkg_name: salt-minion\n  pki_dir: /etc/salt/pki/minion\n  private_key: '------BEGIN PRIVATE KEY------\n\n    <key data>\n\n    ------END PRIVATE KEY-------\n\n    '\n  public_key: '------BEGIN PUBLIC KEY-------\n\n    <key data>\n\n    ------END PUBLIC KEY-------\n\n    '\n  service_name: salt-minion\n"
+    ],
+    "cc_scripts_vendor": [
+      "vendor_data: {enabled: true, prefix: /usr/bin/ltrace}\n",
+      "vendor_data:\n  enabled: true\n  prefix: [timeout, 30]\n",
+      "vendor_data: {enabled: false}\n"
+    ],
+    "cc_seed_random": [
+      "random_seed:\n  command: [sh, -c, dd if=/dev/urandom of=$RANDOM_SEED_FILE]\n  command_required: true\n  data: my random string\n  encoding: raw\n  file: /dev/urandom\n",
+      "random_seed:\n  command: [pollinate, '--server=http://local.pollinate.server']\n  command_required: true\n  file: /dev/urandom\n"
+    ],
+    "cc_set_hostname": [
+      "preserve_hostname: true\n",
+      "hostname: myhost\ncreate_hostname_file: true\nfqdn: myhost.example.com\nprefer_fqdn_over_hostname: true\n",
+      "create_hostname_file: false\n"
+    ],
+    "cc_set_passwords": [
+      "{password: password1, ssh_pwauth: true}\n",
+      "chpasswd:\n  expire: false\n  users:\n  - {name: user1, password: password1, type: text}\n  - {name: user2, password: $6$rounds=4096$5DJ8a9WMTEzIo5J4$Yms6imfeBvf3Yfu84mQBerh18l7OR1Wm1BJXZqFSpJ6BVas0AYJqIjP7czkOaAZHZi1kxQ5Y1IhgWN8K9NgxR1}\n  - {name: user3, type: RANDOM}\nssh_pwauth: false\n",
+      "ssh_pwauth: false\n# Supplement sshd_config part with overrides for images using PAM\n# for authentication on distributions which default to\n# KbdInteractiveAuthentication yes in sshd_config.\nwrite_files:\n- path: /etc/ssh/sshd_config.d/70-no-pam-password-auth.conf\n  content: 'KbdInteractiveAuthentication no'\n  permissions: '0500'\n"
+    ],
+    "cc_snap": [
+      "snap:\n  assertions:\n    00: |\n      signed_assertion_blob_here\n    02: |\n      signed_assertion_blob_here\n  commands:\n    00: snap create-user --sudoer --known <snap-user>@mydomain.com\n    01: snap install canonical-livepatch\n    02: canonical-livepatch enable <AUTH_TOKEN>\n",
+      "snap:\n  commands:\n    0: [install, vlc]\n    1: [snap, install, vlc]\n    2: snap install vlc\n    3: snap install vlc\n",
+      "snap:\n  assertions:\n    - signed_assertion_blob_here\n    - |\n      signed_assertion_blob_here\n",
+      "snap:\n  assertions:\n    - signed_assertion_blob_here\n    - |\n      signed_assertion_blob_here\n"
+    ],
+    "cc_spacewalk": [
+      "spacewalk: {activation_key: <key>, proxy: <proxy host>, server: <url>}\n"
+    ],
+    "cc_ssh": [
+      "allow_public_ssh_keys: true\ndisable_root: true\ndisable_root_opts: no-port-forwarding,no-agent-forwarding,no-X11-forwarding\nssh_authorized_keys: [ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAGEA3FSyQwBI6Z+nCSjUU ..., ssh-rsa\n    AAAAB3NzaC1yc2EAAAABIwAAAQEA3I7VUf2l5gSn5uavROsc5HRDpZ ...]\nssh_deletekeys: true\nssh_genkeytypes: [rsa, ecdsa, ed25519]\nssh_keys: {rsa_certificate: 'ssh-rsa-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQt\n    ...\n\n    ', rsa_private: '-----BEGIN RSA PRIVATE KEY-----\n\n    MIIBxwIBAAJhAKD0YSHy73nUgysO13XsJmd4fHiFyQ+00R7VVu2iV9Qco\n\n    ...\n\n    -----END RSA PRIVATE KEY-----\n\n    ', rsa_public: ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAGEAoPRhIfLvedSDKw7Xd ...}\nssh_publish_hostkeys:\n  blacklist: [rsa]\n  enabled: true\nssh_quiet_keygen: true\n"
+    ],
+    "cc_ssh_authkey_fingerprints": [
+      "no_ssh_fingerprints: true\n",
+      "authkey_hash: sha512\n"
+    ],
+    "cc_ssh_import_id": [
+      "ssh_import_id: [user, 'gh:user', 'lp:user']\n"
+    ],
+    "cc_timezone": [
+      "timezone: America/New_York\n"
+    ],
+    "cc_ubuntu_autoinstall": [
+      "autoinstall:\n  version: 1\n"
+    ],
+    "cc_ubuntu_drivers": [
+      "drivers:\n  nvidia: {license-accepted: true}\n"
+    ],
+    "cc_ubuntu_pro": [
+      "ubuntu_pro: {token: <ubuntu_pro_token>}\n",
+      "ubuntu_pro:\n  enable: [fips, esm]\n  token: <ubuntu_pro_token>\n",
+      "power_state: {mode: reboot}\nubuntu_pro:\n  enable: [fips]\n  token: <ubuntu_pro_token>\n",
+      "ubuntu_pro:\n  token: <ubuntu_pro_token>\n  config:\n    http_proxy: 'http://some-proxy:8088'\n    https_proxy: 'https://some-proxy:8088'\n    global_apt_https_proxy: 'https://some-global-apt-proxy:8088/'\n    global_apt_http_proxy: 'http://some-global-apt-proxy:8088/'\n    ua_apt_http_proxy: 'http://10.0.10.10:3128'\n    ua_apt_https_proxy: 'https://10.0.10.10:3128'\n  enable:\n  - fips\n",
+      "ubuntu_pro:\n  enable: []\n  enable_beta: []\n",
+      "ubuntu_pro:\n  enable: [esm]\n  enable_beta: [realtime-kernel]\n",
+      "ubuntu_pro:\n  features: {disable_auto_attach: true}\n"
+    ],
+    "cc_update_etc_hosts": [
+      "manage_etc_hosts: false\n",
+      "manage_etc_hosts: true\n",
+      "manage_etc_hosts: localhost\n"
+    ],
+    "cc_update_hostname": [
+      "preserve_hostname: false\n",
+      "preserve_hostname: true\n",
+      "preserve_hostname: true\n",
+      "fqdn: external.fqdn.me\nhostname: myhost\nprefer_fqdn_over_hostname: true\ncreate_hostname_file: true\n",
+      "prefer_fqdn_over_hostname: false\n",
+      "create_hostname_file: false\n"
+    ],
+    "cc_users_groups": [
+      "users: [default]\n",
+      "groups:\n- admingroup: [root, sys]\n- cloud-users\n",
+      "users:\n- name: newsuper\n  lock_passwd: true\n  ssh_import_id: [ gh:TheRealFalcon, lp:falcojr ]\n  shell: /bin/bash\n",
+      "users:\n- doas: [permit nopass newsuper, deny newsuper as root]\n  name: newsuper\n",
+      "users:\n- default\n- {name: youruser, selinux_user: staff_u}\n",
+      "users:\n- default\n- {name: nosshlogins, ssh_redirect_user: true}\n",
+      "ssh_import_id: [chad.smith]\nuser: {name: mynewdefault, sudo: null}\n",
+      "users: []\n"
+    ],
+    "cc_wireguard": [
+      "wireguard:\n  interfaces:\n    - name: wg0\n      config_path: /etc/wireguard/wg0.conf\n      content: |\n        [Interface]\n        PrivateKey = <private_key>\n        Address = <address>\n        [Peer]\n        PublicKey = <public_key>\n        Endpoint = <endpoint_ip>:<endpoint_ip_port>\n        AllowedIPs = <allowedip1>, <allowedip2>, ...\n    - name: wg1\n      config_path: /etc/wireguard/wg1.conf\n      content: |\n        [Interface]\n        PrivateKey = <private_key>\n        Address = <address>\n        [Peer]\n        PublicKey = <public_key>\n        Endpoint = <endpoint_ip>:<endpoint_ip_port>\n        AllowedIPs = <allowedip1>\n  readinessprobe:\n    - 'systemctl restart service'\n    - 'curl https://webhook.endpoint/example'\n    - 'nc -zv some-service-fqdn 443'\n"
+    ],
+    "cc_write_files": [
+      "write_files:\n- encoding: b64\n  content: CiMgVGhpcyBmaWxlIGNvbnRyb2xzIHRoZSBzdGF0ZSBvZiBTRUxpbnV4...\n  owner: root:root\n  path: /etc/sysconfig/selinux\n  permissions: '0644'\n",
+      "write_files:\n- content: |\n    15 * * * * root ship_logs\n  path: /etc/crontab\n  append: true\n",
+      "write_files:\n- encoding: gzip\n  content: !!binary |\n      H4sIAIDb/U8C/1NW1E/KzNMvzuBKTc7IV8hIzcnJVyjPL8pJ4QIA6N+MVxsAAAA=\n  path: /usr/bin/hello\n  permissions: '0755'\n",
+      "write_files:\n- path: /root/CLOUD_INIT_WAS_HERE\n",
+      "write_files:\n- path: /etc/nginx/conf.d/example.com.conf\n  content: |\n    server {\n        server_name example.com;\n        listen 80;\n        root /var/www;\n        location / {\n            try_files $uri $uri/ $uri.html =404;\n        }\n    }\n  owner: 'nginx:nginx'\n  permissions: '0640'\n  defer: true\n",
+      "write_files:\n- source:\n    uri: https://gitlab.example.com/some_ci_job/artifacts/hello\n    headers:\n      Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==\n      User-Agent: cloud-init on myserver.example.com\n  path: /usr/bin/hello\n  permissions: '0755'\n"
+    ],
+    "cc_yum_add_repo": [
+      "yum_repos:\n  my_repo:\n    baseurl: http://blah.org/pub/epel/testing/5/$basearch/\nyum_repo_dir: /store/custom/yum.repos.d\n",
+      "yum_repos:\n  cloud-init-daily:\n    name: Copr repo for cloud-init-dev owned by @cloud-init\n    baseurl: https://download.copr.fedorainfracloud.org/results/@cloud-init/cloud-init-dev/epel-8-$basearch/\n    type: rpm-md\n    skip_if_unavailable: true\n    gpgcheck: true\n    gpgkey: https://download.copr.fedorainfracloud.org/results/@cloud-init/cloud-init-dev/pubkey.gpg\n    enabled_metadata: 1\n",
+      "yum_repos:\n# The name of the repository\n epel-testing:\n   baseurl: https://download.copr.fedorainfracloud.org/results/@cloud-init/cloud-init-dev/pubkey.gpg\n   enabled: false\n   failovermethod: priority\n   gpgcheck: true\n   gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL\n   name: Extra Packages for Enterprise Linux 5 - Testing\n",
+      "yum_repos:\n  my package stream:\n    baseurl: http://blah.org/pub/epel/testing/5/$basearch/\n    mirrorlist: http://some-url-to-list-of-baseurls\n    repo_gpgcheck: 1\n    enable_gpgcheck: true\n    gpgkey: https://url.to.ascii-armored-gpg-key\n"
+    ],
+    "cc_zypper_add_repo": [
+      "zypper:\n  config: {download.use_deltarpm: true, reposdir: /etc/zypp/repos.dir, servicesdir: /etc/zypp/services.d}\n  repos:\n  - {autorefresh: 1, baseurl: 'http://dl.opensuse.org/dist/leap/v/repo/oss/', enabled: 1,\n    id: opensuse-oss, name: os-oss}\n  - {baseurl: 'http://dl.opensuse.org/dist/leap/v/update', id: opensuse-oss-update,\n    name: os-oss-up}\n"
+    ]
+  },
+  "node_examples": {
+    "hostname": [
+      "cc_set_hostname",
+      0
+    ],
+    "timezone": [
+      "cc_timezone",
+      0
+    ],
+    "locale": [
+      "cc_locale",
+      0
+    ],
+    "keyboard": [
+      "cc_keyboard",
+      0
+    ],
+    "users": [
+      "cc_users_groups",
+      2
+    ],
+    "default_user": [
+      "cc_users_groups",
+      6
+    ],
+    "groups": [
+      "cc_users_groups",
+      1
+    ],
+    "passwords": [
+      "cc_set_passwords",
+      0
+    ],
+    "ssh": [
+      "cc_ssh",
+      0
+    ],
+    "ssh_import": [
+      "cc_ssh_import_id",
+      0
+    ],
+    "packages": [
+      "cc_package_update_upgrade_install",
+      0
+    ],
+    "apt": [
+      "cc_apt_configure",
+      0
+    ],
+    "snap": [
+      "cc_snap",
+      0
+    ],
+    "write_files": [
+      "cc_write_files",
+      4
+    ],
+    "runcmd": [
+      "cc_runcmd",
+      0
+    ],
+    "bootcmd": [
+      "cc_bootcmd",
+      0
+    ],
+    "final_message": [
+      "cc_final_message",
+      0
+    ],
+    "vendor_data": [
+      "cc_scripts_vendor",
+      0
+    ],
+    "growpart": [
+      "cc_growpart",
+      0
+    ],
+    "resize_rootfs": [
+      "cc_resizefs",
+      0
+    ],
+    "disk_setup": [
+      "cc_disk_setup",
+      0
+    ],
+    "mounts": [
+      "cc_mounts",
+      0
+    ],
+    "hosts": [
+      "cc_update_etc_hosts",
+      0
+    ],
+    "resolv_conf": [
+      "cc_resolv_conf",
+      0
+    ],
+    "ntp": [
+      "cc_ntp",
+      1
+    ],
+    "wireguard": [
+      "cc_wireguard",
+      0
+    ],
+    "fan": [
+      "cc_fan",
+      0
+    ],
+    "install_hotplug": [
+      "cc_install_hotplug",
+      0
+    ],
+    "phone_home": [
+      "cc_phone_home",
+      0
+    ],
+    "power_state": [
+      "cc_power_state_change",
+      0
+    ],
+    "ca_certs": [
+      "cc_ca_certs",
+      0
+    ],
+    "rsyslog": [
+      "cc_rsyslog",
+      0
+    ],
+    "random_seed": [
+      "cc_seed_random",
+      0
+    ],
+    "disable_ec2_metadata": [
+      "cc_disable_ec2_metadata",
+      0
+    ],
+    "byobu": [
+      "cc_byobu",
+      0
+    ],
+    "grub_dpkg": [
+      "cc_grub_dpkg",
+      0
+    ],
+    "keys_to_console": [
+      "cc_keys_to_console",
+      0
+    ],
+    "ubuntu_pro": [
+      "cc_ubuntu_pro",
+      0
+    ],
+    "drivers": [
+      "cc_ubuntu_drivers",
+      0
+    ],
+    "lxd": [
+      "cc_lxd",
+      1
+    ],
+    "landscape": [
+      "cc_landscape",
+      0
+    ],
+    "ansible": [
+      "cc_ansible",
+      0
+    ],
+    "puppet": [
+      "cc_puppet",
+      0
+    ],
+    "chef": [
+      "cc_chef",
+      0
+    ],
+    "salt_minion": [
+      "cc_salt_minion",
+      0
+    ],
+    "mcollective": [
+      "cc_mcollective",
+      0
+    ],
+    "yum_repos": [
+      "cc_yum_add_repo",
+      0
+    ],
+    "zypper": [
+      "cc_zypper_add_repo",
+      0
+    ],
+    "apk_repos": [
+      "cc_apk_configure",
+      0
+    ],
+    "rh_subscription": [
+      "cc_rh_subscription",
+      0
+    ],
+    "spacewalk": [
+      "cc_spacewalk",
+      0
+    ],
+    "rpi": [
+      "cc_raspberry_pi",
+      0
+    ]
+  }
+}
