@@ -10,7 +10,11 @@ state back into YAML. Invariants:
 * Credential fields accept placeholders only; ``hashed_passwd`` also accepts a crypt hash (``$id$...``),
   the same rule ``seed_render.validate_seed_template`` applies on save. The same check runs on keys that
   arrive through ``__extra__``, Advanced YAML, or YAML-valued fields (``_check_credentials``).
-* A no-op apply returns the seed unchanged; in autoinstall mode only the ``user-data`` lines are rewritten.
+* A no-op apply returns the seed unchanged. In autoinstall mode only the top-level ``autoinstall`` keys
+  that changed are rewritten (``user-data`` included); every other key keeps its original lines.
+* Autoinstall installer keys (everything under ``autoinstall`` except ``user-data``) are edited through
+  ``installer_schema.INSTALLER_NODES`` with the same field types. Keys it does not model are kept in the
+  installer's Other keys YAML. A modeled key the operator did not touch keeps its original value.
 * Seed text, user-data, and passwords are never logged.
 """
 
@@ -23,7 +27,8 @@ from typing import Any
 
 import yaml
 
-from ..seed_store import CRYPT_HASH_RE, SeedError
+from ..seed_store import CRYPT_HASH_RE, SeedError, line_has_literal_secret
+from .installer_schema import INSTALLER_FIELDS, INSTALLER_NODES, USER_DATA_KEY, installer_node_for_key
 from .schema import ADVANCED_KEYS, ALIASES, NODES, node_for_key
 
 _MAX_EDITOR_BYTES = 256 * 1024
@@ -349,6 +354,23 @@ def _check_credentials(
                 _check_credentials(item, sub, field.get("aliases"), item_path, parent=canon, where=where)
         else:
             _check_credentials(item, None, None, item_path, parent=canon, where=where)
+
+
+def _check_secret_lines(value: Any, path: str, *, where: str | None = None) -> None:
+    """Reject strings with a ``password: literal`` line (command scripts, block scalars).
+
+    Save validation (``seed_render``) scans every seed line with the same rule, so a literal inside
+    a multi-line command would be refused there anyway; this reports it with an editor path.
+    """
+    if isinstance(value, str):
+        if any(line_has_literal_secret(line) for line in _unshield_str(value).splitlines()):
+            raise EditorError("Credential fields must use placeholders (command or script text)", path=where or path)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _check_secret_lines(item, f"{path}[{index}]", where=where)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _check_secret_lines(item, _join(path, str(key)), where=where)
 
 
 def _check_top_credentials(mapping: dict, *, where: str | None = None) -> None:
@@ -1034,6 +1056,8 @@ def _emit_command_list(field: dict, value: Any, path: str) -> Any:
             argv = _emit_scalar_items(item)
             if argv:
                 out.append(argv)
+    for index, item in enumerate(out):
+        _check_secret_lines(item, f"{path}[{index}]")
     return out or _OMIT
 
 
@@ -1459,8 +1483,38 @@ def _render(parsed: dict, header: list[str]) -> str:
     return text if text.endswith("\n") else text + "\n"
 
 
+# --------------------------------------------------------------------------- installer section
+
+
+def _installer_mapping(parsed: dict, mode: str) -> dict:
+    """The ``autoinstall`` keys the installer nodes edit (everything except ``user-data``)."""
+    if mode != "autoinstall":
+        return {}
+    return {key: value for key, value in parsed["autoinstall"].items() if key != USER_DATA_KEY}
+
+
+def _installer_view(installer: dict, notes: list[str]) -> tuple[dict, dict]:
+    """Installer keys -> (form doc, Other installer keys). Unmodeled or unrepresentable keys are kept."""
+    doc: dict = {}
+    extra: dict = {}
+    for key, value in installer.items():
+        field = INSTALLER_FIELDS.get(key) if isinstance(key, str) else None
+        if field is None:
+            extra[key] = value
+            notes.append(f"Installer key '{key}' has no form; it is kept in Other installer keys (YAML).")
+            continue
+        try:
+            doc[key] = _view(field, value, str(key), notes)
+        except _Unrepresentable:
+            extra[key] = value
+            notes.append(
+                f"Installer key '{key}' is kept in Other installer keys (YAML); the form cannot show this value."
+            )
+    return doc, extra
+
+
 def cloud_config_view(seed_text: str) -> dict:
-    """Return mode, structured doc, extra_yaml (unmodeled keys), notices, and installer keys."""
+    """Return mode, structured docs (cloud-config and installer), extra YAML, notices, and installer keys."""
     parsed, mode = _parse_seed(seed_text)
     notes: list[str] = []
     cc = _rename_top(_cloud_config_mapping(parsed, mode), notes)
@@ -1477,17 +1531,21 @@ def cloud_config_view(seed_text: str) -> dict:
             except _Unrepresentable:
                 notes.append(f"'{key}' is shown in Advanced YAML; the form cannot show this value.")
     extra = {key: value for key, value in cc.items() if key not in consumed}
-    installer_keys: list[str] = []
-    if mode == "autoinstall":
-        installer_keys = [str(key) for key in parsed["autoinstall"] if key != "user-data"]
-    return {
+    installer = _installer_mapping(parsed, mode)
+    installer_doc, installer_extra = _installer_view(installer, notes)
+    view = {
         "mode": mode,
         "doc": doc,
         "extra_yaml": _dump_yaml(extra) if extra else "",
         "notices": notes,
-        "installer_keys": installer_keys,
+        "installer_keys": [str(key) for key in installer],
+        "installer_doc": installer_doc,
+        "installer_extra_yaml": _dump_yaml(installer_extra) if installer_extra else "",
         "advanced_keys": list(ADVANCED_KEYS),
     }
+    if mode == "autoinstall":
+        view["installer_nodes"] = INSTALLER_NODES
+    return view
 
 
 def safe_cloud_config_view(seed_text: str) -> dict:
@@ -1501,6 +1559,8 @@ def safe_cloud_config_view(seed_text: str) -> dict:
             "extra_yaml": "",
             "notices": [],
             "installer_keys": [],
+            "installer_doc": {},
+            "installer_extra_yaml": "",
             "advanced_keys": list(ADVANCED_KEYS),
             "error": str(exc),
         }
@@ -1521,17 +1581,178 @@ def _load_extra(extra_yaml: str) -> dict:
     return loaded
 
 
-def _build(seed_text: str, cc_json: str, extra_yaml: str) -> dict:
+def _normalized(value: Any) -> Any:
+    """Form state without empties (the page's dirty-tracking rule), for "did the operator change it" checks."""
+    if isinstance(value, list):
+        items = [_normalized(item) for item in value]
+        return items if any(item is not None for item in items) else None
+    if isinstance(value, dict):
+        out = {}
+        for key in sorted(value, key=str):
+            item = _normalized(value[key])
+            if item is not None:
+                out[str(key)] = item
+        return out or None
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return value
+
+
+def _same_state(left: Any, right: Any) -> bool:
+    return json.dumps(_normalized(left), sort_keys=True) == json.dumps(_normalized(right), sort_keys=True)
+
+
+_INSTALLER_EXTRA = "__installer_extra__"
+_INSTALLER_PSEUDO = "__installer__"
+_INSTALLER_ORDER = [field["key"] for node in INSTALLER_NODES for field in node["fields"]]
+
+
+def _installer_node_id(key: Any) -> str:
+    node = installer_node_for_key(key) if isinstance(key, str) else None
+    return node["id"] if node else _INSTALLER_PSEUDO
+
+
+def _check_installer_value(key: Any, value: Any, *, where: str | None = None) -> None:
+    try:
+        _check_credentials({key: value}, INSTALLER_FIELDS, None, "", where=where)
+        _check_secret_lines(value, str(key), where=where)
+    except EditorError as exc:
+        if exc.node is None:
+            exc.node = _INSTALLER_PSEUDO if where == _INSTALLER_EXTRA else _installer_node_id(key)
+        raise
+
+
+def _load_installer_extra(text: str) -> dict:
+    if not text.strip():
+        return {}
+    try:
+        loaded = yaml.safe_load(shield_tokens(_with_final_newline(text)))
+    except yaml.YAMLError as exc:
+        raise EditorError(
+            "Other installer keys is not valid YAML", node=_INSTALLER_PSEUDO, path=_INSTALLER_EXTRA
+        ) from exc
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, dict):
+        raise EditorError("Other installer keys must be a YAML mapping", node=_INSTALLER_PSEUDO, path=_INSTALLER_EXTRA)
+    return loaded
+
+
+def _emit_installer(raw_doc: dict, extra_text: str | None, original: dict) -> dict:
+    """Posted installer state -> installer mapping in original key order (new keys after, schema order).
+
+    A key whose form value equals what the view showed keeps its original YAML value, so an untouched
+    key never changes shape. ``extra_text`` None means "Other installer keys unchanged".
+    """
+    orig_doc, orig_extra = _installer_view(original, [])
+    emitted: dict = {}
+    for key in _INSTALLER_ORDER:
+        if key not in raw_doc:
+            continue
+        node_id = _installer_node_id(key)
+        if key in orig_doc and _same_state(raw_doc[key], orig_doc[key]):
+            emitted[key] = original[key]
+            continue
+        try:
+            value = _emit(INSTALLER_FIELDS[key], raw_doc[key], key)
+        except EditorError as exc:
+            if exc.node is None:
+                exc.node = node_id
+            raise
+        except SeedError as exc:
+            raise EditorError(str(exc), node=node_id, path=key) from exc
+        if value is _OMIT:
+            continue
+        _check_installer_value(key, value)
+        emitted[key] = value
+
+    orig_extra_text = _dump_yaml(orig_extra) if orig_extra else ""
+    if extra_text is None or extra_text.strip() == orig_extra_text.strip():
+        extra = {key: original[key] for key in orig_extra}
+    else:
+        extra = _blockify(_load_installer_extra(extra_text))
+        for key, value in extra.items():
+            _check_installer_value(key, value, where=_INSTALLER_EXTRA)
+    for key in extra:
+        if key == USER_DATA_KEY:
+            raise EditorError(
+                "user-data is edited through the cloud-config modules, not Other installer keys.",
+                node=_INSTALLER_PSEUDO,
+                path=_INSTALLER_EXTRA,
+            )
+        if key in emitted:
+            node = installer_node_for_key(key)
+            label = node["label"] if node else key
+            raise EditorError(
+                f"'{key}' is set in the {label} section and in Other installer keys; keep only one.",
+                node=_INSTALLER_PSEUDO,
+                path=_INSTALLER_EXTRA,
+            )
+    combined = {**emitted, **extra}
+    ordered = {key: combined[key] for key in original if key in combined}
+    ordered.update({key: value for key, value in combined.items() if key not in ordered})
+    return ordered
+
+
+def _parse_installer_json(installer_json: str | None) -> dict | None:
+    if installer_json is None:
+        return None
+    if len(installer_json.encode("utf-8")) > _MAX_EDITOR_BYTES:
+        raise SeedError("Installer JSON exceeds 256 KiB")
+    if not installer_json.strip():
+        return None
+    try:
+        raw = json.loads(installer_json)
+    except json.JSONDecodeError as exc:
+        raise SeedError("Installer document is not valid JSON") from exc
+    if not isinstance(raw, dict):
+        raise SeedError("Installer document must be a JSON object")
+    return raw
+
+
+def _rebuilt_autoinstall(
+    auto: dict, merged: dict, raw_installer: dict | None, installer_extra_yaml: str | None
+) -> dict:
+    """New ``autoinstall`` mapping: original key order, user-data from the cloud-config form."""
+    original = {key: value for key, value in auto.items() if key != USER_DATA_KEY}
+    if raw_installer is None and installer_extra_yaml is None:
+        installer = original
+    else:
+        if raw_installer is None:
+            raw_installer = _installer_view(original, [])[0]
+        installer = _emit_installer(raw_installer, installer_extra_yaml, original)
+    rebuilt: dict = {}
+    for key in auto:
+        if key == USER_DATA_KEY:
+            rebuilt[key] = merged
+        elif key in installer:
+            rebuilt[key] = installer[key]
+    rebuilt.update({key: value for key, value in installer.items() if key not in rebuilt})
+    if merged and USER_DATA_KEY not in rebuilt:
+        rebuilt[USER_DATA_KEY] = merged
+    return rebuilt
+
+
+def _build(
+    seed_text: str,
+    cc_json: str,
+    extra_yaml: str,
+    installer_json: str | None = None,
+    installer_extra_yaml: str | None = None,
+) -> dict:
     if len((cc_json or "").encode("utf-8")) > _MAX_EDITOR_BYTES:
         raise SeedError("Editor JSON exceeds 256 KiB")
     if len((extra_yaml or "").encode("utf-8")) > _MAX_EDITOR_BYTES:
         raise SeedError("Advanced YAML exceeds 256 KiB")
+    if len((installer_extra_yaml or "").encode("utf-8")) > _MAX_EDITOR_BYTES:
+        raise SeedError("Other installer keys exceed 256 KiB")
     try:
         raw_doc = json.loads(cc_json)
     except json.JSONDecodeError as exc:
         raise SeedError("Editor document is not valid JSON") from exc
     if not isinstance(raw_doc, dict):
         raise SeedError("Editor document must be a JSON object")
+    raw_installer = _parse_installer_json(installer_json)
     pruned, owners = _emit_document(raw_doc)
     # Safety net over everything the form emitted (the targeted checks above report better paths).
     _check_top_credentials(pruned)
@@ -1552,10 +1773,14 @@ def _build(seed_text: str, cc_json: str, extra_yaml: str) -> dict:
     merged = {key: combined[key] for key in original if key in combined}
     merged.update({key: value for key, value in combined.items() if key not in merged})
     if mode == "autoinstall":
-        auto = parsed["autoinstall"]
-        if merged or "user-data" in auto:
-            auto["user-data"] = merged
+        parsed["autoinstall"] = _rebuilt_autoinstall(parsed["autoinstall"], merged, raw_installer, installer_extra_yaml)
     else:
+        if _normalized(raw_installer) is not None or (installer_extra_yaml or "").strip():
+            raise EditorError(
+                "This seed has no autoinstall section; installer settings cannot be applied.",
+                node=_INSTALLER_PSEUDO,
+                path=_INSTALLER_EXTRA,
+            )
         parsed = merged
     return {
         "parsed": parsed,
@@ -1571,8 +1796,8 @@ def _build(seed_text: str, cc_json: str, extra_yaml: str) -> dict:
 #
 # A full re-dump normalises quoting and flow style across the whole file (installer block included).
 # To keep diffs small: a no-op apply returns the seed unchanged, and in autoinstall mode only the
-# ``user-data`` lines are rewritten. Every splice is re-parsed and compared; on any doubt the full
-# dump is used instead.
+# top-level ``autoinstall`` keys that changed are rewritten (``user-data`` is one of them). Every
+# splice is re-parsed and compared; on any doubt the full dump is used instead.
 
 _PXEBLOCK_RE = re.compile(r"PXEBLOCK_([a-z_]+)")
 
@@ -1653,22 +1878,12 @@ def _indented_block(value: Any, key: str, column: int, newline: str) -> list[str
     return [(pad + line if line.strip() else "") + newline for line in text.rstrip("\n").split("\n")]
 
 
-def _splice_user_data(seed_text: str, built: dict) -> str | None:
-    """Rewrite only ``autoinstall.user-data`` in the original text, or None when that is not safe."""
-    parsed = built["parsed"]
-    auto = parsed.get("autoinstall") if isinstance(parsed, dict) else None
-    if not isinstance(auto, dict) or "user-data" not in auto or not _has_cloud_config_header(seed_text):
-        return None
-    before_auto = built["before"].get("autoinstall")
-    rest_before = {key: value for key, value in built["before"].items() if key != "autoinstall"}
-    rest_after = {key: value for key, value in parsed.items() if key != "autoinstall"}
-    if not isinstance(before_auto, dict) or not _same_meaning(rest_before, rest_after):
-        return None
-    if not _same_meaning(
-        {k: v for k, v in before_auto.items() if k != "user-data"},
-        {k: v for k, v in auto.items() if k != "user-data"},
-    ):
-        return None
+def _autoinstall_spans(seed_text: str, before_auto: dict) -> tuple[list[str], int, int, dict, int] | None:
+    """Locate each top-level ``autoinstall`` key: (lines, first key line, key column, spans, block end).
+
+    ``spans[key] = (start, end)`` runs from the key's line to the next key's line, so trailing blank
+    and comment lines travel with the key above them. None when the block is not a plain block mapping.
+    """
     try:
         root = yaml.compose(shield_tokens(seed_text))
     except yaml.YAMLError:
@@ -1677,22 +1892,64 @@ def _splice_user_data(seed_text: str, built: dict) -> str | None:
     if auto_key is None or not isinstance(auto_node, yaml.MappingNode) or auto_node.flow_style or not auto_node.value:
         return None
     lines = seed_text.splitlines(keepends=True)
-    ud_key, _ud_node = _mapping_value(auto_node, "user-data")
-    if ud_key is not None:
-        start, column = ud_key.start_mark.line, ud_key.start_mark.column
-        if start >= len(lines) or lines[start][:column].strip():
+    column = auto_node.value[0][0].start_mark.column
+    if column <= auto_key.start_mark.column:
+        return None
+    entries: list[tuple[str, int]] = []
+    for key_node, _value in auto_node.value:
+        if not isinstance(key_node, yaml.ScalarNode):
             return None
-        end = _block_end(lines, start, column)
-    else:
-        column = auto_node.value[0][0].start_mark.column
-        start = end = _block_end(lines, auto_key.start_mark.line, auto_key.start_mark.column)
-        if column <= auto_key.start_mark.column:
+        line, col = key_node.start_mark.line, key_node.start_mark.column
+        if col != column or line >= len(lines) or lines[line][:col].strip():
             return None
-    head = lines[:start]
+        if entries and line <= entries[-1][1]:
+            return None
+        entries.append((key_node.value, line))
+    if [key for key, _ in entries] != [str(key) for key in before_auto]:
+        return None
+    auto_end = _block_end(lines, auto_key.start_mark.line, auto_key.start_mark.column)
+    spans: dict[str, tuple[int, int]] = {}
+    for index, (key, start) in enumerate(entries):
+        end = entries[index + 1][1] if index + 1 < len(entries) else auto_end
+        spans[key] = (start, end)
+    return lines, entries[0][1], column, spans, auto_end
+
+
+def _splice_autoinstall(seed_text: str, built: dict) -> str | None:
+    """Rewrite only the changed top-level ``autoinstall`` keys in the original text, or None when unsafe."""
+    parsed = built["parsed"]
+    auto = parsed.get("autoinstall") if isinstance(parsed, dict) else None
+    before_auto = built["before"].get("autoinstall")
+    if not isinstance(auto, dict) or not isinstance(before_auto, dict) or not _has_cloud_config_header(seed_text):
+        return None
+    rest_before = {key: value for key, value in built["before"].items() if key != "autoinstall"}
+    rest_after = {key: value for key, value in parsed.items() if key != "autoinstall"}
+    if not _same_meaning(rest_before, rest_after):
+        return None
+    located = _autoinstall_spans(seed_text, before_auto)
+    if located is None:
+        return None
+    lines, first, column, spans, auto_end = located
+    if [key for key in auto if key in spans] != [key for key in before_auto if key in auto]:
+        return None
     newline = "\r\n" if "\r\n" in seed_text else "\n"
-    if head and not head[-1].endswith("\n"):
-        head[-1] += newline
-    spliced = "".join([*head, *_indented_block(auto["user-data"], "user-data", column, newline), *lines[end:]])
+    body: list[str] = []
+    for key, value in auto.items():
+        if key not in spans:
+            body.extend(_indented_block(value, key, column, newline))
+            continue
+        start, end = spans[key]
+        if _same_meaning(before_auto[key], value):
+            body.extend(lines[start:end])
+            continue
+        content_end = min(_block_end(lines, start, column), end)
+        body.extend(_indented_block(value, key, column, newline))
+        body.extend(lines[content_end:end])
+    pieces = [*lines[:first], *body, *lines[auto_end:]]
+    for index in range(len(pieces) - 1):
+        if not pieces[index].endswith("\n"):
+            pieces[index] += newline
+    spliced = "".join(pieces)
     try:
         reparsed = yaml.safe_load(shield_tokens(spliced))
     except yaml.YAMLError:
@@ -1717,21 +1974,36 @@ def _render_seed(seed_text: str, built: dict) -> str:
     if _has_cloud_config_header(seed_text) and _same_meaning(built["before"], built["parsed"]):
         return seed_text
     if built["mode"] == "autoinstall":
-        spliced = _splice_user_data(seed_text, built)
+        spliced = _splice_autoinstall(seed_text, built)
         if spliced is not None:
             return spliced
     return _render(built["parsed"], built["header"])
 
 
-def apply_cloudinit_editor(seed_text: str, cc_json: str, extra_yaml: str) -> str:
-    """Return full seed text with the cloud-config mapping replaced. Raises SeedError."""
-    built = _build(seed_text, cc_json, extra_yaml)
+def apply_cloudinit_editor(
+    seed_text: str,
+    cc_json: str,
+    extra_yaml: str,
+    installer_json: str | None = None,
+    installer_extra_yaml: str | None = None,
+) -> str:
+    """Return full seed text with the cloud-config (and installer) mappings replaced. Raises SeedError.
+
+    ``installer_json`` / ``installer_extra_yaml`` None mean "installer section unchanged".
+    """
+    built = _build(seed_text, cc_json, extra_yaml, installer_json, installer_extra_yaml)
     return _render_seed(seed_text, built)
 
 
-def cloud_config_preview(seed_text: str, cc_json: str, extra_yaml: str) -> dict:
+def cloud_config_preview(
+    seed_text: str,
+    cc_json: str,
+    extra_yaml: str,
+    installer_json: str | None = None,
+    installer_extra_yaml: str | None = None,
+) -> dict:
     """Like apply, plus the cloud-config user-data alone and each node's YAML fragment."""
-    built = _build(seed_text, cc_json, extra_yaml)
+    built = _build(seed_text, cc_json, extra_yaml, installer_json, installer_extra_yaml)
     seed = _render_seed(seed_text, built)
     merged = built["merged"]
     user_data = seed if built["mode"] == "cloud-config" else _render(merged, ["#cloud-config"])
@@ -1739,4 +2011,10 @@ def cloud_config_preview(seed_text: str, cc_json: str, extra_yaml: str) -> dict:
         node_id: _dump({key: merged[key] for key in keys if key in merged}).rstrip("\n")
         for node_id, keys in built["owners"].items()
     }
+    if built["mode"] == "autoinstall":
+        auto = built["parsed"]["autoinstall"]
+        for node in INSTALLER_NODES:
+            keys = [field["key"] for field in node["fields"] if field["key"] in auto]
+            if keys:
+                node_yaml[node["id"]] = _dump({key: auto[key] for key in keys}).rstrip("\n")
     return {"seed": seed, "user_data": user_data, "node_yaml": node_yaml}

@@ -290,6 +290,35 @@ def check_cloudinit_editor(client, detail_path: str) -> None:
     expect(rejected.get("path") == "users[0].__extra__", f"editor rejection path {rejected.get('path')!r}")
     expect(literal not in json.dumps(rejected), "editor rejection echoed the literal")
 
+    # Autoinstall seed: the installer section is editable (still nothing saved).
+    auto_seed = (
+        "#cloud-config\nautoinstall:\n  version: 1\n  locale: en_US.UTF-8\n"
+        "  early-commands:\n    - echo smoke-early\n"
+        "  user-data:\n    hostname: smoke-auto\n"
+        "  late-commands:\n    - |\n      echo smoke-late\n      true\n"
+    )
+    status, _, auto_view = editor_call(client, {"action": "view", "seed": auto_seed})
+    expect(status == 200 and auto_view.get("mode") == "autoinstall", f"editor autoinstall view {status}")
+    installer_doc = auto_view.get("installer_doc") or {}
+    expect(installer_doc.get("early-commands") == ["echo smoke-early"], "editor installer doc missing early-commands")
+    expect(any(node.get("id") == "ai_locale" for node in auto_view.get("installer_nodes") or []), "installer nodes")
+    installer_doc["locale"] = "de_DE.UTF-8"
+    status, _, auto_applied = editor_call(
+        client,
+        {
+            "action": "apply",
+            "seed": auto_seed,
+            "cc_json": json.dumps(auto_view.get("doc") or {}),
+            "cc_extra_yaml": auto_view.get("extra_yaml") or "",
+            "installer_json": json.dumps(installer_doc),
+            "installer_extra_yaml": auto_view.get("installer_extra_yaml") or "",
+        },
+    )
+    auto_out = auto_applied.get("seed") or ""
+    expect(status == 200, f"editor autoinstall apply {status}")
+    expect("  locale: de_DE.UTF-8\n" in auto_out, "editor autoinstall apply missing locale change")
+    expect("  late-commands:\n    - |\n      echo smoke-late\n" in auto_out, "editor autoinstall dropped late-commands")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -968,6 +997,7 @@ def main() -> None:
     expect("\n  timezone:" not in user_data, "timezone must not be an autoinstall root key")
     expect("America/New_York" in user_data, "deploy timezone missing from rendered user-data")
     expect("ubuntu-server-minimal" in user_data, "linux user-data missing selected source.id")
+    expect("name: direct" in user_data, "autoinstall default storage layout must be direct")
     expect("sysrq-trigger" in user_data, "autoinstall must force reboot after phone-home")
     expect("ssh_authorized_keys: []" not in user_data, "empty ssh_authorized_keys fails Subiquity")
     expect("authorized-keys: []" not in user_data, "empty authorized-keys fails Subiquity")
@@ -1021,6 +1051,7 @@ def main() -> None:
     expect(status in {200, 303, 302}, f"deployed hostname save {status}")
     status, _, body = c.request("GET", f"/api/machines/{mid}")
     expect(json.loads(body).get("hostname") == "smoke-linux-named", "deployed hostname did not persist")
+    expect(json.loads(body).get("state") == "deployed", "Save must not stage a reimage")
 
     status, _, _ = c.request("POST", f"/machines/{mid}/stage", form={})
     expect(status in {200, 303, 302}, f"stage {status}")

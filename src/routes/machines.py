@@ -29,7 +29,6 @@ from ..inventory.service import (
     load_overlay,
     local_account_status,
     mark_deployed,
-    mark_ready,
     os_family_for,
     record_activity,
     register_machine,
@@ -445,11 +444,17 @@ async def cloudinit_editor_preview(request: Request, user: str = Depends(require
         if action in {"apply", "preview"}:
             cc_json = payload.get("cc_json") if isinstance(payload.get("cc_json"), str) else ""
             extra = payload.get("cc_extra_yaml") if isinstance(payload.get("cc_extra_yaml"), str) else ""
+            # Installer fields are optional: absent (older clients) means "installer section unchanged".
+            installer_json = payload.get("installer_json") if isinstance(payload.get("installer_json"), str) else None
+            installer_extra = (
+                payload.get("installer_extra_yaml") if isinstance(payload.get("installer_extra_yaml"), str) else None
+            )
             if not cc_json.strip():
                 raise SeedError("Editor document is empty")
+            args = (seed, cc_json, extra, installer_json, installer_extra)
             if action == "preview":
-                return _editor_response(cloud_config_preview(seed, cc_json, extra))
-            return _editor_response({"seed": apply_cloudinit_editor(seed, cc_json, extra)})
+                return _editor_response(cloud_config_preview(*args))
+            return _editor_response({"seed": apply_cloudinit_editor(*args)})
     except SeedError as exc:
         return _editor_error(str(exc), node=getattr(exc, "node", None), path=getattr(exc, "path", None))
     return _editor_error("Unknown action")
@@ -513,21 +518,12 @@ def machine_save(
             delete_empty_seed=True,
             next_boot_device=next_boot_device,
         )
+        # Save never changes lifecycle state: only Deploy and Stage reimage queue an install. An
+        # already-staged install picks up the saved seed so it does not boot a stale snapshot.
         assigned = get_image(db, machine.assigned_image_id)
-        if machine.state == MachineState.disabled.value:
-            db.commit()
-            return RedirectResponse(url=f"/machines/{machine_id}?notice=saved", status_code=HTTP_303_SEE_OTHER)
-        if machine.state == MachineState.deployed.value:
-            if assigned is None:
-                db.commit()
-                return RedirectResponse(url=f"/machines/{machine_id}?notice=saved", status_code=HTTP_303_SEE_OTHER)
-            stage_machine(db, machine, actor=user, image=assigned)
-        elif machine.state == MachineState.staged.value:
-            if assigned is None:
-                raise ValueError("Assign an image first")
+        if machine.state == MachineState.staged.value and assigned is not None:
             update_staged_attempt(db, machine, actor=user, image=assigned)
-        else:
-            mark_ready(db, machine, hostname=hostname, actor=user)
+        record_activity(db, actor=user, action="machine.save", detail=machine.hostname or machine.mac)
         db.commit()
     except (ValueError, SeedError) as exc:
         db.rollback()
@@ -757,10 +753,6 @@ def machine_account(
             username=(username.strip() or default_user),
             password=password or None,
         )
-        if machine.state == MachineState.deployed.value:
-            image = get_image(db, machine.assigned_image_id)
-            if image is not None:
-                stage_machine(db, machine, actor=user, image=image)
         db.commit()
     except ValueError as exc:
         db.rollback()

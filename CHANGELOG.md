@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-09-24
+
+### Added
+
+- The cloud-init editor can now change the Ubuntu installer section of autoinstall seeds. A new **Installer (autoinstall)** sidebar group has sections for version and interactive sections, locale, refresh-installer, keyboard, source, network (one card per ethernet interface, with YAML boxes for Wi-Fi, bonds, bridges and VLANs), proxy, apt (fallback, mirror selection and components), storage (layout, sizing policy, disk match, encryption and reset partition), identity, Active Directory, Ubuntu Pro, SSH, codecs, drivers, OEM, snaps, debconf selections, packages, kernel, kernel crash dumps, timezone, updates, shutdown, reporting, and early, late and error commands. Installer keys without a section are kept in **Other installer keys (YAML)** with a notice.
+- Early, late and error commands open locked. **Edit** explains which commands home-lab-pxe relies on (imaging callback, phone-home, failure log upload, Wi-Fi quieting, forced reboot, UEFI boot order), which ones are added back when the seed is served, and that the phone-home callback is not. **Unlock and edit** unlocks the list until the editor is closed. Commands home-lab-pxe relies on carry a **Managed** chip.
+- List placeholders such as `{{ssh_keys}}` and `{{packages}}` show a chip that says where the value comes from at deploy.
+
+### Changed
+
+- The editor overview lists the configured installer sections, and **User data (cloud-config)** in the installer group links to the cloud-config modules. For autoinstall seeds, Preview shows the whole seed file.
+- The default Ubuntu seed now installs with the **direct** storage layout on the largest disk: a GPT table with an EFI system partition (vfat, `/boot/efi`) and an ext4 root, instead of LVM. It is still matched by size, so it works on SATA, NVMe and virtio disks. New images and **Reset to default** use it; existing image and machine seed files keep their layout.
+- **Save** on a machine page now only stores changes. It no longer stages a reimage on a deployed machine or marks a pending machine ready; only **Deploy** and **Stage reimage** queue an install. Saving a machine that is already staged still refreshes the staged install with the new seed. Saving a machine's local account no longer stages a reimage either.
+- The machine page shows **Lifecycle** directly under **Deployment**. Lifecycle, Guest init and Recent boots open collapsed.
+- Every button uses the same size as **Edit folder**, including Log out and the primary (blue) buttons. Colours are unchanged.
+- Apply rewrites only the top-level autoinstall keys you changed. The other keys, including multi-line `- |` commands and placeholders, keep their original text. Apply with no changes still leaves the file byte-for-byte unchanged.
+
+### Fixed
+
+- The editor now rejects a literal password in `identity.password` and `storage.layout.password`, in Other installer keys, and on a `password:` line inside a command or script. Save already refused these; the editor now names the field instead.
+
 ## [0.3.7] - 2026-09-24
 
 ### Added

@@ -16,6 +16,7 @@ _LABELS = {
     "machine.discovered": "Discovered a machine",
     "machine.register": "Registered a machine",
     "machine.ready": "Marked ready",
+    "machine.save": "Saved a machine",
     "machine.deploy": "Started a deploy",
     "machine.imaging": "Imaging started",
     "machine.deployed": "Marked deployed",

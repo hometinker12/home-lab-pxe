@@ -34,8 +34,7 @@ autoinstall:
           arches: [arm64, armhf, ppc64el, riscv64, s390x]
   storage:
     layout:
-      name: lvm
-      sizing-policy: all
+      name: direct
       match:
         size: largest
   identity:

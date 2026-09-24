@@ -50,6 +50,10 @@
     ssh_keys: "Use the machine SSH keys field",
     packages: "Use the machine packages field",
   };
+  const BLOCK_FILLS = {
+    ssh_keys: "filled from the machine's SSH keys at deploy",
+    packages: "filled from the machine's packages at deploy",
+  };
   const CREDENTIAL_CHOICES = [
     ["{{password_hash}}", "{{password_hash}} (hash)"],
     ["{{password}}", "{{password}} (plain)"],
@@ -69,7 +73,11 @@
   const OVERVIEW = "__overview__";
   const ADVANCED = "__advanced__";
   const INSTALLER = "__installer__";
+  const INSTALLER_UD = "__installer_user_data__";
+  const INSTALLER_EXTRA_PATH = "__installer_extra__";
   const ADVANCED_GROUP = "Advanced";
+  const INSTALLER_GROUP = "Installer (autoinstall)";
+  const LOCK_SUMMARY = "Changing these commands could break install tracking and other home-lab-pxe features.";
 
   const MORE_THRESHOLD = 12;
   const MORE_VISIBLE = 8;
@@ -81,6 +89,10 @@
     down: "M20 12l-1.41-1.41L13 16.17V4h-2v12.17l-5.58-5.59L4 12l8 8 8-8z",
     remove: "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z",
     chevron: "M8.59 16.59 10 18l6-6-6-6-1.41 1.41L13.17 12z",
+    lock: "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z",
+    unlock:
+      "M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h1.9c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z",
+    warn: "M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z",
     external:
       "M14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7zM19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7z",
   };
@@ -436,16 +448,29 @@
       }
     };
 
-    const nodes = schema.filter((node) => isPlainObject(node) && typeof node.id === "string" && node.id);
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    const keyOwner = new Map();
-    for (const node of nodes) {
-      for (const field of node.fields || []) {
-        if (field && typeof field.key === "string" && !keyOwner.has(field.key)) {
-          keyOwner.set(field.key, node.id);
+    const validNode = (node) => isPlainObject(node) && typeof node.id === "string" && node.id;
+    const nodes = schema.filter(validNode);
+    const mode = typeof opts.mode === "string" && opts.mode ? opts.mode : root.dataset.mode || "";
+    /* Installer (autoinstall) sections: same field types, their own state object and payload fields. */
+    const inodes =
+      mode === "autoinstall" && Array.isArray(opts.installerNodes)
+        ? opts.installerNodes.filter(validNode).map((node) => Object.assign({}, node, { scope: "installer" }))
+        : [];
+    const hasInstaller = inodes.length > 0;
+    const nodeById = new Map(nodes.concat(inodes).map((node) => [node.id, node]));
+    const ownerMap = (list) => {
+      const owners = new Map();
+      for (const node of list) {
+        for (const field of node.fields || []) {
+          if (field && typeof field.key === "string" && !owners.has(field.key)) {
+            owners.set(field.key, node.id);
+          }
         }
       }
-    }
+      return owners;
+    };
+    const keyOwner = ownerMap(nodes);
+    const installerKeyOwner = ownerMap(inodes);
 
     const state = isPlainObject(doc) ? deepCopy(doc) : {};
     if (!isPlainObject(state.__yaml__)) {
@@ -453,8 +478,18 @@
     }
     const rootBind = { path: [], get: () => state, set: () => {} };
     const yamlHolder = keyBind(rootBind, "__yaml__");
-
-    const mode = typeof opts.mode === "string" && opts.mode ? opts.mode : root.dataset.mode || "";
+    const istate = isPlainObject(opts.installerDoc) ? deepCopy(opts.installerDoc) : {};
+    const installerRootBind = { path: [], get: () => istate, set: () => {} };
+    const isInstallerNode = (node) => Boolean(node && node.scope === "installer");
+    const stateOf = (node) => (isInstallerNode(node) ? istate : state);
+    const rootBindOf = (node) => (isInstallerNode(node) ? installerRootBind : rootBind);
+    /* Locked command lists the operator unlocked. Lives with this editor instance, so reopening re-locks. */
+    const unlockedLists = new Set();
+    const installerExtraBox = el("textarea", "seed-editor");
+    installerExtraBox.id = uid("iextra");
+    installerExtraBox.spellcheck = false;
+    installerExtraBox.value = typeof opts.installerExtra === "string" ? opts.installerExtra : "";
+    installerExtraBox.placeholder = "key: value";
     const notices = Array.isArray(opts.notices) ? opts.notices.filter((item) => typeof item === "string" && item) : [];
     let installerKeys = Array.isArray(opts.installerKeys)
       ? opts.installerKeys.filter((item) => typeof item === "string" && item)
@@ -484,13 +519,21 @@
     root.append(hidden);
 
     const extraText = () => (extraBox ? extraBox.value : "");
-    const snapshot = () => `${JSON.stringify(normalize(state) || {})}\u0000${extraText().trim()}`;
+    const installerExtraText = () => installerExtraBox.value;
+    const snapshot = () =>
+      [
+        JSON.stringify(normalize(state) || {}),
+        extraText().trim(),
+        JSON.stringify(normalize(istate) || {}),
+        installerExtraText().trim(),
+      ].join("\u0000");
     let baseline = snapshot();
 
     const pseudo = {
       [OVERVIEW]: { id: OVERVIEW, label: "Overview", pseudo: true },
       [ADVANCED]: { id: ADVANCED, label: "Other keys (YAML)", group: ADVANCED_GROUP, pseudo: true },
-      [INSTALLER]: { id: INSTALLER, label: "Installer (read-only)", group: ADVANCED_GROUP, pseudo: true },
+      [INSTALLER]: { id: INSTALLER, label: "Other installer keys (YAML)", group: INSTALLER_GROUP, pseudo: true },
+      [INSTALLER_UD]: { id: INSTALLER_UD, label: "User data (cloud-config)", group: INSTALLER_GROUP, pseudo: true },
     };
 
     function nodeFor(id) {
@@ -504,9 +547,13 @@
       if (node.id === ADVANCED) {
         return extraText().trim() !== "";
       }
+      if (node.id === INSTALLER) {
+        return installerExtraText().trim() !== "";
+      }
       if (node.pseudo) {
         return false;
       }
+      const values = stateOf(node);
       for (const field of node.fields || []) {
         if (!field) {
           continue;
@@ -517,7 +564,7 @@
           }
           continue;
         }
-        if (typeof field.key === "string" && hasValue(state[field.key])) {
+        if (typeof field.key === "string" && hasValue(values[field.key])) {
           return true;
         }
       }
@@ -543,7 +590,7 @@
         collectFields(field.item_fields, fieldPath, out);
       }
     }
-    for (const node of nodes) {
+    for (const node of nodes.concat(inodes)) {
       const fields = [];
       collectFields(node.fields, [], fields);
       searchIndex.set(node.id, {
@@ -557,7 +604,13 @@
       fields: [],
     });
     searchIndex.set(INSTALLER, {
-      base: `installer autoinstall read-only ${(installerKeys || []).join(" ")}`.toLowerCase(),
+      base: `other installer keys yaml autoinstall ${(installerKeys || []).join(" ")}`.toLowerCase(),
+      name: "other installer keys yaml",
+      fields: [],
+    });
+    searchIndex.set(INSTALLER_UD, {
+      base: "user-data user data cloud-config autoinstall installer",
+      name: "user data cloud-config",
       fields: [],
     });
 
@@ -626,12 +679,12 @@
         }
         groups.get(name).push(node);
       }
-      const advancedNodes = [pseudo[ADVANCED]];
-      if (mode === "autoinstall") {
-        advancedNodes.push(pseudo[INSTALLER]);
-      }
       const all = Array.from(groups.entries());
-      all.push([ADVANCED_GROUP, advancedNodes]);
+      if (hasInstaller) {
+        /* The installer runs first, so its sections lead; user-data links back to the modules below. */
+        all.unshift([INSTALLER_GROUP, inodes.concat([pseudo[INSTALLER_UD], pseudo[INSTALLER]])]);
+      }
+      all.push([ADVANCED_GROUP, [pseudo[ADVANCED]]]);
       for (const [name, members] of all) {
         const details = el("details", "cc-group");
         const summary = el("summary");
@@ -665,7 +718,7 @@
         const set = nodeConfigured(ref.node);
         ref.btn.classList.toggle("is-set", set);
         ref.sr.textContent = set ? " (configured)" : "";
-        if (set && id !== OVERVIEW && id !== INSTALLER) {
+        if (set && id !== OVERVIEW && id !== INSTALLER && !isInstallerNode(ref.node)) {
           configured += 1;
         }
       });
@@ -902,6 +955,13 @@
       statusEl.replaceChildren();
       const count = configured === undefined ? countConfigured() : configured;
       statusEl.append(el("span", "cc-status-count", `${count} ${count === 1 ? "module" : "modules"} configured`));
+      if (hasInstaller) {
+        const sections = inodes.filter((node) => nodeConfigured(node)).length;
+        statusEl.append(
+          el("span", "cc-status-sep", " · "),
+          el("span", "cc-status-count cc-status-installer", `${sections} installer ${sections === 1 ? "section" : "sections"}`),
+        );
+      }
       if (isDirty()) {
         statusEl.append(el("span", "cc-status-sep", " · "), el("span", "cc-dirty", "Unsaved changes"));
       } else {
@@ -933,6 +993,20 @@
     }
 
     on(extraBox, "input", () => changed());
+    on(installerExtraBox, "input", () => {
+      autoRows(installerExtraBox, 10, 30);
+      changed();
+    });
+
+    /* Request fields for preview/apply. Installer fields are only sent for autoinstall seeds. */
+    function payload() {
+      const body = { cc_json: hidden.value, cc_extra_yaml: extraText() };
+      if (hasInstaller) {
+        body.installer_json = JSON.stringify(istate);
+        body.installer_extra_yaml = installerExtraText();
+      }
+      return body;
+    }
 
     /* ---------- preview ---------- */
 
@@ -963,8 +1037,7 @@
       const body = {
         action: previewAction,
         seed: typeof opts.getSeed === "function" ? opts.getSeed() : "",
-        cc_json: hidden.value,
-        cc_extra_yaml: extraText(),
+        ...payload(),
       };
       try {
         return await postEditor(body);
@@ -1011,9 +1084,10 @@
           errorEl.hidden = !errorMessage;
           errorEl.textContent = errorMessage || "";
         }
-        let title = "user-data after Apply";
+        let title = hasInstaller ? "Seed file after Apply" : "user-data after Apply";
         if (lastPreview) {
-          let text = lastPreview.user_data;
+          /* Autoinstall: the installer section is editable too, so show the whole file. */
+          let text = hasInstaller && typeof lastPreview.seed === "string" ? lastPreview.seed : lastPreview.user_data;
           if (typeof text !== "string") {
             const excerpt = mode === "autoinstall" ? userDataExcerpt(lastPreview.seed) : null;
             text = excerpt || lastPreview.seed;
@@ -1577,6 +1651,9 @@
         box.type = "checkbox";
         box.checked = blocked;
         check.append(box, document.createTextNode(` ${BLOCK_LABELS[token] || `Use the machine ${token} field`} `), el("code", "", `{{${token}}}`));
+        const fill = el("p", "cc-token-fill");
+        fill.append(el("code", "cc-chip", `{{${token}}}`), el("span", "", ` — ${BLOCK_FILLS[token] || "filled at deploy"}`));
+        fill.hidden = !blocked;
         ta.hidden = blocked;
         on(box, "change", () => {
           if (box.checked) {
@@ -1588,9 +1665,10 @@
             ta.hidden = false;
             ta.focus();
           }
+          fill.hidden = !box.checked;
           ctx.onChange();
         });
-        f.wrap.append(check);
+        f.wrap.append(check, fill);
       }
       f.wrap.append(ta);
       appendHelp(f.wrap, field, ta, extraHelp || "One per line.");
@@ -2198,22 +2276,171 @@
       const addBtn = button("btn-ghost btn-sm cc-add", "+ Add command");
       const count = listHead(field, f, "");
       const controller = listController(bind, ctx, "command", draw, list, addBtn);
+      /* Locked lists (autoinstall early/late/error commands) are read-only until the operator confirms. */
+      const lockable = Boolean(field.locked);
+      const lockKey = `${ctx.node ? ctx.node.id : ""}|${bind.path.join(".")}`;
+      const isLocked = () => lockable && !unlockedLists.has(lockKey);
+      const specs = Array.isArray(field.managed_commands) ? field.managed_commands.filter(isPlainObject) : [];
+      const lock = lockable ? lockControls() : null;
+
+      function matchedSpecs(item) {
+        const text = Array.isArray(item) ? item.map(scalarText).join(" ") : scalarText(item);
+        return specs.filter(
+          (spec) => Array.isArray(spec.match) && spec.match.some((needle) => typeof needle === "string" && needle && text.includes(needle)),
+        );
+      }
+
+      function readdText(spec) {
+        return spec.readded ? "Added back when the seed is served if it is missing." : "Not added back if removed.";
+      }
+
+      function lockControls() {
+        const bar = el("div", "cc-lock");
+        const stateIcon = el("span", "cc-lock-icon");
+        stateIcon.setAttribute("aria-hidden", "true");
+        const stateText = el("strong", "cc-lock-state");
+        const text = el("p", "cc-lock-text", LOCK_SUMMARY);
+        const toggle = button("btn-secondary btn-sm cc-lock-toggle");
+        const head = el("div", "cc-lock-head");
+        head.append(stateIcon, stateText, toggle);
+        bar.append(head, text);
+
+        const confirm = el("div", "cc-lock-confirm");
+        const titleId = uid("lock");
+        const bodyId = uid("lock");
+        confirm.setAttribute("role", "alertdialog");
+        confirm.setAttribute("aria-labelledby", titleId);
+        confirm.setAttribute("aria-describedby", bodyId);
+        confirm.tabIndex = -1;
+        confirm.hidden = true;
+        const title = el("p", "cc-lock-confirm-title");
+        title.id = titleId;
+        title.append(icon("warn"), el("span", "", `Edit ${String(field.label || field.key).toLowerCase()}?`));
+        const body = el("p", "cc-lock-confirm-body", typeof field.lock_warning === "string" && field.lock_warning ? field.lock_warning : LOCK_SUMMARY);
+        body.id = bodyId;
+        confirm.append(title, body);
+        const managedList = el("ul", "cc-lock-managed");
+        const fillManaged = () => {
+          const current = controller.rows();
+          managedList.replaceChildren();
+          for (const spec of specs) {
+            const present = current.some((item) => matchedSpecs(item).includes(spec));
+            const li = el("li");
+            li.append(el("strong", "", String(spec.label || "Managed command")));
+            li.append(document.createTextNode(` — ${present ? "in this list" : "not in this list"}. ${readdText(spec)}`));
+            managedList.append(li);
+          }
+        };
+        if (specs.length) {
+          confirm.append(managedList);
+        }
+        const actions = el("div", "cc-inline-actions");
+        const cancel = button("btn-ghost btn-sm", "Cancel");
+        const unlock = button("btn-danger btn-sm cc-lock-confirm-btn", "Unlock and edit");
+        actions.append(unlock, cancel);
+        confirm.append(actions);
+
+        const sync = () => {
+          const locked = isLocked();
+          bar.classList.toggle("is-locked", locked);
+          bar.classList.toggle("is-unlocked", !locked);
+          f.wrap.classList.toggle("cc-locked", locked);
+          stateIcon.replaceChildren(icon(locked ? "lock" : "unlock"));
+          stateText.textContent = locked ? "Locked" : "Unlocked for this session";
+          toggle.textContent = locked ? "Edit" : "Lock";
+          toggle.setAttribute("aria-label", `${locked ? "Edit" : "Lock"} ${String(field.label || field.key).toLowerCase()}`);
+          toggle.setAttribute("aria-expanded", locked && !confirm.hidden ? "true" : "false");
+          toggle.disabled = disabled;
+          if (paneRefresh) {
+            paneRefresh();
+          }
+        };
+        const closeConfirm = () => {
+          confirm.hidden = true;
+          sync();
+          toggle.focus();
+        };
+        on(toggle, "click", () => {
+          if (isLocked()) {
+            fillManaged();
+            confirm.hidden = !confirm.hidden;
+            sync();
+            if (!confirm.hidden) {
+              confirm.focus();
+            }
+            return;
+          }
+          unlockedLists.delete(lockKey);
+          confirm.hidden = true;
+          sync();
+          draw();
+          toggle.focus();
+        });
+        on(cancel, "click", closeConfirm);
+        on(unlock, "click", () => {
+          unlockedLists.add(lockKey);
+          confirm.hidden = true;
+          sync();
+          draw();
+          const first = list.querySelector("textarea");
+          (first || addBtn).focus();
+        });
+        on(confirm, "keydown", (event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            closeConfirm();
+          }
+        });
+        sync();
+        return { bar, confirm };
+      }
 
       function commandRow(index, length) {
         const itemBind = indexBind(bind, index);
         const item = itemBind.get();
+        const locked = isLocked();
         const li = el("li", "cc-cmd cc-item");
         li.append(el("span", "cc-cmd-num", String(index + 1)));
         const main = el("div", "cc-cmd-main");
+        const managed = matchedSpecs(item);
+        const tags = () => {
+          if (!managed.length) {
+            return null;
+          }
+          li.classList.add("cc-cmd-managed");
+          const meta = el("div", "cc-cmd-meta");
+          for (const spec of managed) {
+            const chip = el("span", "cc-managed-chip", `Managed · ${spec.label || "home-lab-pxe"}`);
+            meta.append(chip);
+          }
+          const help = managed
+            .map((spec) => `${typeof spec.help === "string" ? `${spec.help} ` : ""}${readdText(spec)}`)
+            .join(" ");
+          meta.append(el("span", "cc-cmd-meta-text", help));
+          return meta;
+        };
         if (typeof item === "string" || (Array.isArray(item) && item.every(isScalar))) {
           const argv = Array.isArray(item);
           const ta = el("textarea", "seed-editor");
           ta.spellcheck = false;
-          ta.setAttribute("aria-label", `Command ${index + 1}${argv ? " arguments, one per line" : ""}`);
+          ta.setAttribute("aria-label", `Command ${index + 1}${argv ? " arguments, one per line" : ""}${locked ? " (locked)" : ""}`);
           ta.value = argv ? item.map(scalarText).join("\n") : item;
           autoRows(ta, 1, 10, 0);
           if (!ta.value) {
             ta.placeholder = argv ? "one argument per line" : "e.g. echo hello";
+          }
+          const stack = el("div", "cc-cmd-stack");
+          stack.append(ta);
+          const meta = tags();
+          if (meta) {
+            stack.append(meta);
+          }
+          if (locked) {
+            ta.readOnly = true;
+            main.append(stack);
+            li.append(main);
+            return li;
           }
           const seg = segmented(
             uid("cmd"),
@@ -2250,10 +2477,14 @@
             autoRows(ta, 1, 10, 0);
             ctx.onChange();
           });
-          main.append(ta, seg);
+          main.append(stack, seg);
         } else {
           main.append(el("pre", "cc-readonly", displayValue(item)));
           main.append(el("p", "cc-help", "Kept as-is."));
+          if (locked) {
+            li.append(main);
+            return li;
+          }
         }
         li.append(main, listTools(index, length, "command", controller));
         return li;
@@ -2267,12 +2498,24 @@
           list.append(el("li", "cc-list-empty", "No commands yet."));
         }
         count.textContent = rows.length ? `${rows.length} ${rows.length === 1 ? "command" : "commands"}` : "";
+        addBtn.hidden = isLocked();
+        list.classList.toggle("is-locked", isLocked());
       }
 
       on(addBtn, "click", () => controller.add(""));
       draw();
+      if (lock) {
+        f.wrap.append(lock.bar, lock.confirm);
+      }
       f.wrap.append(list, addBtn);
-      appendHelp(f.wrap, field, list, "Shell runs the line through sh -c. Argv runs the program directly, one argument per line.");
+      appendHelp(
+        f.wrap,
+        field,
+        list,
+        lockable
+          ? "Shell runs the line through sh -c. Argv runs the program directly, one argument per line. Multi-line commands are kept as YAML block scalars."
+          : "Shell runs the line through sh -c. Argv runs the program directly, one argument per line.",
+      );
       return f.wrap;
     }
 
@@ -2777,7 +3020,9 @@
           el(
             "p",
             "meta cc-pane-help",
-            "This is an Ubuntu autoinstall file. The editor changes the cloud-config under autoinstall → user-data, which runs on the first boot of the installed system. The installer section stays as it is.",
+            hasInstaller
+              ? "This is an Ubuntu autoinstall file. The Installer sections configure the Ubuntu installer (Subiquity); the modules below edit the cloud-config under autoinstall → user-data, which runs on the first boot of the installed system. Apply rewrites only the sections you changed."
+              : "This is an Ubuntu autoinstall file. The editor changes the cloud-config under autoinstall → user-data, which runs on the first boot of the installed system. The installer section stays as it is.",
           ),
         );
       } else {
@@ -2793,21 +3038,66 @@
         box.append(list);
         pane.append(box);
       }
+      const chipFor = (node, extraClass) => {
+        const chip = button(`cc-chip-btn${extraClass ? ` ${extraClass}` : ""}`);
+        chip.append(el("span", "cc-dot cc-dot-on"), el("span", "", node.label || node.id));
+        if (node.group && !isInstallerNode(node) && node.group !== INSTALLER_GROUP) {
+          chip.append(el("span", "cc-chip-group", node.group));
+        }
+        on(chip, "click", () => showNode(node.id));
+        return chip;
+      };
+      if (hasInstaller) {
+        const inst = el("section", "cc-overview-section");
+        inst.append(el("h4", "", "Installer (autoinstall)"));
+        const configuredInstaller = inodes.filter((node) => nodeConfigured(node));
+        if (installerExtraText().trim()) {
+          configuredInstaller.push(pseudo[INSTALLER]);
+        }
+        if (configuredInstaller.length) {
+          const ichips = el("div", "cc-chips");
+          for (const node of configuredInstaller) {
+            const locked = (node.fields || []).some((field) => field && field.locked);
+            const chip = chipFor(node);
+            if (locked) {
+              const lockMark = el("span", "cc-chip-lock");
+              lockMark.append(icon("lock"));
+              lockMark.setAttribute("aria-label", "locked");
+              chip.append(lockMark);
+            }
+            ichips.append(chip);
+          }
+          inst.append(ichips);
+        } else {
+          inst.append(el("p", "meta", "No installer sections are set."));
+        }
+        inst.append(
+          el(
+            "p",
+            "cc-help",
+            "Early, late and error commands are locked because home-lab-pxe relies on them; open one and choose Edit to change it.",
+          ),
+        );
+        pane.append(inst);
+      } else if (mode === "autoinstall" && installerKeys && installerKeys.length) {
+        const inst = el("section", "cc-overview-section");
+        inst.append(el("h4", "", "Installer section"));
+        const keys = el("div", "cc-chips");
+        for (const key of installerKeys) {
+          keys.append(el("code", "cc-chip", key));
+        }
+        inst.append(keys);
+        pane.append(inst);
+      }
       const section = el("section", "cc-overview-section");
-      section.append(el("h4", "", "Configured"));
+      section.append(el("h4", "", mode === "autoinstall" ? "Configured user-data modules" : "Configured"));
       const chips = el("div", "cc-chips");
       const configured = nodes.filter((node) => nodeConfigured(node));
       if (extraText().trim()) {
         configured.push(pseudo[ADVANCED]);
       }
       for (const node of configured) {
-        const chip = button("cc-chip-btn");
-        chip.append(el("span", "cc-dot cc-dot-on"), el("span", "", node.label || node.id));
-        if (node.group) {
-          chip.append(el("span", "cc-chip-group", node.group));
-        }
-        on(chip, "click", () => showNode(node.id));
-        chips.append(chip);
+        chips.append(chipFor(node));
       }
       if (!configured.length) {
         section.append(el("p", "meta", "Nothing is set yet. Pick a module on the left, or search for a key."));
@@ -2815,21 +3105,6 @@
         section.append(chips);
       }
       pane.append(section);
-      if (mode === "autoinstall") {
-        const inst = el("section", "cc-overview-section");
-        inst.append(el("h4", "", "Installer section (read-only)"));
-        if (installerKeys && installerKeys.length) {
-          const keys = el("div", "cc-chips");
-          for (const key of installerKeys) {
-            keys.append(el("code", "cc-chip", key));
-          }
-          inst.append(keys);
-        }
-        const link = button("btn-ghost btn-sm", "About the installer section");
-        on(link, "click", () => showNode(INSTALLER));
-        inst.append(link);
-        pane.append(inst);
-      }
       const tips = el("section", "cc-overview-section");
       tips.append(el("h4", "", "Tips"));
       const list = el("ul", "cc-tips");
@@ -2887,31 +3162,74 @@
       const pane = el("div", "cc-pane");
       const head = el("div", "cc-pane-head");
       const titleRow = el("div", "cc-pane-title-row");
-      titleRow.append(paneHeading("Installer (read-only)"));
-      titleRow.append(el("span", "badge badge-disabled", "read-only"));
+      titleRow.append(paneHeading("Other installer keys (YAML)"));
+      titleRow.append(el("span", "cc-pane-group", INSTALLER_GROUP));
       head.append(titleRow);
       pane.append(head);
       pane.append(
         el(
           "p",
           "meta cc-pane-help",
-          "These keys belong to the Ubuntu installer (subiquity autoinstall), not to cloud-init. The editor keeps them exactly as they are. Change them in the user-data box on the page.",
+          "Top-level autoinstall keys the installer sections do not model, or values their forms cannot show. They are written as-is under autoinstall. A key that has its own section (for example locale) belongs in that section; user-data belongs in the cloud-config modules.",
         ),
       );
-      if (installerKeys && installerKeys.length) {
-        const keys = el("div", "cc-chips");
-        for (const key of installerKeys) {
-          keys.append(el("code", "cc-chip", key));
+      const label = el("label", "cc-label", "YAML mapping");
+      label.htmlFor = installerExtraBox.id;
+      autoRows(installerExtraBox, 10, 30);
+      installerExtraBox.disabled = disabled;
+      pane.append(label, installerExtraBox);
+      detail.append(pane);
+      paneRefresh = null;
+    }
+
+    function renderInstallerUserData() {
+      const pane = el("div", "cc-pane");
+      const head = el("div", "cc-pane-head");
+      const titleRow = el("div", "cc-pane-title-row");
+      titleRow.append(paneHeading("User data (cloud-config)"));
+      titleRow.append(el("code", "cc-chip", "user-data"));
+      head.append(titleRow);
+      pane.append(head);
+      pane.append(
+        el(
+          "p",
+          "meta cc-pane-help",
+          "autoinstall → user-data is the cloud-config the installed system runs on first boot. It is edited through the cloud-config modules in the sidebar (Identity, Users and SSH, Packages, …), not here.",
+        ),
+      );
+      const configured = nodes.filter((node) => nodeConfigured(node));
+      const section = el("section", "cc-overview-section");
+      section.append(el("h4", "", "Configured user-data modules"));
+      if (configured.length) {
+        const chips = el("div", "cc-chips");
+        for (const node of configured) {
+          const chip = button("cc-chip-btn");
+          chip.append(el("span", "cc-dot cc-dot-on"), el("span", "", node.label || node.id));
+          if (node.group) {
+            chip.append(el("span", "cc-chip-group", node.group));
+          }
+          on(chip, "click", () => showNode(node.id));
+          chips.append(chip);
         }
-        pane.append(keys);
+        section.append(chips);
       } else {
-        pane.append(el("p", "meta", "No installer keys found."));
+        section.append(el("p", "meta", "No user-data modules are set yet."));
+      }
+      pane.append(section);
+      const first = nodes[0];
+      if (first) {
+        const open = button("btn-secondary btn-sm", `Open ${first.label || first.id}`);
+        on(open, "click", () => showNode(first.id));
+        const row = el("div", "cc-inline-actions");
+        row.append(open);
+        pane.append(row);
       }
       detail.append(pane);
       paneRefresh = null;
     }
 
     function clearNode(node) {
+      const values = stateOf(node);
       for (const field of node.fields || []) {
         if (!field) {
           continue;
@@ -2919,7 +3237,7 @@
         if (field.type === "yaml") {
           delete state.__yaml__[node.id];
         } else if (typeof field.key === "string") {
-          delete state[field.key];
+          delete values[field.key];
         }
       }
     }
@@ -2969,6 +3287,7 @@
     }
 
     function renderNodePane(node) {
+      const nodeRoot = rootBindOf(node);
       const pane = el("div", "cc-pane");
       const head = el("div", "cc-pane-head");
       const titleRow = el("div", "cc-pane-title-row");
@@ -3065,7 +3384,7 @@
         const fields = Array.isArray(node.fields) ? node.fields : [];
         const only = fields.length === 1 ? fields[0] : null;
         if (only && only.type === "object" && typeof only.key === "string") {
-          const bind = keyBind(rootBind, only.key);
+          const bind = keyBind(nodeRoot, only.key);
           const value = bind.get();
           if (value === null || value === undefined || isPlainObject(value)) {
             ctx.scope = bind;
@@ -3086,7 +3405,7 @@
           }
         } else {
           ctx.soloLabel = fields.length === 1 ? String(node.label || "") : null;
-          renderFieldList(fields, rootBind, formPanel, ctx);
+          renderFieldList(fields, nodeRoot, formPanel, ctx);
         }
         if (paneState.hiddenDeprecated) {
           const row = el("p", "cc-help cc-deprecated-toggle");
@@ -3185,8 +3504,12 @@
       selectTab("form");
       pane.append(formPanel, yamlPanel);
       detail.append(pane);
+      /* Clear must not bypass a locked command list. */
+      const lockedHere = () =>
+        (node.fields || []).some((field) => field && field.locked && !unlockedLists.has(`${node.id}|${field.key}`));
       paneRefresh = () => {
-        clear.disabled = disabled || !nodeConfigured(node);
+        clear.disabled = disabled || !nodeConfigured(node) || lockedHere();
+        clear.title = lockedHere() ? "Unlock the commands first" : "Remove every key this module writes";
       };
       paneRefresh();
     }
@@ -3259,6 +3582,8 @@
         renderAdvanced();
       } else if (node.id === INSTALLER) {
         renderInstaller();
+      } else if (node.id === INSTALLER_UD) {
+        renderInstallerUserData();
       } else {
         renderNodePane(node);
       }
@@ -3293,6 +3618,21 @@
           extraBox.focus();
         }
         return true;
+      }
+      if (parts[0] === INSTALLER_EXTRA_PATH && hasInstaller) {
+        showNode(INSTALLER, { focus: false });
+        installerExtraBox.focus();
+        return true;
+      }
+      if (!target && hasInstaller && nodeId === INSTALLER) {
+        target = INSTALLER;
+      }
+      if (target && isInstallerNode(nodeFor(target)) && parts.length) {
+        showNode(target, { path: parts, exact: true, byKey: false });
+        return true;
+      }
+      if (!target && parts.length && installerKeyOwner.has(parts[0]) && !keyOwner.has(parts[0])) {
+        target = installerKeyOwner.get(parts[0]);
       }
       if (!target && parts.length && keyOwner.has(parts[0])) {
         target = keyOwner.get(parts[0]);
@@ -3334,6 +3674,7 @@
       },
       setPreviewOpen,
       revealError,
+      payload,
       destroy() {
         window.clearTimeout(previewTimer);
         previewSeq += 1;
@@ -3372,6 +3713,9 @@
       mode: view && typeof view.mode === "string" ? view.mode : root.dataset.mode || "",
       notices: view && view.notices,
       installerKeys: view && view.installer_keys,
+      installerNodes: view && view.installer_nodes,
+      installerDoc: view && view.installer_doc,
+      installerExtra: view && view.installer_extra_yaml,
       seedText: extras && extras.seedText,
       getSeed: extras && extras.getSeed,
       statusEl: extras && extras.statusEl,
@@ -3469,7 +3813,7 @@
         return;
       }
       if (mode === "autoinstall") {
-        modeBadge.textContent = "autoinstall user-data";
+        modeBadge.textContent = "autoinstall";
         modeBadge.hidden = false;
       } else if (mode === "cloud-config") {
         modeBadge.textContent = "cloud-config";
@@ -3617,12 +3961,11 @@
         applyBtn.disabled = true;
         editorError(dialog, "");
         try {
-          const result = await postEditor({
-            action: "apply",
-            seed: seed.value,
-            cc_json: stateInput.value,
-            cc_extra_yaml: extra ? extra.value : "",
-          });
+          const current = editors.get(root);
+          const fields = current
+            ? current.payload()
+            : { cc_json: stateInput.value, cc_extra_yaml: extra ? extra.value : "" };
+          const result = await postEditor({ action: "apply", seed: seed.value, ...fields });
           seed.value = result.seed || "";
           seed.dispatchEvent(new Event("input", { bubbles: true }));
           seed.dispatchEvent(new Event("change", { bubbles: true }));

@@ -17,6 +17,46 @@ _DEFAULTS_DIR = Path(__file__).resolve().parent / "defaults"
 # ``hashed_passwd`` credential key may hold (editor and save validation share this).
 CRYPT_HASH_RE = re.compile(r"\$[0-9A-Za-z]{1,8}\$[./0-9A-Za-z$=,+-]+")
 
+SECRET_KEYS = (
+    "password",
+    "passwd",
+    "hashed_password",
+    "hashed_passwd",
+    "hashed-passwd",
+    "plain_text_passwd",
+    "plain-text-passwd",
+    "secret",
+)
+# A block-mapping key line, optionally a list item (``- key:``, ``- - key:``) and optionally quoted.
+SECRET_LINE_RE = re.compile(
+    r"(?:-\s+)*([\"']?)(" + "|".join(re.escape(key) for key in SECRET_KEYS) + r")\1\s*:",
+    flags=re.IGNORECASE,
+)
+# Keys that may also hold a crypt hash (same rule as the cloud-init editor). Everything else is
+# placeholder-only.
+HASH_SECRET_KEYS = frozenset({"hashed_passwd", "hashed-passwd"})
+
+
+def _line_scalar(rest: str) -> str:
+    """Plain or quoted scalar after ``key:`` on one line, without a trailing comment."""
+    text = re.split(r"\s+#", rest.strip(), maxsplit=1)[0].strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        return text[1:-1]
+    return text
+
+
+def line_has_literal_secret(line: str) -> bool:
+    """True when one seed line looks like ``password: <literal>`` (the line rule seeds are saved under)."""
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return False
+    match = SECRET_LINE_RE.match(stripped)
+    if not match or "{{password" in stripped:
+        return False
+    if match.group(2).lower() in HASH_SECRET_KEYS and CRYPT_HASH_RE.fullmatch(_line_scalar(stripped[match.end() :])):
+        return False
+    return True
+
 
 class SeedError(ValueError):
     pass
