@@ -23,6 +23,59 @@ def test_literal_password_rejected():
         validate_seed_template(body, OsFamily.linux)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "plain_text_passwd: hunter2",
+        "hashed_passwd: hunter2",
+        "hashed_passwd: $notahash",
+        "users:\n  - name: a\n    hashed_passwd: 'hunter2 $6$x$y'",
+        # a crypt hash is only allowed where the editor allows it (hashed_passwd)
+        "plain_text_passwd: $6$rounds=4096$salt$hash",
+        "users:\n  - plain_text_passwd: $6$rounds=4096$salt$hash",
+        "users:\n  - {name: a, plain-text-passwd: $6$rounds=4096$salt$hash}",
+        "users:\n  - name: a\n    passwd: $6$rounds=4096$salt$hash",
+        "password: $6$rounds=4096$salt$hash",
+        "users:\n  - name: a\n    plain_text_passwd: hunter2",
+        "users:\n  - name: a\n    hashed_passwd: hunter2",
+        "users:\n  - plain_text_passwd: hunter2\n    name: a",
+        "users:\n  - hashed_passwd: hunter2",
+        "users:\n  - 'plain_text_passwd': hunter2",
+        'users:\n  - "hashed_passwd": hunter2',
+        "users:\n  - plain-text-passwd: hunter2",
+        "users:\n  - hashed-passwd: hunter2",
+        "users:\n  - {name: a, plain_text_passwd: hunter2}",
+        "users: [{name: a, hashed_passwd: hunter2}]",
+        "autoinstall:\n  version: 1\n  user-data:\n    users:\n      - name: a\n        plain_text_passwd: hunter2",
+    ],
+)
+def test_literal_plain_text_and_hashed_passwd_rejected(body):
+    with pytest.raises(SeedError, match="placeholders"):
+        validate_seed_template(f"#cloud-config\n{body}\n", OsFamily.linux)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "plain_text_passwd: {{password}}",
+        "users:\n  - name: a\n    plain_text_passwd: {{password}}\n    hashed_passwd: {{password_hash}}",
+        "users:\n  - hashed_passwd: {{password_hash}}\n    lock_passwd: false",
+        "users:\n  - {name: a, plain_text_passwd: '{{password}}', lock_passwd: true}",
+        "chpasswd:\n  users:\n    - {name: a, password: '{{password_hash}}', type: hash}",
+        # crypt hashes in hashed_passwd (all forms), as the editor accepts them
+        "hashed_passwd: $6$rounds=4096$salt$hash",
+        "users:\n  - name: a\n    hashed_passwd: $6$rounds=4096$salt$hash  # sha512",
+        "users:\n  - hashed_passwd: '$y$j9T$salt$hash'",
+        'users:\n  - "hashed_passwd": "$2b$12$abcdefghijklmnopqrstuv"',
+        "users:\n  - hashed-passwd: $1$salt$hash",
+        "users:\n  - {name: a, hashed_passwd: $6$rounds=4096$salt$hash}",
+        "users: [{name: a, hashed-passwd: '$6$salt$hash'}]",
+    ],
+)
+def test_placeholder_plain_text_and_hashed_passwd_accepted(body):
+    validate_seed_template(f"#cloud-config\n{body}\n", OsFamily.linux)
+
+
 def test_complete_linux_user_data_fills_unattended_keys():
     from src.seed_render import complete_linux_user_data
 

@@ -17,7 +17,7 @@ from sqlmodel import Session
 
 from .boot.uefi_order import inject_uefi_order_command, valid_policy_args
 from .models import AccountKind, Image, InstallAttempt, Machine, OsFamily
-from .seed_store import SeedError, factory_seed_text, read_image_seed, read_machine_seed, read_seed
+from .seed_store import CRYPT_HASH_RE, SeedError, factory_seed_text, read_image_seed, read_machine_seed, read_seed
 from .settings import get_settings
 
 TOKEN_RE = re.compile(r"\{\{([a-z_]+)\}\}")
@@ -65,14 +65,85 @@ def password_hash_for(password: str, instance_id: str) -> str:
     return sha512_crypt.using(salt=_stable_salt(instance_id), rounds=5000).hash(password)
 
 
+_SECRET_KEYS = (
+    "password",
+    "passwd",
+    "hashed_password",
+    "hashed_passwd",
+    "hashed-passwd",
+    "plain_text_passwd",
+    "plain-text-passwd",
+    "secret",
+)
+# A block-mapping key line, optionally a list item (``- key:``, ``- - key:``) and optionally quoted.
+_SECRET_LINE_RE = re.compile(
+    r"(?:-\s+)*([\"']?)(" + "|".join(re.escape(key) for key in _SECRET_KEYS) + r")\1\s*:",
+    flags=re.IGNORECASE,
+)
+_SECRET_KEY_SET = frozenset(_SECRET_KEYS)
+# Keys that may also hold a crypt hash (same rule as the cloud-init editor). Everything else is
+# placeholder-only.
+_HASH_KEYS = frozenset({"hashed_passwd", "hashed-passwd"})
+_SENTINEL_PASSWORD = "PXE-SENTINEL-PASSWORD"
+
+
+def _has_password_placeholder(text: str) -> bool:
+    return "{{password" in text
+
+
+def _is_crypt_hash(value: str) -> bool:
+    return bool(CRYPT_HASH_RE.fullmatch(value.strip()))
+
+
+def _line_scalar(rest: str) -> str:
+    """Plain or quoted scalar after ``key:`` on one line, without a trailing comment."""
+    text = re.split(r"\s+#", rest.strip(), maxsplit=1)[0].strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        return text[1:-1]
+    return text
+
+
+def _reject_flow_secrets(value: Any) -> None:
+    """Catch flow-style mappings (``{name: a, plain_text_passwd: x}``) that the line check cannot see.
+
+    Runs on the template parsed with placeholders swapped for sentinels, so a placeholder value
+    shows up as its sentinel.
+    """
+    if isinstance(value, list):
+        for item in value:
+            _reject_flow_secrets(item)
+        return
+    if not isinstance(value, dict):
+        return
+    for key, item in value.items():
+        if isinstance(key, str) and key.lower() in _SECRET_KEY_SET:
+            if item is None or item == "":
+                continue
+            if isinstance(item, str) and key.lower() in _HASH_KEYS and _is_crypt_hash(item):
+                continue
+            if not (isinstance(item, str) and _SENTINEL_PASSWORD in item):
+                raise SeedError("Credential fields must use placeholders")
+            continue
+        _reject_flow_secrets(item)
+
+
 def _yaml_reject_literal_secrets(text: str) -> None:
     for raw in (text or "").splitlines():
         stripped = raw.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        match = re.match(r"(password|passwd|hashed_password|secret)\s*:", stripped, flags=re.IGNORECASE)
-        if match and "{{password" not in stripped and "{{password_hash}}" not in stripped:
-            raise SeedError("Credential fields must use placeholders")
+        match = _SECRET_LINE_RE.match(stripped)
+        if not match or _has_password_placeholder(stripped):
+            continue
+        if match.group(2).lower() in _HASH_KEYS and _is_crypt_hash(_line_scalar(stripped[match.end() :])):
+            continue
+        raise SeedError("Credential fields must use placeholders")
+    sentinels = {**dummy_values(), "password": _SENTINEL_PASSWORD, "password_hash": _SENTINEL_PASSWORD}
+    try:
+        parsed = yaml.safe_load(substitute_yaml(text, sentinels))
+    except (yaml.YAMLError, SeedRenderError):
+        return  # validate_seed_template reports invalid YAML / placeholders itself
+    _reject_flow_secrets(parsed)
 
 
 def _xml_reject_literal_secrets(text: str) -> None:

@@ -13,27 +13,36 @@
   })();
 </script>
 <header class="page-header">
-  <h1>Boot menu</h1>
+  <div class="page-header-row">
+    <div class="page-title"><h1>Boot menu</h1></div>
+  </div>
   <p class="description">Folders and timeouts for the iPXE menu on the client. Unknown and disabled machines skip this menu and continue to the next boot device. Named or ready machines see these folders and can start an install from the keyboard.</p>
 </header>
 {% if error and not edit_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 
+<h2 class="section-label">Menu settings</h2>
 <details class="card" {% if error and not edit_open %}open{% endif %}>
-  <summary>Timeouts and labels</summary>
+  <summary><span class="summary-title">Timeouts and labels</span><span class="summary-meta">{{ settings.menu_timeout_seconds }}s countdown</span></summary>
   <div class="card-body">
-    <form method="post" action="/boot-menu/settings" class="form">
+    <form method="post" action="/boot-menu/settings">
       {% if selected %}<input type="hidden" name="folder" value="{{ selected.id }}">{% endif %}
-      <label>Menu title <input name="title" value="{{ settings.title }}" required></label>
-      <label>Continue to next device <input name="continue_label" value="{{ settings.continue_label }}" required></label>
-      <label>Unknown / disabled timeout (seconds)
-        <input name="unknown_timeout_seconds" type="number" min="0" max="300" value="{{ settings.unknown_timeout_seconds }}">
-      </label>
-      <p class="meta">0 continues immediately. This timeout is not an OS-install menu — unknown and disabled hosts never see folders.</p>
-      <label>Configured-machine menu countdown (seconds)
-        <input name="menu_timeout_seconds" type="number" min="0" max="300" value="{{ settings.menu_timeout_seconds }}">
-      </label>
-      <p class="meta">0 waits until a key is pressed. The default item is continue-to-disk unless the operator opens a folder.</p>
-      <div class="btn-row">
+      <div class="form-grid">
+        <label><span class="label-row"><span class="label-text">Menu title</span></span><input name="title" value="{{ settings.title }}" required></label>
+        <label><span class="label-row"><span class="label-text">Continue to next device</span></span><input name="continue_label" value="{{ settings.continue_label }}" required></label>
+        <div class="field">
+          <label><span class="label-row"><span class="label-text">Unknown / disabled timeout</span><span class="key-hint">seconds</span></span>
+            <input name="unknown_timeout_seconds" type="number" min="0" max="300" value="{{ settings.unknown_timeout_seconds }}">
+          </label>
+          <p class="field-help">0 continues immediately. This timeout is not an OS-install menu — unknown and disabled hosts never see folders.</p>
+        </div>
+        <div class="field">
+          <label><span class="label-row"><span class="label-text">Configured-machine menu countdown</span><span class="key-hint">seconds</span></span>
+            <input name="menu_timeout_seconds" type="number" min="0" max="300" value="{{ settings.menu_timeout_seconds }}">
+          </label>
+          <p class="field-help">0 waits until a key is pressed. The default item is continue-to-disk unless the operator opens a folder.</p>
+        </div>
+      </div>
+      <div class="form-actions bleed">
         <button type="submit">Save menu settings</button>
       </div>
     </form>
@@ -41,7 +50,7 @@
 </details>
 
 <details class="card" {% if ipxe_open %}open{% endif %}>
-  <summary>iPXE build</summary>
+  <summary><span class="summary-title">iPXE build</span><span class="summary-meta">{% if ipxe_running %}<span class="dot dot-warn"></span>rebuilding{% elif ipxe_status == "failed" %}<span class="dot dot-warn"></span>failed{% elif ipxe_build.served == "custom" %}<span class="dot dot-on"></span>custom build{% else %}<span class="dot"></span>stock build{% endif %}</span></summary>
   <div class="card-body">
     {% if ipxe_running %}
     <script>setTimeout(function () { location.reload(); }, 3000);</script>
@@ -59,59 +68,76 @@
     {% else %}
     <p class="meta">Stock EFI defaults. A rebuild replaces <code>ipxe.efi</code> with the custom binary.</p>
     {% endif %}
-    <form method="post" action="/boot-menu/ipxe-build" class="form">
+    {% if stock_available %}
+    <form id="ipxe-stock" method="post" action="/boot-menu/ipxe-build">
+      {% if selected %}<input type="hidden" name="folder" value="{{ selected.id }}">{% endif %}
+      <input type="hidden" name="action" value="stock">
+    </form>
+    {% endif %}
+    <form method="post" action="/boot-menu/ipxe-build">
       {% if selected %}<input type="hidden" name="folder" value="{{ selected.id }}">{% endif %}
       <input type="hidden" name="action" value="rebuild">
-      <label class="check">
-        <input type="checkbox" name="usb_keyboard" value="1" {% if ipxe_build.usb_keyboard %}checked{% endif %}>
-        USB keyboard
-      </label>
-      <p class="meta">Off in the stock EFI build. Turn this on when the firmware keyboard stops working after iPXE loads, then rebuild.</p>
-      <label class="check">
-        <input type="checkbox" name="usb_block" value="1" {% if ipxe_build.usb_block %}checked{% endif %}>
-        USB block devices
-      </label>
-      <label class="check">
-        <input type="checkbox" name="hcd_ehci" value="1" {% if ipxe_build.hcd_ehci %}checked{% endif %}>
-        EHCI host controller
-      </label>
-      <label class="check">
-        <input type="checkbox" name="hcd_uhci" value="1" {% if ipxe_build.hcd_uhci %}checked{% endif %}>
-        UHCI host controller
-      </label>
-      <label class="check">
-        <input type="checkbox" name="hcd_xhci" value="1" {% if ipxe_build.hcd_xhci %}checked{% endif %}>
-        xHCI host controller
-      </label>
-      <p class="meta">Leave xHCI on for Intel NUC USB.</p>
-      <label class="check">
-        <input type="checkbox" name="hcd_usbio" value="1" {% if ipxe_build.hcd_usbio %}checked{% endif %}>
-        EFI USB I/O host controller
-      </label>
-      <p class="meta">Off. iPXE marks this pseudo-controller as very slow. It is not the keyboard fix.</p>
-      <div class="btn-row">
+      <h3 class="section-label">Build options</h3>
+      <div class="toggle-list">
+        <label class="toggle-row">
+          <span class="toggle-text">
+            <span class="label-text">USB keyboard</span>
+            <span class="field-help">Off in the stock EFI build. Turn this on when the firmware keyboard stops working after iPXE loads, then rebuild.</span>
+          </span>
+          <input type="checkbox" class="switch" name="usb_keyboard" value="1" {% if ipxe_build.usb_keyboard %}checked{% endif %}>
+        </label>
+        <label class="toggle-row">
+          <span class="toggle-text">
+            <span class="label-text">USB block devices</span>
+          </span>
+          <input type="checkbox" class="switch" name="usb_block" value="1" {% if ipxe_build.usb_block %}checked{% endif %}>
+        </label>
+        <label class="toggle-row">
+          <span class="toggle-text">
+            <span class="label-text">EHCI host controller</span>
+          </span>
+          <input type="checkbox" class="switch" name="hcd_ehci" value="1" {% if ipxe_build.hcd_ehci %}checked{% endif %}>
+        </label>
+        <label class="toggle-row">
+          <span class="toggle-text">
+            <span class="label-text">UHCI host controller</span>
+          </span>
+          <input type="checkbox" class="switch" name="hcd_uhci" value="1" {% if ipxe_build.hcd_uhci %}checked{% endif %}>
+        </label>
+        <label class="toggle-row">
+          <span class="toggle-text">
+            <span class="label-text">xHCI host controller</span>
+            <span class="field-help">Leave xHCI on for Intel NUC USB.</span>
+          </span>
+          <input type="checkbox" class="switch" name="hcd_xhci" value="1" {% if ipxe_build.hcd_xhci %}checked{% endif %}>
+        </label>
+        <label class="toggle-row">
+          <span class="toggle-text">
+            <span class="label-text">EFI USB I/O host controller</span>
+            <span class="field-help">Off. iPXE marks this pseudo-controller as very slow. It is not the keyboard fix.</span>
+          </span>
+          <input type="checkbox" class="switch" name="hcd_usbio" value="1" {% if ipxe_build.hcd_usbio %}checked{% endif %}>
+        </label>
+      </div>
+      <div class="form-actions bleed">
+        {% if stock_available %}
+        <div class="actions-start">
+          <button type="submit" form="ipxe-stock" class="btn-secondary" {% if ipxe_running %}disabled{% endif %}>Use stock</button>
+        </div>
+        {% endif %}
         <button type="submit" {% if ipxe_running %}disabled{% endif %}>Rebuild</button>
       </div>
     </form>
-    {% if stock_available %}
-    <form method="post" action="/boot-menu/ipxe-build" class="form">
-      {% if selected %}<input type="hidden" name="folder" value="{{ selected.id }}">{% endif %}
-      <input type="hidden" name="action" value="stock">
-      <div class="btn-row">
-        <button type="submit" class="btn-secondary" {% if ipxe_running %}disabled{% endif %}>Use stock</button>
-      </div>
-    </form>
-    {% endif %}
   </div>
 </details>
 
+<h2 class="section-label">Folders</h2>
 <div class="boot-menu-layout">
-  <aside class="card boot-menu-tree">
-    <h2>Folders</h2>
+  <aside class="card card-flush boot-menu-tree" aria-label="Folders">
     <ul class="boot-tree">
       {% for node in tree %}
       <li class="boot-tree-row" style="--depth: {{ node.depth }}">
-        <a href="/boot-menu?folder={{ node.folder.id }}" class="boot-tree-name{% if selected and selected.id == node.folder.id %} is-active{% endif %}">{{ node.folder.name }}</a>
+        <a href="/boot-menu?folder={{ node.folder.id }}" class="boot-tree-name{% if selected and selected.id == node.folder.id %} is-active{% endif %}"{% if selected and selected.id == node.folder.id %} aria-current="true"{% endif %}>{{ node.folder.name }}</a>
         <div class="boot-tree-actions">
           <form method="post" action="/boot-menu/folders/{{ node.folder.id }}/move">
             <input type="hidden" name="direction" value="up">
@@ -129,106 +155,130 @@
       </li>
       {% endfor %}
     </ul>
-    <form method="post" action="/boot-menu/folders" class="form compact-form">
-      <label>New folder
-        <input name="name" required placeholder="Folder name">
-      </label>
-      <label>Parent
-        <select name="parent_id">
-          <option value="">Root</option>
-          {% for fid, path in folder_options %}
-          <option value="{{ fid }}" {% if selected and selected.id == fid %}selected{% endif %}>{{ path }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <div class="btn-row">
-        <button type="submit">Add folder</button>
-      </div>
-    </form>
-  </aside>
-  <section class="card boot-menu-detail">
-    {% if selected %}
-    <div class="page-header-row">
-      <h2>{{ selected.name }}</h2>
-      <button type="button" class="btn-ghost btn-sm" data-open-dialog="edit-folder">Edit folder</button>
+    <div class="card-body">
+      <form method="post" action="/boot-menu/folders">
+        <h3 class="section-label">New folder</h3>
+        <label><span class="label-row"><span class="label-text">Name</span></span>
+          <input name="name" required placeholder="Folder name">
+        </label>
+        <label><span class="label-row"><span class="label-text">Parent</span></span>
+          <select name="parent_id">
+            <option value="">Root</option>
+            {% for fid, path in folder_options %}
+            <option value="{{ fid }}" {% if selected and selected.id == fid %}selected{% endif %}>{{ path }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div class="actions-row">
+          <button type="submit">Add folder</button>
+        </div>
+      </form>
     </div>
-    <h3>Images in this folder</h3>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Name</th><th>OS</th><th>Ready</th><th></th></tr></thead>
-        <tbody>
-          {% for row in image_rows %}
-          <tr>
-            <td><a href="/images/{{ row.image.id }}">{{ row.image.name }}</a></td>
-            <td>{{ row.image.os_family }}</td>
-            <td>{% if row.reason %}<span class="meta">{{ row.reason }}</span>{% else %}yes{% endif %}</td>
-            <td class="col-actions">
-              <form method="post" action="/boot-menu/images/{{ row.image.id }}/move" class="inline-form">
-                <input type="hidden" name="direction" value="up">
-                <button type="submit" class="btn-ghost btn-sm">Up</button>
-              </form>
-              <form method="post" action="/boot-menu/images/{{ row.image.id }}/move" class="inline-form">
-                <input type="hidden" name="direction" value="down">
-                <button type="submit" class="btn-ghost btn-sm">Down</button>
-              </form>
-              <button type="button" class="btn-ghost btn-sm" data-open-dialog="move-image"
-                      data-move-action="/boot-menu/images/{{ row.image.id }}/folder"
-                      data-move-folder="{{ selected.id }}"
-                      data-move-name="{{ row.image.name }}">Move folder</button>
-            </td>
-          </tr>
-          {% else %}
-          <tr><td colspan="4" class="empty">No images in this folder. Assign a folder when adding an image.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
+  </aside>
+  <section class="card card-flush boot-menu-detail">
+    {% if selected %}
+    <header class="card-head">
+      <div class="card-head-main">
+        <h2 class="card-title">{{ selected.name }}</h2>
+        <span class="count" title="Images in this folder">{{ image_rows|length }}</span>
+      </div>
+      <button type="button" class="btn-ghost btn-sm" data-open-dialog="edit-folder">Edit folder</button>
+    </header>
+    <div class="card-body">
+      <h3 class="section-label">Images in this folder</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>OS</th><th>Ready</th><th class="col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody>
+            {% for row in image_rows %}
+            <tr>
+              <td><a class="row-link" href="/images/{{ row.image.id }}">{{ row.image.name }}</a></td>
+              <td><span class="chip">{{ row.image.os_family }}</span></td>
+              <td>{% if row.reason %}<span class="meta">{{ row.reason }}</span>{% else %}<span class="badge badge-deployed">yes</span>{% endif %}</td>
+              <td class="col-actions">
+                <span class="row-actions">
+                  <form method="post" action="/boot-menu/images/{{ row.image.id }}/move" class="inline-form">
+                    <input type="hidden" name="direction" value="up">
+                    <button type="submit" class="icon-btn" aria-label="Move {{ row.image.name }} up" title="Up"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/></svg></button>
+                  </form>
+                  <form method="post" action="/boot-menu/images/{{ row.image.id }}/move" class="inline-form">
+                    <input type="hidden" name="direction" value="down">
+                    <button type="submit" class="icon-btn" aria-label="Move {{ row.image.name }} down" title="Down"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12l-1.41-1.41L13 16.17V4h-2v12.17l-5.58-5.59L4 12l8 8 8-8z"/></svg></button>
+                  </form>
+                  <button type="button" class="btn-ghost btn-sm" data-open-dialog="move-image"
+                          data-move-action="/boot-menu/images/{{ row.image.id }}/folder"
+                          data-move-folder="{{ selected.id }}"
+                          data-move-name="{{ row.image.name }}">Move folder</button>
+                </span>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="empty">No images in this folder. Assign a folder when adding an image.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
     {% else %}
-    <p class="empty">No folders yet. Add Windows, Linux, or Tools to start.</p>
+    <div class="card-body">
+      <p class="empty-state">No folders yet. Add Windows, Linux, or Tools to start.</p>
+    </div>
     {% endif %}
   </section>
 </div>
 
 {% if selected %}
-<dialog class="modal" id="edit-folder"{% if edit_open %} open{% endif %}>
-  <h2>Edit {{ selected.name }}</h2>
-  <p class="meta">Rename this folder, move it in the tree, or delete it when it is empty.</p>
-  {% if error and edit_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
-  <form id="folder-edit" method="post" action="/boot-menu/folders/{{ selected.id }}" class="form">
-    <label>Name <input name="name" value="{{ selected.name }}" required autocomplete="off"></label>
-    <label>Parent
-      <select name="parent_id">
-        <option value="" {% if not selected.parent_id %}selected{% endif %}>Root</option>
-        {% for fid, path in parent_options %}
-        <option value="{{ fid }}" {% if selected.parent_id == fid %}selected{% endif %}>{{ path }}</option>
-        {% endfor %}
-      </select>
-    </label>
-  </form>
-  <form id="folder-delete" method="post" action="/boot-menu/folders/{{ selected.id }}/delete" onsubmit="return confirm('Delete this folder? Nested folders and images must be empty.');"></form>
-  <div class="modal-actions">
-    <button type="button" class="btn-secondary" data-close-dialog>Cancel</button>
-    <button type="submit" form="folder-delete" class="btn-danger"{% if delete_blocked %} disabled title="{{ delete_blocked }}"{% endif %}>Delete folder</button>
-    <button type="submit" form="folder-edit">Save</button>
+<dialog class="modal" aria-labelledby="edit-folder-title" id="edit-folder"{% if edit_open %} open{% endif %}>
+  <header class="modal-head">
+    <h2 id="edit-folder-title">Edit {{ selected.name }}</h2>
+    {% include "_close_button.html" %}
+  </header>
+  <div class="modal-body">
+    <p class="modal-intro">Rename this folder, move it in the tree, or delete it when it is empty.</p>
+    {% if error and edit_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+    <form id="folder-edit" method="post" action="/boot-menu/folders/{{ selected.id }}" class="form-grid">
+      <label class="span"><span class="label-row"><span class="label-text">Name</span></span><input name="name" value="{{ selected.name }}" required autocomplete="off"></label>
+      <label class="span"><span class="label-row"><span class="label-text">Parent</span></span>
+        <select name="parent_id">
+          <option value="" {% if not selected.parent_id %}selected{% endif %}>Root</option>
+          {% for fid, path in parent_options %}
+          <option value="{{ fid }}" {% if selected.parent_id == fid %}selected{% endif %}>{{ path }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+    <form id="folder-delete" method="post" action="/boot-menu/folders/{{ selected.id }}/delete" onsubmit="return confirm('Delete this folder? Nested folders and images must be empty.');"></form>
   </div>
+  <footer class="modal-actions">
+    <div class="actions-start">
+      <button type="submit" form="folder-delete" class="btn-danger"{% if delete_blocked %} disabled title="{{ delete_blocked }}"{% endif %}>Delete folder</button>
+    </div>
+    <button type="button" class="btn-secondary" data-close-dialog>Cancel</button>
+    <button type="submit" form="folder-edit">Save</button>
+  </footer>
 </dialog>
 {% endif %}
 
-<dialog class="modal" id="move-image">
-  <form method="post" action="/boot-menu/images/0/folder" class="form">
-    <h2>Move to folder</h2>
-    <p class="meta">Move <strong data-move-image-name></strong> to another boot-menu folder.</p>
-    <label>Folder
-      <select name="folder_id" required>
-        {% for fid, path in folder_options %}
-        <option value="{{ fid }}">{{ path }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <div class="modal-actions">
+<dialog class="modal" aria-labelledby="move-image-title" id="move-image">
+  <form method="post" action="/boot-menu/images/0/folder">
+    <header class="modal-head">
+      <h2 id="move-image-title">Move to folder</h2>
+      {% include "_close_button.html" %}
+    </header>
+    <div class="modal-body">
+      <p class="modal-intro">Move <strong data-move-image-name></strong> to another boot-menu folder.</p>
+      <label><span class="label-row"><span class="label-text">Folder</span></span>
+        <select name="folder_id" required>
+          {% for fid, path in folder_options %}
+          <option value="{{ fid }}">{{ path }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <footer class="modal-actions">
       <button type="button" class="btn-secondary" data-close-dialog>Cancel</button>
       <button type="submit">Move</button>
-    </div>
+    </footer>
   </form>
 </dialog>
 {% endblock %}

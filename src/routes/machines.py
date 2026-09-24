@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlmodel import Session
 from starlette.status import HTTP_303_SEE_OTHER
 
 from ..auth import require_user
-from ..cloudinit.editor import apply_cloudinit_editor, cloud_config_view
+from ..cloudinit.editor import apply_cloudinit_editor, cloud_config_preview, cloud_config_view, safe_cloud_config_view
 from ..cloudinit.schema import NODES
 from ..db import get_db
 from ..dhcp_runtime import default_timezone
@@ -277,7 +277,7 @@ def _detail(request: Request, db: Session, machine, *, error=None, notice=None):
     cc_view = None
     cc_schema: list = []
     if family == OsFamily.linux and machine_seed.strip():
-        cc_view = cloud_config_view(machine_seed)
+        cc_view = safe_cloud_config_view(machine_seed)
         cc_schema = NODES
     return render(
         request,
@@ -409,35 +409,50 @@ def machines_create(
 
 
 _EDITOR_MAX_BYTES = 256 * 1024
+_NO_STORE = {"Cache-Control": "no-store"}
+
+
+def _editor_response(body: dict, status_code: int = 200) -> JSONResponse:
+    return JSONResponse(body, status_code=status_code, headers=_NO_STORE)
+
+
+def _editor_error(detail: str, *, node: str | None = None, path: str | None = None) -> JSONResponse:
+    body: dict = {"detail": detail}
+    if node:
+        body["node"] = node
+    if path:
+        body["path"] = path
+    return _editor_response(body, status_code=400)
 
 
 @router.post("/api/cloud-init/editor")
 async def cloudinit_editor_preview(request: Request, user: str = Depends(require_user)):
-    """Turn the open seed file into editor fields, or write those fields back into the file."""
+    """Turn the open seed file into editor fields, preview fields as YAML, or write them back into the file."""
     del user
     try:
         payload = await request.json()
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="Expected JSON") from exc
+    except Exception:
+        return _editor_error("Expected JSON")
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Expected a JSON object")
+        return _editor_error("Expected a JSON object")
     seed = payload.get("seed") if isinstance(payload.get("seed"), str) else ""
     if len(seed.encode("utf-8")) > _EDITOR_MAX_BYTES:
-        raise HTTPException(status_code=400, detail="Seed exceeds 256 KiB")
+        return _editor_error("Seed exceeds 256 KiB")
     action = str(payload.get("action") or "")
     try:
         if action == "view":
-            view = cloud_config_view(seed)
-            return {"doc": view["doc"], "extra_yaml": view["extra_yaml"], "mode": view["mode"]}
-        if action == "apply":
+            return _editor_response(cloud_config_view(seed))
+        if action in {"apply", "preview"}:
             cc_json = payload.get("cc_json") if isinstance(payload.get("cc_json"), str) else ""
             extra = payload.get("cc_extra_yaml") if isinstance(payload.get("cc_extra_yaml"), str) else ""
             if not cc_json.strip():
                 raise SeedError("Editor document is empty")
-            return {"seed": apply_cloudinit_editor(seed, cc_json, extra)}
+            if action == "preview":
+                return _editor_response(cloud_config_preview(seed, cc_json, extra))
+            return _editor_response({"seed": apply_cloudinit_editor(seed, cc_json, extra)})
     except SeedError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    raise HTTPException(status_code=400, detail="Unknown action")
+        return _editor_error(str(exc), node=getattr(exc, "node", None), path=getattr(exc, "path", None))
+    return _editor_error("Unknown action")
 
 
 @router.get("/machines/{machine_id}", response_class=HTMLResponse)
