@@ -97,6 +97,40 @@ def test_modeled_top_level_keys_are_real_schema_keys():
     assert "lock-passwd" not in MODELED_KEYS
 
 
+def test_installer_nodes_share_the_field_contract():
+    from src.cloudinit.installer_schema import INSTALLER_GROUP, INSTALLER_NODES
+    from src.seed_render import FORCE_REBOOT_CMD, QUIET_WIFI_CMD
+
+    declared = _frontend_field_types()
+    ids = [node["id"] for node in INSTALLER_NODES]
+    assert len(ids) == len(set(ids)) and all(node_id.startswith("ai_") for node_id in ids)
+    assert not set(ids) & {node["id"] for node in NODES}
+    top = [field["key"] for node in INSTALLER_NODES for field in node["fields"]]
+    assert len(top) == len(set(top)) and "user-data" not in top
+    for key in ("version", "early-commands", "locale", "network", "apt", "storage", "identity", "ssh", "late-commands"):
+        assert key in top
+    for node in INSTALLER_NODES:
+        assert node["group"] == INSTALLER_GROUP and node["doc_url"].startswith("https://")
+        for path, field in _walk(node["fields"]):
+            assert field["type"] in declared, path
+            if field["type"] == "enum":
+                assert field["choices"][0] == "", path
+            if field["type"] == "object":
+                assert field.get("object_fields") and field.get("preserve_extra") is True, path
+            if field["type"] == "row_list":
+                assert field.get("item_fields") and field.get("item_label"), path
+            if "help" in field:
+                assert len(field["help"]) <= 201, path
+    commands = {field["key"]: field for node in INSTALLER_NODES for field in node["fields"] if field.get("locked")}
+    assert set(commands) == {"early-commands", "late-commands", "error-commands"}
+    # Managed-command markers must match the commands seed_render injects.
+    early = {spec["label"]: spec for spec in commands["early-commands"]["managed_commands"]}
+    assert any(needle in QUIET_WIFI_CMD for needle in early["Wi-Fi quieting"]["match"])
+    late = {spec["label"]: spec for spec in commands["late-commands"]["managed_commands"]}
+    assert any(needle in FORCE_REBOOT_CMD for needle in late["Forced reboot"]["match"])
+    assert late["Phone-home"]["readded"] is False
+
+
 def test_nodes_are_grouped_in_display_order():
     groups: list[str] = []
     for node in NODES:

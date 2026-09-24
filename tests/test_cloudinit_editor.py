@@ -1162,3 +1162,223 @@ def test_user_data_splice_inserts_missing_block_and_falls_back_when_unsafe():
     out = apply_cloudinit_editor(flow, json.dumps({"hostname": "b"}), "")
     assert _loaded(out) == {"autoinstall": {"version": 1, "x": "q", "user-data": {"hostname": "b"}}}
     assert "autoinstall:\n" in out  # full dump, not a splice into the flow mapping
+
+
+# --------------------------------------------------------------------------- installer (autoinstall) section
+
+
+def _installer_apply(seed: str, installer_doc: dict, installer_extra: str = "") -> str:
+    view = cloud_config_view(seed)
+    return apply_cloudinit_editor(
+        seed, json.dumps(view["doc"]), view["extra_yaml"], json.dumps(installer_doc), installer_extra
+    )
+
+
+def _yaml_paths(value, prefix: str = ""):
+    """Every mapping key path in a parsed YAML value (list items share their parent's path)."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            yield path
+            yield from _yaml_paths(item, path)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _yaml_paths(item, prefix)
+
+
+def _state_paths(value, prefix: str = ""):
+    """Key paths the editor state models (block placeholders are leaves; __extra__ is excluded)."""
+    if isinstance(value, dict):
+        if set(value) == {"__pxe_block__"}:
+            return
+        for key, item in value.items():
+            if str(key).startswith("__"):
+                continue
+            path = f"{prefix}.{key}" if prefix else str(key)
+            yield path
+            yield from _state_paths(item, path)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _state_paths(item, prefix)
+
+
+def test_default_seed_every_key_has_a_form_card():
+    seed = _factory_seed()
+    view = cloud_config_view(seed)
+    assert view["mode"] == "autoinstall"
+    assert view["notices"] == []
+    assert view["extra_yaml"] == ""
+    assert view["installer_extra_yaml"] == ""
+    auto = _parsed_autoinstall(seed)
+    installer = {key: value for key, value in auto.items() if key != "user-data"}
+    assert list(view["installer_doc"]) == list(installer)
+    assert set(view["doc"]) == set(auto["user-data"])
+    # Nested keys too. Netplan ethernets become cards whose mapping key is the card's "id".
+    ethernets = installer["network"]["ethernets"]
+    network = {**installer["network"], "ethernets": [{"id": key, **value} for key, value in ethernets.items()]}
+    renamed = {**installer, "network": network}
+    assert set(_yaml_paths(renamed)) <= set(_state_paths(view["installer_doc"]))
+    assert set(_yaml_paths(auto["user-data"])) <= set(_state_paths(view["doc"]))
+    user = view["doc"]["users"][0]
+    assert {"name", "lock_passwd", "sudo", "shell", "ssh_authorized_keys"} <= set(user)
+    assert view["doc"]["chpasswd"]["expire"] is False
+    assert view["installer_nodes"][0]["id"] == "ai_version"
+
+
+def test_installer_view_model_placeholders_and_commands():
+    view = cloud_config_view(_factory_seed())
+    idoc = view["installer_doc"]
+    assert idoc["locale"] == "en_US.UTF-8"
+    assert idoc["source"]["id"] == "{{source_id}}"
+    assert idoc["identity"]["password"] == "{{password_hash}}"
+    assert idoc["ssh"]["authorized-keys"] == {"__pxe_block__": "ssh_keys"}
+    assert idoc["packages"] == {"__pxe_block__": "packages"}
+    assert [row["id"] for row in idoc["network"]["ethernets"]] == ["zz-all-en", "zz-all-eth"]
+    assert idoc["network"]["ethernets"][0]["match"] == {"name": "en*"}
+    assert idoc["apt"]["mirror-selection"]["primary"][0]["arches"] == ["amd64", "i386"]
+    assert idoc["storage"]["layout"] == {"name": "direct", "match": {"size": "largest"}}
+    early = idoc["early-commands"]
+    assert early[0].endswith("\n") and "phy80211" in early[0]
+    assert "{{imaging_url}}" in early[1]
+    assert "{{install_log_url}}" in idoc["error-commands"][0]
+    assert "{{phone_home_url}}" in idoc["late-commands"][0]
+    fields = {field["key"]: field for node in view["installer_nodes"] for field in node["fields"]}
+    for key in ("early-commands", "late-commands", "error-commands"):
+        assert fields[key]["type"] == "command_list" and fields[key]["locked"] is True
+        assert fields[key]["managed_commands"] and fields[key]["lock_warning"]
+
+
+def test_installer_cloud_config_seed_has_no_installer():
+    view = cloud_config_view("#cloud-config\nhostname: a\n")
+    assert view["installer_doc"] == {} and view["installer_extra_yaml"] == ""
+    assert "installer_nodes" not in view
+    with pytest.raises(EditorError):
+        apply_cloudinit_editor("#cloud-config\nhostname: a\n", "{}", "", json.dumps({"locale": "C"}), "")
+
+
+def test_installer_noop_is_byte_for_byte():
+    seed = _factory_seed()
+    assert _installer_apply(seed, cloud_config_view(seed)["installer_doc"]) == seed
+    crlf = seed.replace("\n", "\r\n")
+    assert _installer_apply(crlf, cloud_config_view(crlf)["installer_doc"]) == crlf
+
+
+def test_installer_edit_locale_and_storage_layout_rewrites_only_those_keys():
+    seed = _factory_seed()
+    idoc = cloud_config_view(seed)["installer_doc"]
+    idoc["locale"] = "de_DE.UTF-8"
+    idoc["storage"]["layout"]["name"] = "lvm"
+    out = _installer_apply(seed, idoc)
+    changed = [(a, b) for a, b in zip(seed.splitlines(), out.splitlines(), strict=True) if a != b]
+    assert changed == [("  locale: en_US.UTF-8", "  locale: de_DE.UTF-8"), ("      name: direct", "      name: lvm")]
+    auto = _parsed_autoinstall(out)
+    assert auto["storage"]["layout"] == {"name": "lvm", "match": {"size": "largest"}}
+    # Block scalars, placeholders and list placeholders survive untouched.
+    assert "  early-commands:\n    - |\n      sh -c 'for p in" in out
+    assert "    authorized-keys:\n      {{ssh_keys}}\n" in out
+    assert "  packages:\n    {{packages}}\n" in out
+
+
+def test_installer_edit_late_commands_keeps_block_scalars():
+    seed = _factory_seed()
+    idoc = cloud_config_view(seed)["installer_doc"]
+    idoc["late-commands"].insert(1, "echo one\necho two\n")
+    out = _installer_apply(seed, idoc)
+    auto = _parsed_autoinstall(out)
+    assert auto["late-commands"][1] == "echo one\necho two\n"
+    assert "    - |\n      echo one\n      echo two\n" in out
+    assert "__PXE_phone_home_url__" in auto["late-commands"][0]
+    assert "sysrq-trigger" in auto["late-commands"][2]
+    head = out.partition("  late-commands:")[0]
+    assert seed.startswith(head)
+    assert _installer_apply(out, cloud_config_view(out)["installer_doc"]) == out
+
+
+def test_installer_unmodeled_key_kept_with_notice():
+    seed = _factory_seed().replace("  shutdown: reboot\n", "  shutdown: reboot\n  zz-custom:\n    flag: true\n")
+    view = cloud_config_view(seed)
+    assert any("zz-custom" in note for note in view["notices"])
+    assert "zz-custom" not in view["installer_doc"]
+    assert "zz-custom:" in view["installer_extra_yaml"]
+    idoc = view["installer_doc"]
+    idoc["locale"] = "fr_FR.UTF-8"
+    out = _installer_apply(seed, idoc, view["installer_extra_yaml"])
+    auto = _parsed_autoinstall(out)
+    assert auto["zz-custom"] == {"flag": True}
+    assert auto["locale"] == "fr_FR.UTF-8"
+    out = _installer_apply(seed, cloud_config_view(seed)["installer_doc"], "zz-custom:\n  flag: false\n")
+    assert _parsed_autoinstall(out)["zz-custom"] == {"flag": False}
+    with pytest.raises(EditorError) as err:
+        _installer_apply(seed, cloud_config_view(seed)["installer_doc"], "locale: C.UTF-8\n")
+    assert err.value.path == "__installer_extra__"
+
+
+def test_installer_removing_a_section_drops_the_key():
+    seed = _factory_seed()
+    idoc = cloud_config_view(seed)["installer_doc"]
+    del idoc["updates"]
+    out = _installer_apply(seed, idoc)
+    assert "updates" not in _parsed_autoinstall(out)
+    assert "  shutdown: reboot\n  early-commands:" in out
+
+
+def test_installer_identity_password_literal_rejected():
+    seed = _factory_seed()
+    idoc = cloud_config_view(seed)["installer_doc"]
+    idoc["identity"]["password"] = "hunter2-literal"
+    with pytest.raises(EditorError) as err:
+        _installer_apply(seed, idoc)
+    assert err.value.node == "ai_identity"
+    assert err.value.path == "identity.password"
+    assert "hunter2-literal" not in str(err.value)
+    idoc["identity"]["password"] = "$6$rounds=5000$salt$hash"
+    with pytest.raises(EditorError):
+        _installer_apply(seed, idoc)  # placeholder-only, the rule seed_render applies on save
+    idoc["identity"]["password"] = "{{password}}"
+    assert _parsed_autoinstall(_installer_apply(seed, idoc))["identity"]["password"] == "__PXE_password__"
+
+
+def test_installer_literal_secrets_in_extra_and_commands_rejected():
+    seed = _factory_seed()
+    view = cloud_config_view(seed)
+    with pytest.raises(EditorError) as err:
+        _installer_apply(seed, view["installer_doc"], "active-directory:\n  password: s3cret-literal\n")
+    assert err.value.path == "__installer_extra__" and "s3cret-literal" not in str(err.value)
+    idoc = view["installer_doc"]
+    idoc["late-commands"].append("cat > /target/etc/x.conf <<END\npassword: s3cret-literal\nEND\n")
+    with pytest.raises(EditorError) as err:
+        _installer_apply(seed, idoc)
+    assert err.value.node == "ai_late_commands"
+    assert err.value.path == "late-commands[2]"
+    assert "s3cret-literal" not in str(err.value)
+
+
+def test_installer_api_and_old_payload(client):
+    login(client)
+    seed = _factory_seed()
+    view = client.post("/api/cloud-init/editor", json={"action": "view", "seed": seed}).json()
+    assert "early-commands" in view["installer_doc"]
+    old = client.post(
+        "/api/cloud-init/editor",
+        json={"action": "apply", "seed": seed, "cc_json": json.dumps(view["doc"]), "cc_extra_yaml": ""},
+    )
+    assert old.status_code == 200 and old.json()["seed"] == seed
+    idoc = view["installer_doc"]
+    idoc["locale"] = "en_GB.UTF-8"
+    body = {
+        "seed": seed,
+        "cc_json": json.dumps(view["doc"]),
+        "cc_extra_yaml": "",
+        "installer_json": json.dumps(idoc),
+        "installer_extra_yaml": "",
+    }
+    preview = client.post("/api/cloud-init/editor", json={"action": "preview", **body})
+    assert preview.status_code == 200
+    assert preview.json()["node_yaml"]["ai_locale"] == "locale: en_GB.UTF-8"
+    applied = client.post("/api/cloud-init/editor", json={"action": "apply", **body}).json()["seed"]
+    assert "  locale: en_GB.UTF-8\n" in applied and "late-commands:" in applied
+    idoc["identity"]["password"] = "LiteralPw-xyz"
+    bad = client.post("/api/cloud-init/editor", json={"action": "apply", **body, "installer_json": json.dumps(idoc)})
+    assert bad.status_code == 400
+    assert bad.json()["node"] == "ai_identity" and bad.json()["path"] == "identity.password"
+    assert "LiteralPw-xyz" not in bad.text
