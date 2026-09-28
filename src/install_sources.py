@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from .models import ExtractStatus, Image, OsFamily
+from .models import ExtractStatus, Image, Iso, OsFamily
 from .paths import UnsafePathError, resolve_under
 from .settings import get_settings
 
@@ -299,7 +299,7 @@ def apply_catalog(image: Image, items: list[InstallSource]) -> bool:
     return changed
 
 
-def _linux_tree(image: Image, root: Path) -> Path | None:
+def _linux_tree(image: Image | Iso, root: Path) -> Path | None:
     generation = (image.extract_generation or "").replace("\\", "/").strip()
     if generation.startswith("nfs/"):
         try:
@@ -309,7 +309,7 @@ def _linux_tree(image: Image, root: Path) -> Path | None:
     return None
 
 
-def _windows_wim(image: Image, root: Path) -> Path | None:
+def _windows_wim(image: Image | Iso, root: Path) -> Path | None:
     relative = (image.install_wim_path or "").replace("\\", "/").strip()
     if not relative:
         return None
@@ -319,7 +319,7 @@ def _windows_wim(image: Image, root: Path) -> Path | None:
         return None
 
 
-def discover_image_sources(image: Image, *, image_root: Path | None = None) -> list[InstallSource]:
+def discover_image_sources(image: Image | Iso, *, image_root: Path | None = None) -> list[InstallSource]:
     root = (image_root or get_settings().image_root).resolve()
     if image.os_family == OsFamily.linux.value:
         tree = _linux_tree(image, root)
@@ -334,3 +334,17 @@ def refresh_image_sources(image: Image, *, image_root: Path | None = None) -> bo
     if (image.extract_status or "") != ExtractStatus.ready.value:
         return False
     return apply_catalog(image, discover_image_sources(image, image_root=image_root))
+
+
+def refresh_iso_sources(iso: Iso, *, image_root: Path | None = None) -> bool:
+    """Store the extracted catalog on the ISO. Templates pick their own source from it."""
+    if (iso.extract_status or "") != ExtractStatus.ready.value:
+        return False
+    items = discover_image_sources(iso, image_root=image_root)
+    if not items:
+        return False
+    blob = catalog_json(items)
+    if (iso.source_options or "") == blob:
+        return False
+    iso.source_options = blob
+    return True

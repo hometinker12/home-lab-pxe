@@ -119,7 +119,12 @@ Installer progress: Linux autoinstall `early-commands` (and WinPE `startnet.cmd`
 
 ### 7.1 Image library
 
-Operator-imported artifacts under `PXE_IMAGE_ROOT` (not git). The console can **upload** kernel/initrd/`boot.wim`/`install.wim`/ISO files or register relative paths already on the volume, and **edit** existing image records (metadata, replacement uploads, and the image seed file). Linux image forms hide WIM fields; Windows forms hide kernel/initrd.
+Operator-imported artifacts under `PXE_IMAGE_ROOT` (not git). The Images page has two tabs (Templates first, then ISOs):
+
+- **ISOs** hold the shared boot media: the uploaded ISO (`isos/{id}/source.iso`, kept after extract), extra cmdline, kernel/initrd paths, and Windows `boot.wim`/`install.wim` paths, plus the extract status and install-source catalog. The console can upload files or register relative paths already on the volume. Linux ISO forms hide WIM fields; Windows forms hide kernel/initrd.
+- **Templates** (`Image` rows, which is what machines and the boot menu reference) point at one ISO and own the name, boot-menu folder, install source (`source_id` / `wim_index`), and guest-init seed. Several templates can share one ISO and its single extract. Tool templates have no ISO and keep their own kernel/initrd or sanboot ISO.
+
+Linked templates mirror the ISO's media columns whenever the ISO changes, so boot payloads and install-attempt pinning read them from the template. On first start, each legacy Linux/Windows image became an ISO with the same id plus a linked template, so `nfs/{id}` and `smb/{id}` paths stay valid.
 
 A registered ISO is saved immediately. A dedicated extractor process unpacks Ubuntu live-server `casper/` + `.disk/` + `dists/` + `pool/` onto a read-only NFS tree, or a full Windows Server media tree onto SMB. Image status is `idle | queued | extracting | ready | failed`. Managed Ubuntu installs use kernel/initrd plus `netboot=nfs nfsroot=host:/export/{id}/{rev}` (one Ganesha Path per extract directory; rpcbind on TCP/UDP 111) when casper squashfs is present; HTTP `iso-url=` / `url=` remains the fallback. Subiquity autoinstall includes locale, keyboard, storage, source, and apt so the guest does not prompt. Managed Windows installs boot WinPE via `wimboot` and run Setup from an authenticated read-only SMB share. ISO-only `sanboot` remains the fallback when there is no kernel/WIM pair and extraction did not fail.
 
@@ -129,7 +134,7 @@ Each Linux image has a cloud-init **user-data** file; each Windows image has **u
 - Windows Server install WIM + WinPE `boot.wim` (first Windows target: Server 2022 or 2025)
 - Later: Debian, generic cloud images, custom squashfs
 
-Each image record: name, `os_family`, architecture (`x86_64` / `aarch64`), kernel/initrd or WIM paths, cmdline/unattend template, guest-init template.
+Each ISO record: name, `os_family`, architecture (`x86_64` / `aarch64`), ISO path, kernel/initrd or WIM paths, extra cmdline, extract state, and install-source catalog. Each template record: name, linked ISO, boot-menu folder, install source, and guest-init seed.
 
 ### 7.2 Linux — cloud-init
 
@@ -200,7 +205,7 @@ Both **username and password** are Fernet-encrypted at rest. Optional lab-wide d
 - **Machines:** last seen, MAC, UUID, IP, state, OS family, assigned image; actions Deploy, Stage reimage, Mark deployed, Disable. Add machine is a popup.
 - **Boot menu:** nested iPXE folders, timeouts, image placement and reorder; edit folder can reparent (Root listed first)
 - **New / pending** highlight so unknown hardware is obvious
-- **Images:** import metadata + paths; Linux vs Windows vs tool; add is a popup; edit is disabled while ISO extract is running; after extract, pick **Install source** (Ubuntu YAML IDs or Windows WIM editions)
+- **Images:** two tabs, Templates first. **ISOs** hold uploaded media, cmdline, and kernel/initrd or WIM paths; ISO edit is disabled while extract is running. **Templates** pick an ISO, folder, **Install source** (Ubuntu YAML IDs or Windows WIM editions, after extract), and guest-init; many templates can share one ISO. Tool templates have no ISO. Both adds are popups
 - **Machine detail:** hostname and guest-init (IANA timezone dropdown, packages, SSH keys, cloud-init or unattend) share one form; Deploy saves then starts the install. Local account username + password rotate, staged vs applied, recent boot events
 - **Settings:** Imaging default local/root account first (encrypted Linux root and Windows Administrator), then Machines (timeout, timezone), HTTPS certificate, Windows SMB share password rotate, PXE/DHCP/TFTP
 - **Activity log:** who deployed what, redacted

@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- The Images page has two tabs, **Templates** (shown first) and **ISOs**, each with its count. `/images?tab=isos` opens the ISOs tab. An ISO is uploaded and extracted once, and several templates can share it. For example, one Ubuntu ISO can back a "server" and a "minimal" template, or one Windows Server ISO can back Standard Core and Datacenter templates.
+- An ISO owns the shared boot media: the ISO file, extra cmdline, kernel and initrd paths, and Windows `boot.wim` / `install.wim` paths. These are edited on the ISO page (`/images/isos/{id}`) and apply to every template that uses the ISO on its next PXE boot. The ISO page lists the templates using it.
+- A template owns the name, boot-menu folder, install source, and guest-init seed (cloud-init user-data or unattend.xml). **Add template** picks an existing ISO. Tool entries still pick **No ISO** and keep their own kernel/initrd, boot ISO, and cmdline.
+- `GET /api/isos` lists ISOs with extract status and template count. `GET /api/images` now includes `iso_id`, `iso_name`, and `iso_extract_status`.
+- Files has an **ISO uploads** favorite for the new `isos/` folder on the Images volume.
+
+### Changed
+
+- Uploaded ISOs now stay on disk after a successful NFS or SMB extract, so more templates can use them and **Retry extract** works without a re-upload. New uploads are stored at `isos/{id}/source.iso`.
+- On first start, each existing Linux or Windows image becomes an ISO with the same id plus a template linked to it. Existing `nfs/{id}` and `smb/{id}` extracts and in-progress installs keep working.
+- A template's name, folder, and guest-init can be saved while its ISO is still extracting. Install source becomes available once extraction finishes. ISO edits and deletes stay disabled during extraction.
+- Deleting a template removes only that template and its seed. An ISO cannot be deleted while any template uses it.
+- The Boot menu page has two tabs, **Folders** (shown first, with its folder count) and **Menu settings** (timeouts, labels, and the iPXE build). Saving menu settings or starting an iPXE rebuild returns to the Menu settings tab.
+- The Settings page has one tab per section: **Accounts**, **Machines**, **Network boot**, **Security**, and **Installation media**. A tab that needs attention shows an orange count. `/settings?section=…` links open the matching tab, and each save returns to the tab it came from.
+- Console CSS and JavaScript URLs carry a content hash, so a rebuilt image no longer serves stale styles or scripts from the browser cache.
+
 ## [0.3.8] - 2026-09-24
 
 ### Added

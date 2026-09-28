@@ -23,10 +23,10 @@ def test_tftp_http_boot_chain_when_files_missing(client, tmp_path):
 
 def test_console_flow_create_image_and_deploy(client):
     login(client)
-    created = client.post(
-        "/images",
+    iso = client.post(
+        "/images/isos",
         data={
-            "name": "ubuntu-console",
+            "name": "ubuntu-media",
             "os_family": "linux",
             "arch": "x86_64",
             "kernel_path": "ubuntu/vmlinuz",
@@ -34,7 +34,15 @@ def test_console_flow_create_image_and_deploy(client):
         },
         follow_redirects=False,
     )
+    assert iso.status_code in {302, 303}
+    iso_id = client.get("/api/isos").json()[0]["id"]
+    created = client.post(
+        "/images",
+        data={"name": "ubuntu-console", "iso_id": str(iso_id)},
+        follow_redirects=False,
+    )
     assert created.status_code in {302, 303}
+    assert client.get("/api/images").json()[0]["kernel_path"] == "ubuntu/vmlinuz"
     client.get("/ipxe/aa-bb-cc-dd-ee-01")
     machines = client.get("/api/machines").json()
     machine_id = machines[0]["id"]

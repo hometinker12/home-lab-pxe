@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}{{ iso.name }} — ISOs{% endblock %}
+{% block body %}
+<p class="back"><a href="/images?tab=isos">← Images</a></p>
+<header class="page-header"{% if extract_busy %} data-extract-busy="{{ iso.id }}" data-extract-api="/api/isos"{% endif %}>
+  <div class="page-header-row">
+    <div class="page-title">
+      <h1>Edit ISO {{ iso.name }}</h1>
+      {% if iso.extract_status == 'queued' %}<span class="badge badge-pending">queued</span>
+      {% elif iso.extract_status == 'extracting' %}<span class="badge badge-deploying">extracting</span>
+      {% elif iso.extract_status == 'ready' %}<span class="badge badge-deployed">ready</span>
+      {% elif iso.extract_status == 'failed' %}<span class="badge badge-disabled">failed</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="page-meta">
+    <span class="chip">{{ iso.os_family }}</span>
+    <span class="chip">{{ iso.arch }}</span>
+    <span class="chip"><span class="chip-text">extract</span> {{ iso.extract_status or 'idle' }}</span>
+    {% if iso.size_bytes %}<span class="chip">{{ iso.size_bytes|filesizeformat(true) }}</span>{% endif %}
+  </div>
+</header>
+{% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+{% if extract_busy %}<p class="alert alert-warn" role="status">Extraction is still running. Edit is disabled until it finishes.</p>{% endif %}
+{% if iso.extract_status == 'failed' and iso.extract_error %}<p class="alert alert-error" role="alert">{{ iso.extract_error }}</p>{% endif %}
+<form method="post" action="/images/isos/{{ iso.id }}" enctype="multipart/form-data" class="image-form">
+  <input type="hidden" name="os_family" value="{{ iso.os_family }}">
+  <fieldset class="plain" {% if extract_busy %}disabled{% endif %}>
+  <section class="card card-flush">
+    <header class="card-head">
+      <div class="card-head-main"><h2 class="card-title">General</h2></div>
+    </header>
+    <div class="card-body">
+      <div class="form-grid">
+        <label><span class="label-row"><span class="label-text">Name</span></span><input name="name" value="{{ iso.name }}" required></label>
+        <label><span class="label-row"><span class="label-text">OS</span><span class="key-hint">os_family</span></span><input value="{{ iso.os_family }}" disabled aria-label="OS"></label>
+        <label><span class="label-row"><span class="label-text">Arch</span></span><input name="arch" value="{{ iso.arch }}"></label>
+      </div>
+    </div>
+  </section>
+
+  <section class="card card-flush">
+    <header class="card-head">
+      <div class="card-head-main"><h2 class="card-title">Boot media</h2></div>
+      <p class="card-sub">Shared by every template that uses this ISO; changes apply on each template's next PXE boot. Choosing a new ISO file re-runs extraction. Ubuntu live-server extraction fills kernel/initrd and publishes casper media over NFS unless you set custom kernel paths. Windows extraction publishes Setup media over authenticated SMB. The ISO file stays on disk after extraction.</p>
+    </header>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="path-file-field field span">
+          <span class="label-row"><span class="label-text">ISO path</span><span class="key-hint">.iso, .img</span></span>
+          <div class="path-file-row">
+            <input type="text" value="{{ iso.iso_path }}" disabled placeholder="No ISO on disk" data-iso-path-display aria-label="Current ISO path" title="{{ iso.iso_path }}">
+            <input type="hidden" name="iso_path" value="{{ iso.iso_path }}">
+            <label class="btn btn-secondary path-file-choose">Choose file
+              <input type="file" name="iso_file" accept=".iso,.img" class="path-file-input">
+            </label>
+          </div>
+        </div>
+        {% if iso.os_family == 'windows' %}
+        <label><span class="label-row"><span class="label-text">boot.wim path</span></span><input name="boot_wim_path" value="{{ iso.boot_wim_path }}"></label>
+        <label><span class="label-row"><span class="label-text">Replace boot.wim</span></span><input type="file" name="boot_wim_file"></label>
+        <label><span class="label-row"><span class="label-text">install.wim path</span></span><input name="install_wim_path" value="{{ iso.install_wim_path }}"></label>
+        <label><span class="label-row"><span class="label-text">Replace install.wim</span></span><input type="file" name="install_wim_file"></label>
+        {% endif %}
+        <label class="span"><span class="label-row"><span class="label-text">Extra cmdline</span></span><input name="cmdline" value="{{ iso.cmdline }}"></label>
+      </div>
+      {% if iso.os_family == 'linux' %}
+      <details class="advanced-settings disclosure">
+        <summary>Advanced Settings</summary>
+        <div class="advanced-settings-body form-grid">
+          <label><span class="label-row"><span class="label-text">Kernel path</span></span><input name="kernel_path" value="{{ iso.kernel_path }}"></label>
+          <label><span class="label-row"><span class="label-text">Replace kernel</span></span><input type="file" name="kernel_file"></label>
+          <label><span class="label-row"><span class="label-text">Initrd path</span></span><input name="initrd_path" value="{{ iso.initrd_path }}"></label>
+          <label><span class="label-row"><span class="label-text">Replace initrd</span></span><input type="file" name="initrd_file"></label>
+        </div>
+      </details>
+      {% endif %}
+    </div>
+  </section>
+  <div class="form-actions is-sticky page-bar">
+    <button type="submit">Save ISO</button>
+  </div>
+  </fieldset>
+</form>
+
+<section class="card card-flush">
+  <header class="card-head">
+    <div class="card-head-main"><h2 class="card-title">Templates using this ISO</h2></div>
+  </header>
+  <div class="card-body">
+    {% if templates_using %}
+    <ul class="event-list" data-iso-templates>
+      {% for img in templates_using %}
+      <li><a href="/images/{{ img.id }}">{{ img.name }}</a>{% if img.source_id %} <span class="meta">{{ img.source_id }}</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="meta">No templates use this ISO yet. Add one from the Templates section on the Images page.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="card card-flush">
+  <header class="card-head">
+    <div class="card-head-main"><h2 class="card-title">Maintenance</h2></div>
+  </header>
+  <div class="card-body">
+    <div class="btn-row">
+      <form method="post" action="/images/isos/{{ iso.id }}/extract"><button type="submit" class="btn-secondary" {% if extract_busy or not iso.iso_path %}disabled{% endif %}>Retry extract</button></form>
+      <form method="post" action="/images/isos/{{ iso.id }}/delete" class="push-end" onsubmit="return confirm('Delete this ISO and its extracted media?');">
+        <button type="submit" class="btn-danger" {% if extract_busy or templates_using %}disabled title="{% if templates_using %}Delete the templates that use this ISO first{% else %}Wait until extraction finishes{% endif %}"{% endif %}>Delete ISO</button>
+      </form>
+    </div>
+  </div>
+</section>
+{% endblock %}

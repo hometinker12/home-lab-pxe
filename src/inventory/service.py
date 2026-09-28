@@ -17,6 +17,7 @@ from ..models import (
     ExtractStatus,
     Image,
     InstallAttempt,
+    Iso,
     LocalAccount,
     Machine,
     MachineState,
@@ -714,6 +715,7 @@ def create_image(
     wim_index: int = 1,
     source_id: str = "",
     folder_id: int | None = None,
+    iso: Iso | None = None,
     actor: str,
 ) -> Image:
     trimmed = name.strip()
@@ -721,6 +723,8 @@ def create_image(
         raise ValueError("Image name is required")
     if find_image_by_name(db, trimmed) is not None:
         raise ValueError("An image with that name already exists")
+    if iso is not None:
+        os_family = OsFamily(iso.os_family)
     image = Image(
         name=trimmed,
         os_family=os_family.value,
@@ -734,6 +738,10 @@ def create_image(
         wim_index=max(1, int(wim_index or 1)),
         source_id=(source_id or "").strip(),
     )
+    if iso is not None:
+        from .isos import sync_template
+
+        sync_template(image, iso)
     db.add(image)
     db.flush()
     from .boot_menu import place_new_image
@@ -761,6 +769,7 @@ def update_image(
     wim_index: int | None = None,
     source_id: str | None = None,
     folder_id: int | None = None,
+    iso: Iso | None = None,
     actor: str,
 ) -> Image:
     new_name = name.strip()
@@ -769,21 +778,30 @@ def update_image(
     clash = find_image_by_name(db, new_name)
     if clash is not None and clash.id != image.id:
         raise ValueError("An image with that name already exists")
+    linked = iso if iso is not None else (db.get(Iso, image.iso_id) if image.iso_id else None)
+    if iso is not None and image.iso_id and iso.os_family != image.os_family:
+        raise ValueError("A template can only switch to an ISO of the same OS")
     image.name = new_name
-    image.os_family = os_family.value
-    image.arch = arch.strip() or "x86_64"
-    if kernel_path is not None:
-        image.kernel_path = kernel_path.strip()
-    if initrd_path is not None:
-        image.initrd_path = initrd_path.strip()
-    if boot_wim_path is not None:
-        image.boot_wim_path = boot_wim_path.strip()
-    if install_wim_path is not None:
-        image.install_wim_path = install_wim_path.strip()
-    if iso_path is not None:
-        image.iso_path = iso_path.strip()
-    if cmdline is not None:
-        image.cmdline = cmdline.strip()
+    if linked is not None:
+        from .isos import sync_template
+
+        sync_template(image, linked)
+        os_family = OsFamily(linked.os_family)
+    else:
+        image.os_family = os_family.value
+        image.arch = arch.strip() or "x86_64"
+        if kernel_path is not None:
+            image.kernel_path = kernel_path.strip()
+        if initrd_path is not None:
+            image.initrd_path = initrd_path.strip()
+        if boot_wim_path is not None:
+            image.boot_wim_path = boot_wim_path.strip()
+        if install_wim_path is not None:
+            image.install_wim_path = install_wim_path.strip()
+        if iso_path is not None:
+            image.iso_path = iso_path.strip()
+        if cmdline is not None:
+            image.cmdline = cmdline.strip()
     if wim_index is not None:
         image.wim_index = max(1, int(wim_index))
     if source_id is not None:

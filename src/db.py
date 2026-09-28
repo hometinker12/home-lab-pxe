@@ -123,6 +123,66 @@ def _dedupe_local_accounts(conn) -> None:
             conn.execute(text("DELETE FROM localaccount WHERE id = :id"), {"id": row_id})
 
 
+_ISO_MEDIA_COLUMNS = (
+    "arch",
+    "iso_path",
+    "cmdline",
+    "kernel_path",
+    "initrd_path",
+    "boot_wim_path",
+    "install_wim_path",
+    "extract_status",
+    "extract_error",
+    "extract_revision",
+    "extract_generation",
+    "source_options",
+)
+
+
+def _split_images_into_isos(conn) -> None:
+    """Give each legacy Linux/Windows image an Iso row with the same id so nfs/{id} and smb/{id} stay valid."""
+    from .image_store import file_size
+
+    columns = ", ".join(_ISO_MEDIA_COLUMNS)
+    rows = conn.execute(
+        text(
+            f"SELECT id, name, os_family, {columns} FROM image "
+            "WHERE iso_id IS NULL AND os_family IN ('linux', 'windows') AND ("
+            "COALESCE(iso_path, '') != '' OR COALESCE(extract_generation, '') != '' "
+            "OR COALESCE(kernel_path, '') != '' OR COALESCE(boot_wim_path, '') != '' "
+            "OR COALESCE(extract_status, 'idle') != 'idle')"
+        )
+    ).fetchall()
+    for row in rows:
+        data = dict(row._mapping)
+        image_id = int(data.pop("id"))
+        taken_id = conn.execute(text("SELECT 1 FROM iso WHERE id = :id"), {"id": image_id}).fetchone()
+        iso_id = image_id
+        if taken_id is not None:
+            iso_id = int(conn.execute(text("SELECT COALESCE(MAX(id), 0) + 1 FROM iso")).scalar())
+        name = str(data.pop("name") or f"iso-{image_id}")
+        if conn.execute(text("SELECT 1 FROM iso WHERE name = :name"), {"name": name}).fetchone() is not None:
+            name = f"{name} ({iso_id})"
+        params = {key: data.get(key) for key in _ISO_MEDIA_COLUMNS}
+        params.update(
+            id=iso_id,
+            name=name,
+            os_family=data.get("os_family"),
+            size_bytes=file_size(str(params.get("iso_path") or "")),
+        )
+        conn.execute(
+            text(
+                f"INSERT INTO iso (id, name, os_family, size_bytes, created_at, {columns}) "
+                "VALUES (:id, :name, :os_family, :size_bytes, CURRENT_TIMESTAMP, "
+                + ", ".join(f":{key}" for key in _ISO_MEDIA_COLUMNS)
+                + ")"
+            ),
+            params,
+        )
+        conn.execute(text("UPDATE image SET iso_id = :iso WHERE id = :id"), {"iso": iso_id, "id": image_id})
+        LOGGER.info("migrated image_id=%s onto iso_id=%s", image_id, iso_id)
+
+
 def _migrate_schema() -> None:
     engine = get_engine()
     with engine.begin() as conn:
@@ -138,6 +198,10 @@ def _migrate_schema() -> None:
             _add_column_if_missing(conn, "image", "source_options", "source_options VARCHAR DEFAULT ''")
             _add_column_if_missing(conn, "image", "folder_id", "folder_id INTEGER")
             _add_column_if_missing(conn, "image", "sort_order", "sort_order INTEGER DEFAULT 0")
+            _add_column_if_missing(conn, "image", "iso_id", "iso_id INTEGER REFERENCES iso(id)")
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_image_iso_id ON image(iso_id)"))
+            if "iso" in tables:
+                _split_images_into_isos(conn)
         if "installattempt" in tables:
             _add_column_if_missing(conn, "installattempt", "source_id", "source_id VARCHAR DEFAULT ''")
         if "dhcpruntime" in tables:

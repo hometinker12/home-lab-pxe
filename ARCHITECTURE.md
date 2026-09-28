@@ -259,7 +259,8 @@ flowchart TB
   Detail --> Deploy["POST deploy"]
   Detail --> Stage["POST stage reimage"]
   Detail --> Creds["POST rotate local account"]
-  Images --> Import["register image paths"]
+  Images --> IsoPage["/images/isos/{id}  upload + extract once"]
+  Images --> Template["/images/{id}  template: ISO, folder, source, seed"]
   Settings --> Defaults["lab-wide root / Administrator"]
 ```
 
@@ -335,8 +336,18 @@ Password fields never round-trip. After save the UI shows **set** vs **not set**
 ```mermaid
 flowchart LR
   subgraph images["Images"]
-    Limg["ubuntu-24.04   linux    x86_64   ISO extract + source.id"]
-    Wimg["ws2022         windows  x86_64   WIM edition + wim_index"]
+    subgraph isos["ISOs"]
+      Liso["ubuntu-24.04.iso   linux    extract once  cmdline  kernel/initrd"]
+      Wiso["ws2022.iso         windows  extract once  boot.wim/install.wim"]
+    end
+    subgraph tpls["Templates"]
+      Lsrv["ubuntu-server    folder  source.id  user-data"]
+      Lmin["ubuntu-minimal   folder  source.id  user-data"]
+      Wdc["ws2022-dc         folder  WIM edition  unattend.xml"]
+    end
+    Liso --> Lsrv
+    Liso --> Lmin
+    Wiso --> Wdc
   end
   subgraph files["Files"]
     Browser["TFTP / Images / Data volume browser"]

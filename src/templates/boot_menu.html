@@ -20,7 +20,21 @@
 </header>
 {% if error and not edit_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 
-<h2 class="section-label">Menu settings</h2>
+{% set folder_query = "folder=" ~ selected.id if selected else "" %}
+<div class="page-tabs-bar" data-page-tabs data-tab-default="folders" data-tab-clear="ipxe">
+  <div class="page-tabs" role="tablist" aria-label="Boot menu">
+    <a class="page-tab" role="tab" id="folders-tab" href="/boot-menu{% if folder_query %}?{{ folder_query }}{% endif %}" data-tab="folders" aria-controls="folders-panel"
+       aria-selected="{{ 'true' if active_tab == 'folders' else 'false' }}"{% if active_tab != 'folders' %} tabindex="-1"{% endif %}>
+      Folders <span class="count" title="{{ tree|length }} folders">{{ tree|length }}</span>
+    </a>
+    <a class="page-tab" role="tab" id="settings-tab" href="/boot-menu?{% if folder_query %}{{ folder_query }}&amp;{% endif %}tab=settings" data-tab="settings" aria-controls="settings-panel"
+       aria-selected="{{ 'true' if active_tab == 'settings' else 'false' }}"{% if active_tab != 'settings' %} tabindex="-1"{% endif %}>
+      Menu settings
+    </a>
+  </div>
+</div>
+
+<section class="page-tab-panel" role="tabpanel" id="settings-panel" aria-labelledby="settings-tab" data-tab-panel="settings"{% if active_tab != 'settings' %} hidden{% endif %}>
 <details class="card" {% if error and not edit_open %}open{% endif %}>
   <summary><span class="summary-title">Timeouts and labels</span><span class="summary-meta">{{ settings.menu_timeout_seconds }}s countdown</span></summary>
   <div class="card-body">
@@ -130,8 +144,9 @@
     </form>
   </div>
 </details>
+</section>
 
-<h2 class="section-label">Folders</h2>
+<section class="page-tab-panel" role="tabpanel" id="folders-panel" aria-labelledby="folders-tab" data-tab-panel="folders"{% if active_tab != 'folders' %} hidden{% endif %}>
 <div class="boot-menu-layout">
   <aside class="card card-flush boot-menu-tree" aria-label="Folders">
     <ul class="boot-tree">
@@ -226,6 +241,7 @@
     {% endif %}
   </section>
 </div>
+</section>
 
 {% if selected %}
 <dialog class="modal" aria-labelledby="edit-folder-title" id="edit-folder"{% if edit_open %} open{% endif %}>
