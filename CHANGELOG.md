@@ -19,6 +19,7 @@
 - The Boot menu page has two tabs, **Folders** (shown first, with its folder count) and **Menu settings** (timeouts, labels, and the iPXE build). Saving menu settings or starting an iPXE rebuild returns to the Menu settings tab.
 - The Settings page has one tab per section: **Accounts**, **Machines**, **Network boot**, **Security**, and **Installation media**. A tab that needs attention shows an orange count. `/settings?section=…` links open the matching tab, and each save returns to the tab it came from.
 - Console CSS and JavaScript URLs carry a content hash, so a rebuilt image no longer serves stale styles or scripts from the browser cache.
+- Linux guest-init has **Reset to default** and **Remove autoinstall** beside the editor. Reset replaces the seed with the factory starter and saves it. Remove autoinstall keeps the cloud-config under `user-data` and moves early and late commands that can run on the installed system into `runcmd`. Installer-only commands (Wi-Fi quieting, the confirm helper, the failure-log upload, the forced reboot, and the UEFI boot-order helper) are left out. That change is not stored until Save.
 
 ## [0.3.8] - 2026-09-24
 

@@ -565,6 +565,45 @@
     }
   }
 
+  document.querySelectorAll("[data-strip-autoinstall]").forEach((btn) => {
+    const area = btn.closest("label")?.querySelector("textarea");
+    if (!area) {
+      return;
+    }
+    const sync = () => {
+      btn.hidden = !/^autoinstall:/m.test(area.value);
+    };
+    sync();
+    area.addEventListener("input", sync);
+    btn.addEventListener("click", async () => {
+      const ok = window.confirm(
+        "Remove the Ubuntu installer section? The cloud-config under user-data stays, and early and late commands that can run on the installed system move into runcmd. Wi-Fi quieting, the confirm helper, the failure-log upload, the forced reboot, and the UEFI boot-order helper are left out. Nothing is saved until you click Save.",
+      );
+      if (!ok) {
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const body = new FormData();
+        body.set("user_data", area.value);
+        const response = await fetch("/api/seeds/strip-autoinstall", { method: "POST", body });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const detail = payload && payload.detail;
+          window.alert(typeof detail === "string" ? detail : "Could not remove autoinstall");
+          return;
+        }
+        area.value = payload.user_data || "";
+        area.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch (err) {
+        window.alert("Could not remove autoinstall");
+      } finally {
+        btn.disabled = false;
+        sync();
+      }
+    });
+  });
+
   function wireDialogs() {
     document.querySelectorAll("[data-open-dialog]").forEach((btn) => {
       btn.addEventListener("click", (event) => {

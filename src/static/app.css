@@ -721,6 +721,7 @@ label > .label-row + textarea { margin-top: 0; }
   margin-left: auto;
   align-self: center;
 }
+.label-actions > [hidden] { display: none; }
 .field-help,
 .cc-help {
   margin: 0.3rem 0 0;

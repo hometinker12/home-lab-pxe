@@ -205,6 +205,9 @@ def test_iso_with_kernel_paths_and_shared_template(client):
     assert "ubuntu/vmlinuz" in detail.text
     assert "Install source" in detail.text
     assert 'name="user_data"' in detail.text
+    assert "data-strip-autoinstall" in detail.text
+    assert "Reset to default" in detail.text
+    assert f'formaction="/images/{first["id"]}/seed/reset"' in detail.text
     iso_page = client.get(f"/images/isos/{iso['id']}")
     assert 'name="cmdline"' in iso_page.text
     assert 'name="kernel_path"' in iso_page.text

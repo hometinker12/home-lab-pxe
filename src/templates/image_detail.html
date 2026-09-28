@@ -139,17 +139,23 @@
       {% if family == 'linux' %}
       <label>
         <span class="label-row"><span class="label-text">cloud-init user-data</span><span class="key-hint">#cloud-config</span>
-          {% if cc_view %}
           <span class="label-actions">
+            <button type="submit" class="btn-ghost btn-sm" formaction="/images/{{ image.id }}/seed/reset" onclick="return confirm('Replace this template seed with the factory starter?');">Reset to default</button>
+            <button type="button" class="btn-ghost btn-sm" data-strip-autoinstall hidden>Remove autoinstall</button>
+            {% if cc_view %}
             <button type="button" class="btn-ghost btn-sm" data-cc-open data-cc-dialog="cc-editor-dialog">Editor</button>
+            {% endif %}
           </span>
-          {% endif %}
         </span>
         <textarea name="user_data" rows="24" class="seed-editor" data-cc-seed>{{ seed_text }}</textarea>
       </label>
-      <p class="field-help">Placeholders: {{ placeholder_help }}. This editor is the template's seed. Deploy copies it onto a machine if that machine file is empty; Copy Default on the machine page pulls the latest. On Deploy a snapshot is pinned under Files → Install snapshots; the installer fetches the filled file from HTTP <code>/cloud-init/&lt;machine-id&gt;/user-data</code>, not that snapshot. Seeds cannot be saved empty — reset to factory instead.</p>
+      <p class="field-help">Placeholders: {{ placeholder_help }}. This editor is the template's seed. Deploy copies it onto a machine if that machine file is empty; Copy Default on the machine page pulls the latest. On Deploy a snapshot is pinned under Files → Install snapshots; the installer fetches the filled file from HTTP <code>/cloud-init/&lt;machine-id&gt;/user-data</code>, not that snapshot. Seeds cannot be saved empty — reset to factory instead. <strong>Remove autoinstall</strong> keeps the cloud-config under user-data and moves early and late commands that can run on the installed system into <code>runcmd</code>. It leaves out installer-only commands: Wi-Fi quieting, the confirm helper, the failure-log upload, the forced reboot, and the UEFI boot-order helper. Nothing is stored until Save.</p>
       {% else %}
-      <label><span class="label-row"><span class="label-text">unattend.xml</span></span>
+      <label><span class="label-row"><span class="label-text">unattend.xml</span>
+          <span class="label-actions">
+            <button type="submit" class="btn-ghost btn-sm" formaction="/images/{{ image.id }}/seed/reset" onclick="return confirm('Replace this template seed with the factory starter?');">Reset to default</button>
+          </span>
+        </span>
         <textarea name="unattend_xml" rows="24" class="seed-editor">{{ seed_text }}</textarea>
       </label>
       <p class="field-help">Placeholders: <code>{{ placeholder_help }}</code>. Use <code>{{ '{{password}}' }}</code> for the local Administrator. Stock ISO Setup does not install Cloudbase-Init.</p>
@@ -168,9 +174,6 @@
   </header>
   <div class="card-body">
     <div class="btn-row">
-      {% if family != 'tool' %}
-      <form method="post" action="/images/{{ image.id }}/seed/reset" onsubmit="return confirm('Replace this template seed with the factory starter?');"><button type="submit" class="btn-secondary">Reset seed to factory default</button></form>
-      {% endif %}
       <form method="post" action="/images/{{ image.id }}/delete" class="push-end" onsubmit="return confirm('Delete this template and its guest-init seed? The ISO stays.');"><button type="submit" class="btn-danger">Delete template</button></form>
     </div>
   </div>
