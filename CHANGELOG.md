@@ -21,6 +21,14 @@
 - Console CSS and JavaScript URLs carry a content hash, so a rebuilt image no longer serves stale styles or scripts from the browser cache.
 - Linux guest-init has **Reset to default** and **Remove autoinstall** beside the editor. Reset replaces the seed with the factory starter and saves it. Remove autoinstall keeps the cloud-config under `user-data` and moves early and late commands that can run on the installed system into `runcmd`. Installer-only commands (Wi-Fi quieting, the confirm helper, the failure-log upload, the forced reboot, and the UEFI boot-order helper) are left out. That change is not stored until Save.
 
+### Fixed
+
+- A Linux ISO that is not Ubuntu live-server media (no `casper/vmlinuz` and `casper/initrd`, such as TrueNAS) is marked ready and PXE-booted with sanboot of the ISO file. Extraction no longer fails with "Ubuntu live-server payloads not found". The ISO's old Ubuntu install-source list is cleared, and its templates show **sanboot** as the install source.
+- Debian live-boot ISOs such as TrueNAS SCALE now PXE-install. The whole ISO is extracted and published over NFS, and the machine boots its `vmlinuz`/`initrd.img` with `boot=live netboot=nfs`. The medium is bound at `/cdrom`, where the TrueNAS installer looks for `TrueNAS-SCALE.update`. Sanboot could reach the TrueNAS kernel but then failed with "Unable to find a medium containing a live file system". The template shows **live-boot** as its install source, and the machine is marked Deployed when the installer is served.
+- A Linux ISO that extracts to sanboot-only media is no longer re-queued for extraction every time the extract worker starts.
+- ISO sanboot no longer fails with "Could not open SAN device: HTTP 4xx Client Error". `/boot-files/…` and `/install-files/…` now answer the `HEAD` request iPXE sends to read the ISO size.
+- A machine installing from a sanbooted ISO (Linux or Windows) is marked Deployed when its install script is served. Sanbooted installers never phone home, so the machine used to stay in Deploying and re-run the installer on every PXE boot.
+
 ## [0.3.8] - 2026-09-24
 
 ### Added

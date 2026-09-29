@@ -6,6 +6,8 @@ from sqlmodel import Session, col, func, select
 
 from ..install_sources import catalog_from_json, pick_source_id, wim_index_for_source
 from ..models import ExtractStatus, Image, Iso, OsFamily
+from ..nfs_media import live_boot_generation
+from ..settings import get_settings
 from .service import EXTRACT_IN_PROGRESS, record_activity
 
 MIRRORED_FIELDS = (
@@ -61,12 +63,26 @@ def _next_iso_id(db: Session) -> int:
     return max(int(top_iso), int(top_image)) + 1
 
 
+def linux_boot_mode(media: Iso | Image) -> str:
+    """'sanboot' or 'live-boot' for ready Linux media that runs its own installer; '' for Ubuntu casper."""
+    if media.os_family != OsFamily.linux.value or (media.extract_status or "") != ExtractStatus.ready.value:
+        return ""
+    if not ((media.kernel_path or "").strip() and (media.initrd_path or "").strip()):
+        return "sanboot" if (media.iso_path or "").strip() else ""
+    if live_boot_generation(media.extract_generation or "", get_settings().image_root):
+        return "live-boot"
+    return ""
+
+
 def sync_template(image: Image, iso: Iso) -> None:
     """Copy shared media onto a template; keep its install source when the catalog still offers it."""
     image.iso_id = iso.id
     image.os_family = iso.os_family
     for field in MIRRORED_FIELDS:
         setattr(image, field, getattr(iso, field))
+    if linux_boot_mode(iso):
+        image.source_id = ""
+        return
     options = catalog_from_json(iso.source_options or "")
     if not options:
         return

@@ -1,6 +1,7 @@
 import re
 import shutil
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from sqlalchemy import text
 from sqlmodel import select
@@ -8,7 +9,7 @@ from tests.conftest import login
 from tests.test_install_sources import minimal_wim_bytes
 
 from src.extract_worker import run_one_job
-from src.models import ExtractStatus
+from src.models import ExtractStatus, MachineState
 
 
 class _LinuxRunner:
@@ -333,6 +334,142 @@ def test_stale_revision_discarded(client):
     assert _iso(iso["id"]).extract_status == ExtractStatus.ready.value
 
 
+def test_non_casper_linux_iso_sanboots(client):
+    login(client)
+    iso = _upload_iso(client, name="truenas-iso")
+    from src.db import session_scope
+    from src.inventory.service import deploy_machine, find_by_mac, get_image, get_open_attempt, register_machine
+    from src.models import Iso
+
+    with session_scope() as db:
+        row = db.get(Iso, iso["id"])
+        row.kernel_path = f"isos/{iso['id']}/extracts/1/kernel"
+        row.initrd_path = f"isos/{iso['id']}/extracts/1/initrd"
+        row.extract_generation = f"nfs/{iso['id']}/1"
+        row.source_options = '[{"id": "ubuntu-server", "label": "Ubuntu Server", "default": true}]'
+        db.add(row)
+        db.commit()
+    stale = _add_template(client, "truenas-stale", iso["id"])
+    assert stale["source_id"] == "ubuntu-server"
+
+    class OtherIso:
+        def list_entries(self, iso):
+            return [("boot/vmlinuz", 4, False), ("README", 1, False)]
+
+        def extract_member_bytes(self, iso, member):
+            return b"x"
+
+        def extract_tree(self, iso, dest, prefixes=()):
+            return None
+
+    run_one_job(iso["id"], 1, runner=OtherIso())
+    row = _iso(iso["id"])
+    assert row.extract_status == ExtractStatus.ready.value
+    assert row.kernel_path == ""
+    assert row.initrd_path == ""
+    assert row.extract_generation == ""
+    assert row.extract_error == ""
+    assert row.iso_path.endswith("source.iso")
+    assert row.source_options == ""
+    page = client.get(f"/images/isos/{iso['id']}")
+    assert "sanboot" in page.text
+    relinked = next(img for img in client.get("/api/images").json() if img["id"] == stale["id"])
+    assert relinked["source_id"] == ""
+    assert relinked["source_options"] == []
+    template = _add_template(client, "truenas", iso["id"])
+    assert template["kernel_path"] == ""
+    assert template["iso_path"].endswith("source.iso")
+    detail = client.get(f"/images/{template['id']}")
+    assert "<option>sanboot</option>" in detail.text
+    assert "Ubuntu Server" not in detail.text
+    assert "Pick after extract" not in detail.text
+    saved = client.post(
+        f"/images/{template['id']}",
+        data={"name": "truenas", "iso_id": str(iso["id"]), "source_id": "", "folder_id": str(template["folder_id"])},
+        follow_redirects=False,
+    )
+    assert saved.status_code in {302, 303}
+    with session_scope() as db:
+        image = get_image(db, template["id"])
+        machine = register_machine(db, mac="02:00:00:00:00:71", actor="admin")
+        deploy_machine(db, machine, image=image, actor="admin")
+        db.commit()
+    response = client.get("/ipxe/02-00-00-00-00-71")
+    assert "sanboot" in response.text
+    assert f"/boot-files/{template['id']}/iso" in response.text
+    assert "kernel " not in response.text
+    with session_scope() as db:
+        machine = find_by_mac(db, "02:00:00:00:00:71")
+        assert machine.state == MachineState.deployed.value
+        assert get_open_attempt(db, machine) is None
+    assert client.get(f"/boot-files/{template['id']}/iso").status_code == 200
+    assert "sanboot --no-describe http" not in client.get("/ipxe/02-00-00-00-00-71").text
+
+
+def test_windows_iso_sanboot_marks_deployed(client, tmp_path):
+    from src.db import session_scope
+    from src.inventory.service import create_image, deploy_machine, find_by_mac, get_open_attempt, register_machine
+    from src.models import OsFamily
+
+    iso_file = tmp_path / "images" / "win" / "server.iso"
+    iso_file.parent.mkdir(parents=True, exist_ok=True)
+    iso_file.write_bytes(b"win-iso")
+    with session_scope() as db:
+        image = create_image(
+            db, name="win-sanboot", os_family=OsFamily.windows, iso_path="win/server.iso", actor="admin"
+        )
+        machine = register_machine(db, mac="02:00:00:00:00:72", actor="admin")
+        deploy_machine(db, machine, image=image, actor="admin")
+        db.commit()
+        image_id = image.id
+    script = client.get("/ipxe/02-00-00-00-00-72").text
+    assert "sanboot --no-describe http://" in script
+    assert f"/boot-files/{image_id}/iso" in script
+    with session_scope() as db:
+        machine = find_by_mac(db, "02:00:00:00:00:72")
+        assert machine.state == MachineState.deployed.value
+        assert get_open_attempt(db, machine) is None
+
+
+def test_extracted_linux_install_stays_deploying(client):
+    login(client)
+    iso = _upload_iso(client, name="ubuntu-stays")
+    run_one_job(iso["id"], 1, runner=_LinuxNfsRunner())
+    template = _add_template(client, "ubuntu-stays-tpl", iso["id"])
+    from src.db import session_scope
+    from src.inventory.service import deploy_machine, find_by_mac, get_image, register_machine
+
+    with session_scope() as db:
+        machine = register_machine(db, mac="02:00:00:00:00:73", actor="admin")
+        deploy_machine(db, machine, image=get_image(db, template["id"]), actor="admin")
+        db.commit()
+    assert "kernel --name=vmlinuz" in client.get("/ipxe/02-00-00-00-00-73").text
+    with session_scope() as db:
+        assert find_by_mac(db, "02:00:00:00:00:73").state == MachineState.deploying.value
+
+
+def test_non_casper_iso_keeps_custom_kernel(client):
+    login(client)
+    iso = _upload_iso(client, name="custom-other", kernel_path="custom/vmlinuz", initrd_path="custom/initrd")
+
+    class OtherIso:
+        def list_entries(self, iso):
+            return [("README", 1, False)]
+
+        def extract_member_bytes(self, iso, member):
+            return b"x"
+
+        def extract_tree(self, iso, dest, prefixes=()):
+            return None
+
+    run_one_job(iso["id"], 1, runner=OtherIso())
+    row = _iso(iso["id"])
+    assert row.extract_status == ExtractStatus.ready.value
+    assert row.kernel_path == "custom/vmlinuz"
+    assert row.initrd_path == "custom/initrd"
+    assert row.extract_generation == ""
+
+
 def test_failed_extract_keeps_iso_and_marks_templates(client):
     login(client)
     iso = _upload_iso(client, name="bad-iso")
@@ -442,6 +579,12 @@ def test_iso_range_request(client):
     response = client.get(f"/boot-files/{template['id']}/iso", headers={"Range": "bytes=2-5"})
     assert response.status_code == 206
     assert response.content == b"cdef"
+    head = client.head(f"/boot-files/{template['id']}/iso")
+    assert head.status_code == 200
+    assert head.headers["content-length"] == "10"
+    assert head.headers.get("accept-ranges") == "bytes"
+    assert head.content == b""
+    assert client.head(f"/boot-files/{template['id']}/nope").status_code == 404
 
 
 def test_delete_template_keeps_iso_and_media(client, tmp_path):
@@ -532,6 +675,159 @@ def test_linux_iso_publishes_nfs_casper(client, tmp_path):
     kernel = tmp_path / "images" / "isos" / str(iso["id"]) / "extracts" / "1" / "kernel"
     assert kernel.read_bytes() == b"kern"
     assert (tmp_path / "images" / "isos" / str(iso["id"]) / "source.iso").is_file()
+
+
+class _TrueNasRunner:
+    """Debian live-boot layout: kernel and initrd at the ISO root, installer image beside them."""
+
+    files = {
+        "vmlinuz": b"tn-kern",
+        "initrd.img": b"tn-ird",
+        "live/filesystem.squashfs": b"tn-squash",
+        "TrueNAS-SCALE.update": b"tn-update",
+        "boot/grub/grub.cfg": b"cfg",
+    }
+
+    def list_entries(self, iso):
+        return [(name, len(body), False) for name, body in self.files.items()]
+
+    def extract_member_bytes(self, iso, member):
+        return self.files[member]
+
+    def extract_tree(self, iso, dest, prefixes=()):
+        assert prefixes == ()
+        for name, body in self.files.items():
+            path = Path(dest).joinpath(*name.split("/"))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(body)
+
+
+def test_live_boot_iso_netboots_over_nfs(client, tmp_path):
+    login(client)
+    iso = _upload_iso(client, name="truenas-live")
+    from src.db import session_scope
+    from src.ganesha_exports import render_generation_exports
+    from src.inventory.service import deploy_machine, find_by_mac, get_image, get_open_attempt, register_machine
+    from src.models import Iso
+
+    with session_scope() as db:
+        row = db.get(Iso, iso["id"])
+        row.source_options = '[{"id": "ubuntu-server", "label": "Ubuntu Server", "default": true}]'
+        db.add(row)
+        db.commit()
+    run_one_job(iso["id"], 1, runner=_TrueNasRunner())
+    row = _iso(iso["id"])
+    assert row.extract_status == ExtractStatus.ready.value, row.extract_error
+    assert row.extract_generation == f"nfs/{iso['id']}/1"
+    assert row.source_options == ""
+    tree = tmp_path / "images" / "nfs" / str(iso["id"]) / "1"
+    assert (tree / "TrueNAS-SCALE.update").read_bytes() == b"tn-update"
+    assert str(tree.resolve().as_posix()) in render_generation_exports(tmp_path / "images")
+    from src.extract_worker import linux_needs_nfs_backfill
+
+    assert linux_needs_nfs_backfill(row) is False
+
+    template = _add_template(client, "truenas-live-tpl", iso["id"])
+    assert template["source_id"] == ""
+    assert client.get(f"/boot-files/{template['id']}/kernel").content == b"tn-kern"
+    detail = client.get(f"/images/{template['id']}").text
+    assert "<option>live-boot</option>" in detail
+    assert "Ubuntu Server" not in detail
+    assert "live-boot" in client.get(f"/images/isos/{iso['id']}").text
+
+    with session_scope() as db:
+        machine = register_machine(db, mac="02:00:00:00:00:74", actor="admin")
+        deploy_machine(db, machine, image=get_image(db, template["id"]), actor="admin")
+        db.commit()
+    script = client.get("/ipxe/02-00-00-00-00-74").text
+    kernel_line = next(line for line in script.splitlines() if line.startswith("kernel "))
+    assert "boot=live" in kernel_line
+    assert "netboot=nfs" in kernel_line
+    assert f"nfsroot=pxe.test:/var/lib/pxe/images/nfs/{iso['id']}/1" in kernel_line
+    assert "nfsopts=vers=3,tcp,port=2049" in kernel_line
+    assert "systemd.mount-extra=/run/live/medium:/cdrom:none:bind" in kernel_line
+    assert "autoinstall" not in script
+    assert "cloud-init" not in script
+    assert "sanboot" not in script
+    assert _kernel_bytes(client, script) == b"tn-kern"
+    with session_scope() as db:
+        machine = find_by_mac(db, "02:00:00:00:00:74")
+        assert machine.state == MachineState.deployed.value
+        assert get_open_attempt(db, machine) is None
+    assert _kernel_bytes(client, script) == b"tn-kern"
+
+
+def test_sanboot_iso_is_not_requeued_on_worker_start(client):
+    login(client)
+    iso = _upload_iso(client, name="sanboot-restart")
+
+    class OtherIso:
+        def list_entries(self, iso):
+            return [("README", 1, False)]
+
+        def extract_member_bytes(self, iso, member):
+            return b"x"
+
+        def extract_tree(self, iso, dest, prefixes=()):
+            return None
+
+    run_one_job(iso["id"], 1, runner=OtherIso())
+    from src.extract_worker import linux_needs_nfs_backfill
+
+    assert linux_needs_nfs_backfill(_iso(iso["id"])) is False
+
+
+class _PerIsoLinuxRunner(_LinuxNfsRunner):
+    """Kernel bytes come from the ISO file, so a template on the wrong ISO serves the wrong kernel."""
+
+    def extract_member_bytes(self, iso, member):
+        tag = Path(iso).read_bytes()
+        return b"kern-" + tag if "vmlinuz" in member.replace("\\", "/") else b"ird-" + tag
+
+    def extract_tree(self, iso, dest, prefixes=()):
+        super().extract_tree(iso, dest, prefixes)
+        tag = Path(iso).read_bytes()
+        (Path(dest) / "casper" / "vmlinuz").write_bytes(b"kern-" + tag)
+        (Path(dest) / "casper" / "filesystem.squashfs").write_bytes(b"squash-" + tag)
+
+
+def _kernel_bytes(client, script):
+    url = re.search(r"^kernel --name=vmlinuz (\S+)", script, re.M).group(1)
+    return client.get(urlsplit(url).path).content
+
+
+def test_second_linux_iso_boots_its_own_kernel(client):
+    login(client)
+    first = _upload_iso(client, name="ubuntu-old", body=b"old-release")
+    second = _upload_iso(client, name="ubuntu-new", body=b"new-release")
+    run_one_job(first["id"], 1, runner=_PerIsoLinuxRunner())
+    run_one_job(second["id"], 1, runner=_PerIsoLinuxRunner())
+    old_tpl = _add_template(client, "old-tpl", first["id"])
+    new_tpl = _add_template(client, "new-tpl", second["id"])
+    assert old_tpl["kernel_path"] != new_tpl["kernel_path"]
+    assert new_tpl["kernel_path"].startswith(f"isos/{second['id']}/")
+
+    from src.db import session_scope
+    from src.inventory.service import deploy_machine, find_by_mac, get_image, mark_deployed, mark_ready
+
+    client.get("/ipxe/02-00-00-00-00-81")
+    client.get("/ipxe/02-00-00-00-00-82")
+    with session_scope() as db:
+        deploy_machine(db, find_by_mac(db, "02:00:00:00:00:81"), image=get_image(db, new_tpl["id"]), actor="admin")
+        picker = find_by_mac(db, "02:00:00:00:00:82")
+        mark_ready(db, picker, hostname="picker", actor="admin")
+        deploy_machine(db, picker, image=get_image(db, old_tpl["id"]), actor="admin")
+        mark_deployed(db, picker)
+        db.commit()
+
+    deployed = client.get("/ipxe/02-00-00-00-00-81").text
+    assert _kernel_bytes(client, deployed) == b"kern-new-release"
+    if "nfsroot=" in deployed:
+        assert f"/{second['id']}/1 " in deployed
+
+    picked = client.get(f"/ipxe/02-00-00-00-00-82/boot/{new_tpl['id']}").text
+    assert _kernel_bytes(client, picked) == b"kern-new-release"
+    assert _kernel_bytes(client, client.get("/ipxe/02-00-00-00-00-82").text) == b"kern-new-release"
 
 
 def test_linux_nfs_backfill_requeues_missing_apt_repo(client, tmp_path):

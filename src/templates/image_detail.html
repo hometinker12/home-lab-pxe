@@ -42,7 +42,13 @@
           </select>
         </label>
         <label><span class="label-row"><span class="label-text">Install source</span><span class="key-hint">source_id</span></span>
-          {% if source_options %}
+          {% if boot_mode %}
+          <select disabled aria-label="Install source">
+            <option>{{ boot_mode }}</option>
+          </select>
+          <span class="field-help">{% if boot_mode == 'live-boot' %}Debian live-boot media over NFS. The ISO's own installer runs.{% else %}This ISO has no Ubuntu install sources. PXE boots the ISO file as-is.{% endif %}</span>
+          <input type="hidden" name="source_id" value="">
+          {% elif source_options %}
           <select name="source_id">
             {% for src in source_options %}
             <option value="{{ src.source_id }}" {% if image.source_id == src.source_id %}selected{% endif %}{% if src.wim_index %} data-wim-index="{{ src.wim_index }}"{% endif %}>{{ src.label }}</option>
@@ -92,6 +98,11 @@
         {% endif %}
         <dt>Extra cmdline</dt><dd><code>{{ image.cmdline or "—" }}</code></dd>
       </dl>
+      {% if boot_mode == 'sanboot' %}
+      <p class="field-help">PXE boots this ISO file with sanboot.</p>
+      {% elif boot_mode == 'live-boot' %}
+      <p class="field-help">PXE boots the ISO's live-boot kernel and mounts the extracted ISO over NFS.</p>
+      {% endif %}
     </div>
   </section>
   {% else %}
@@ -137,6 +148,7 @@
     </header>
     <div class="card-body">
       {% if family == 'linux' %}
+      {% if boot_mode %}<p class="alert alert-warn" role="status">This template boots with {{ boot_mode }}, so the installer never fetches this seed. The ISO's own installer runs interactively, and the machine is marked Deployed as soon as PXE hands it the installer.</p>{% endif %}
       <label>
         <span class="label-row"><span class="label-text">cloud-init user-data</span><span class="key-hint">#cloud-config</span>
           <span class="label-actions">

@@ -26,6 +26,7 @@ from ..inventory.isos import (
     get_iso,
     iso_extract_in_progress,
     iso_templates,
+    linux_boot_mode,
     list_isos,
     sync_templates,
     template_counts,
@@ -244,6 +245,8 @@ def _image_list_context(
 
 
 def _image_source_options(db: Session, image: Image) -> list:
+    if linux_boot_mode(image):
+        return []
     options = catalog_from_json(image.source_options or "")
     if options:
         return options
@@ -286,6 +289,7 @@ def _image_detail_context(request: Request, db: Session, image: Image, *, error=
         folder_options=folder_options(db),
         folder_defaults=default_folder_ids(db),
         source_options=_image_source_options(db, image),
+        boot_mode=linux_boot_mode(image),
         extract_busy=image_extract_in_progress(image),
         error=error,
         cc_view=cc_view,
@@ -299,6 +303,7 @@ def _iso_detail_context(request: Request, db: Session, iso: Iso, *, error=None):
         "iso_detail.html",
         iso=iso,
         templates_using=iso_templates(db, iso.id),
+        boot_mode=linux_boot_mode(iso),
         extract_busy=iso_extract_in_progress(iso),
         error=error,
     )

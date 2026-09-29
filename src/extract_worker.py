@@ -18,7 +18,7 @@ from .inventory.isos import sync_templates
 from .inventory.service import expire_stale_imaging
 from .iso_extract import ArchiveRunner, ExtractError, extract_linux_payloads, extract_windows_media
 from .models import ExtractStatus, Image, InstallAttempt, Iso, OsFamily
-from .nfs_media import casper_has_squashfs, linux_http_generation, nfs_generation
+from .nfs_media import linux_http_generation, live_has_squashfs, nfs_generation, nfs_tree_exportable
 from .paths import UnsafePathError, resolve_under
 from .seed_store import ensure_image_seed
 from .settings import get_settings
@@ -158,7 +158,7 @@ def _publish_linux_tree(staging: Path, iso_id: int, revision: int, media_relativ
     shutil.move(str(kernel), str(extracts_pub / "kernel"))
     shutil.move(str(initrd), str(extracts_pub / "initrd"))
     nfs_pub = root / "nfs" / str(iso_id) / str(revision)
-    if media_relative == "casper" or casper_has_squashfs(staging):
+    if media_relative in {"casper", "live"} or nfs_tree_exportable(staging):
         if nfs_pub.exists():
             shutil.rmtree(nfs_pub)
         nfs_pub.mkdir(parents=True)
@@ -248,6 +248,11 @@ def run_one_job(iso_id: int, revision: int, runner: ArchiveRunner | None = None)
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
         staging.mkdir(parents=True, exist_ok=True)
+        published: Path | None = None
+        sanboot_only = False
+        media_rel = ""
+        boot_rel = ""
+        install_rel = ""
         try:
             if family == OsFamily.windows.value:
                 result = extract_windows_media(source, staging, image_root=root, runner=runner)
@@ -258,9 +263,11 @@ def run_one_job(iso_id: int, revision: int, runner: ArchiveRunner | None = None)
                 install_rel = f"smb/{iso_id}/{revision}/{result.install_wim_relative}"
             else:
                 result = extract_linux_payloads(source, staging, image_root=root, runner=runner)
-                published, media_rel = _publish_linux_tree(staging, iso_id, revision, result.media_relative)
-                boot_rel = ""
-                install_rel = ""
+                if result.kernel_relative and result.initrd_relative:
+                    published, media_rel = _publish_linux_tree(staging, iso_id, revision, result.media_relative)
+                else:
+                    shutil.rmtree(staging, ignore_errors=True)
+                    sanboot_only = True
         except ExtractError as exc:
             shutil.rmtree(staging, ignore_errors=True)
             _mark_failed(db, iso_id, revision, sanitize_error(str(exc)))
@@ -273,16 +280,24 @@ def run_one_job(iso_id: int, revision: int, runner: ArchiveRunner | None = None)
 
         iso = db.get(Iso, iso_id)
         if iso is None or int(iso.extract_revision or 0) != revision:
-            shutil.rmtree(published, ignore_errors=True)
-            if family == OsFamily.linux.value:
+            if published is not None:
+                shutil.rmtree(published, ignore_errors=True)
+            if family == OsFamily.linux.value and not sanboot_only:
                 shutil.rmtree(root / "nfs" / str(iso_id) / str(revision), ignore_errors=True)
             return
         if family == OsFamily.linux.value:
             prefixes = generated_linux_prefixes(iso_id)
-            if _is_generated(iso.kernel_path, prefixes):
-                iso.kernel_path = _relative_under_root(published / "kernel")
-            if _is_generated(iso.initrd_path, prefixes):
-                iso.initrd_path = _relative_under_root(published / "initrd")
+            iso.source_options = ""
+            if sanboot_only:
+                if _is_generated(iso.kernel_path, prefixes):
+                    iso.kernel_path = ""
+                if _is_generated(iso.initrd_path, prefixes):
+                    iso.initrd_path = ""
+            elif published is not None:
+                if _is_generated(iso.kernel_path, prefixes):
+                    iso.kernel_path = _relative_under_root(published / "kernel")
+                if _is_generated(iso.initrd_path, prefixes):
+                    iso.initrd_path = _relative_under_root(published / "initrd")
         else:
             win_prefix = (generated_windows_prefix(iso_id),)
             if _is_generated(iso.boot_wim_path, win_prefix):
@@ -315,13 +330,15 @@ def _nfs_tree(iso: Iso) -> Path | None:
 
 def nfs_tree_has_squashfs(iso: Iso) -> bool:
     tree = _nfs_tree(iso)
-    return tree is not None and casper_has_squashfs(tree)
+    return tree is not None and nfs_tree_exportable(tree)
 
 
 def nfs_tree_has_apt_repo(iso: Iso) -> bool:
     tree = _nfs_tree(iso)
     if tree is None:
         return False
+    if live_has_squashfs(tree):
+        return True
     dists = tree / "dists"
     if not dists.is_dir():
         return False
@@ -339,6 +356,9 @@ def linux_needs_nfs_backfill(iso: Iso) -> bool:
     if generation.startswith("nfs/"):
         return not nfs_tree_has_squashfs(iso) or not nfs_tree_has_apt_repo(iso)
     if generation.startswith("linux/"):
+        return False
+    if not (iso.kernel_path or "").strip():
+        # Sanboot-only media extracts to nothing; requeueing it would loop on every worker start.
         return False
     return True
 

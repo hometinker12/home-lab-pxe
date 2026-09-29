@@ -23,6 +23,11 @@
 {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 {% if extract_busy %}<p class="alert alert-warn" role="status">Extraction is still running. Edit is disabled until it finishes.</p>{% endif %}
 {% if iso.extract_status == 'failed' and iso.extract_error %}<p class="alert alert-error" role="alert">{{ iso.extract_error }}</p>{% endif %}
+{% if boot_mode == 'sanboot' %}
+<p class="alert alert-warn" role="status">This ISO has no Ubuntu live-server or Debian live-boot kernel. PXE boots the ISO file with sanboot.</p>
+{% elif boot_mode == 'live-boot' %}
+<p class="alert alert-warn" role="status">Debian live-boot media: PXE loads its kernel and mounts the extracted ISO over NFS. Cloud-init is not used.</p>
+{% endif %}
 <form method="post" action="/images/isos/{{ iso.id }}" enctype="multipart/form-data" class="image-form">
   <input type="hidden" name="os_family" value="{{ iso.os_family }}">
   <fieldset class="plain" {% if extract_busy %}disabled{% endif %}>
@@ -42,7 +47,7 @@
   <section class="card card-flush">
     <header class="card-head">
       <div class="card-head-main"><h2 class="card-title">Boot media</h2></div>
-      <p class="card-sub">Shared by every template that uses this ISO; changes apply on each template's next PXE boot. Choosing a new ISO file re-runs extraction. Ubuntu live-server extraction fills kernel/initrd and publishes casper media over NFS unless you set custom kernel paths. Windows extraction publishes Setup media over authenticated SMB. The ISO file stays on disk after extraction.</p>
+      <p class="card-sub">Shared by every template that uses this ISO; changes apply on each template's next PXE boot. Choosing a new ISO file re-runs extraction. Ubuntu live-server extraction fills kernel/initrd and publishes casper media over NFS unless you set custom kernel paths. Debian live-boot ISOs (such as TrueNAS SCALE) are published whole over NFS and boot their own installer. Other Linux ISOs stay on disk and PXE boots them with sanboot. Windows extraction publishes Setup media over authenticated SMB. The ISO file stays on disk after extraction.</p>
     </header>
     <div class="card-body">
       <div class="form-grid">

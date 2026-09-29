@@ -16,6 +16,7 @@ from ..inventory.service import (
     get_image,
     get_open_attempt,
     image_deploy_blocked,
+    mark_deployed,
     record_boot_event,
     stage_machine,
     touch_machine,
@@ -70,13 +71,18 @@ def _render_policy_script(db: Session, machine: Machine, mac_n: str) -> tuple[st
     if kind == ScriptKind.menu:
         return folder_menu_script(db, hyphen, None), kind.value
     settings = get_or_create_settings(db)
+    payload = _payload_for(db, machine)
     script = render_script(
         kind,
         mac_hyphen=hyphen,
         machine=machine,
-        payload=_payload_for(db, machine),
+        payload=payload,
         unknown_timeout_seconds=settings.unknown_timeout_seconds,
     )
+    install = kind in {ScriptKind.install_linux, ScriptKind.install_windows}
+    if install and payload is not None and payload.skips_guest_init(get_settings().image_root):
+        # These installers never phone home, so Deployed is recorded when the script is handed out.
+        mark_deployed(db, machine, actor="sanboot" if payload.sanboots else "live-boot")
     return script, kind.value
 
 
