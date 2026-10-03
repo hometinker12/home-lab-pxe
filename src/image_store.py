@@ -127,6 +127,9 @@ def _owned_upload(relative: str, prefix: str) -> str:
     text = (relative or "").replace("\\", "/").strip()
     if not text.startswith(prefix) or "/extracts/" in text:
         return ""
+    # The prefix only proves ownership when no segment can climb out of it.
+    if any(part in {"", ".", ".."} for part in text[len(prefix) :].split("/")):
+        return ""
     return text
 
 

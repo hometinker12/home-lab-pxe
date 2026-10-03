@@ -785,6 +785,21 @@ def test_live_boot_serves_current_revision_after_reextract(client, tmp_path):
     assert not (nfs / "1").exists()
 
 
+def test_template_delete_ignores_paths_that_climb_out_of_its_folder(client, tmp_path):
+    from src.image_store import remove_template_files
+
+    images = tmp_path / "images"
+    other = images / "nfs" / "9" / "1"
+    other.mkdir(parents=True)
+    (other / "keep").write_bytes(b"x")
+    own = images / "uploads" / "5"
+    own.mkdir(parents=True)
+    (own / "kernel").write_bytes(b"k")
+    remove_template_files(5, ("uploads/5/../../nfs", "uploads/5/./kernel", "uploads/5/kernel"))
+    assert (other / "keep").is_file()
+    assert not (own / "kernel").exists()
+
+
 def test_sanboot_iso_is_not_requeued_on_worker_start(client):
     login(client)
     iso = _upload_iso(client, name="sanboot-restart")

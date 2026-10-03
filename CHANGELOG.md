@@ -32,6 +32,7 @@
 - A machine installing from a sanbooted ISO (Linux or Windows) is marked Deployed when its install script is served. Sanbooted installers never phone home, so the machine used to stay in Deploying and re-run the installer on every PXE boot.
 - A live-boot or sanboot install staged before its ISO was re-extracted now boots the current extract. Previously it could pair the new kernel with the old, already-removed NFS tree.
 - Old extract revisions are removed once the install that used them is marked Deployed. Previously they stayed on disk until the next extract.
+- Deleting a tool template only removes files inside its own upload folder. A stored path containing `..` could previously point the delete at another ISO's files.
 
 ## [0.3.8] - 2026-09-24
 
