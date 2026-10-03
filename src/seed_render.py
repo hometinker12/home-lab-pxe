@@ -190,10 +190,12 @@ AUTOINSTALL_UNATTENDED = {
     },
     "apt": {
         "preserve_sources_list": False,
-        "geoip": False,
+        # Subiquity's own default: GeoIP picks the country mirror, then the primary archive.
+        "geoip": True,
         "fallback": "offline-install",
         "mirror-selection": {
             "primary": [
+                "country-mirror",
                 {"uri": "http://archive.ubuntu.com/ubuntu", "arches": ["amd64", "i386"]},
                 {
                     "uri": "http://ports.ubuntu.com/ubuntu-ports",
