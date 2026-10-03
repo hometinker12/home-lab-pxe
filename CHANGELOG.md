@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-10-03
+
+### Changed
+
+- The default Ubuntu seed uses the Ubuntu installer's own apt mirror selection. GeoIP picks the country mirror first, then `archive.ubuntu.com` (amd64/i386) or `ports.ubuntu.com` (other architectures), and the install continues offline if none answer. It previously pinned `archive.ubuntu.com` with GeoIP off. Seeds without their own apt mirror keys get the same defaults when served. Existing template seeds keep their `apt:` block until **Reset to default**.
+
 ## [0.3.9] - 2026-10-03
 
 ### Added

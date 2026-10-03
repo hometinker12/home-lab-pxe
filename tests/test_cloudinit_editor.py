@@ -1289,7 +1289,9 @@ def test_installer_view_model_placeholders_and_commands():
     assert idoc["packages"] == {"__pxe_block__": "packages"}
     assert [row["id"] for row in idoc["network"]["ethernets"]] == ["zz-all-en", "zz-all-eth"]
     assert idoc["network"]["ethernets"][0]["match"] == {"name": "en*"}
-    assert idoc["apt"]["mirror-selection"]["primary"][0]["arches"] == ["amd64", "i386"]
+    assert idoc["apt"]["geoip"] is True
+    assert idoc["apt"]["mirror-selection"]["primary"][0] == "country-mirror"
+    assert idoc["apt"]["mirror-selection"]["primary"][1]["arches"] == ["amd64", "i386"]
     assert idoc["storage"]["layout"] == {"name": "direct", "match": {"size": "largest"}}
     early = idoc["early-commands"]
     assert early[0].endswith("\n") and "phy80211" in early[0]
