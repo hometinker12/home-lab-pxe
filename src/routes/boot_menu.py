@@ -85,6 +85,7 @@ def _page(
     edit_open: bool = False,
     ipxe_error: str | None = None,
     ipxe_open: bool = False,
+    tab: str = "",
 ):
     settings = get_or_create_settings(db)
     tree = _tree(db)
@@ -95,6 +96,7 @@ def _page(
     image_rows = [{"image": img, "reason": image_deploy_reason(img)} for img in images]
     ipxe_build = get_or_create_ipxe_build(db)
     ipxe_status, ipxe_notice, ipxe_running = display_state(ipxe_build)
+    ipxe_open = ipxe_open or ipxe_running or ipxe_status == "failed" or bool(ipxe_error)
     return render(
         request,
         "boot_menu.html",
@@ -112,18 +114,21 @@ def _page(
         ipxe_notice=ipxe_notice,
         ipxe_running=ipxe_running,
         ipxe_error=ipxe_error,
-        ipxe_open=ipxe_open or ipxe_running or ipxe_status == "failed" or bool(ipxe_error),
+        ipxe_open=ipxe_open,
+        active_tab="settings" if tab == "settings" or ipxe_open else "folders",
         ipxe_commit=IPXE_COMMIT,
         stock_available=stock_backup_available(),
     )
 
 
-def _redirect(folder_id: int | None, *, ipxe: bool = False) -> RedirectResponse:
+def _redirect(folder_id: int | None, *, ipxe: bool = False, settings: bool = False) -> RedirectResponse:
     params: list[str] = []
     if folder_id:
         params.append(f"folder={int(folder_id)}")
     if ipxe:
         params.append("ipxe=1")
+    elif settings:
+        params.append("tab=settings")
     url = "/boot-menu"
     if params:
         url = f"{url}?{'&'.join(params)}"
@@ -139,10 +144,11 @@ def boot_menu_page(
     request: Request,
     folder: int | None = None,
     ipxe: str = "",
+    tab: str = "",
     db: Session = Depends(get_db),
     user: str = Depends(require_user),
 ):
-    return _page(request, db, folder_id=folder, ipxe_open=ipxe == "1")
+    return _page(request, db, folder_id=folder, ipxe_open=ipxe == "1", tab=tab)
 
 
 @router.post("/boot-menu/settings")
@@ -168,8 +174,8 @@ def boot_menu_settings(
         db.commit()
     except ValueError as extra:
         db.rollback()
-        return _page(request, db, folder_id=_optional_id(folder), error=str(extra))
-    return _redirect(_optional_id(folder))
+        return _page(request, db, folder_id=_optional_id(folder), error=str(extra), tab="settings")
+    return _redirect(_optional_id(folder), settings=True)
 
 
 @router.post("/boot-menu/ipxe-build")

@@ -1,8 +1,8 @@
-"""Render nfs-ganesha EXPORT blocks for each extracted Ubuntu generation.
+"""Render nfs-ganesha EXPORT blocks for each extracted Linux generation.
 
 Ganesha NFSv3 MNT of a subdirectory of an export Path returns AUTH_NULL EACCES.
-Each nfs/{id}/{rev} tree with casper squashfs gets its own Path so casper can
-mount that directory (casper/ + .disk/ at the export root).
+Each nfs/{id}/{rev} tree with casper or live-boot squashfs gets its own Path so
+the initramfs can mount that directory (casper/ or live/ at the export root).
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .nfs_media import casper_has_squashfs
+from .nfs_media import nfs_tree_exportable
 
 GENERATIONS_CONF = Path("/var/run/ganesha/pxe-generations.conf")
 RELOAD_STAMP = ".pxe-reload-exports"
@@ -68,7 +68,7 @@ def iter_nfs_generations(image_root: Path) -> list[tuple[int, int, Path]]:
             resolved = gen_dir.resolve()
             if root not in resolved.parents:
                 continue
-            if not casper_has_squashfs(resolved):
+            if not nfs_tree_exportable(resolved):
                 continue
             found.append((int(image_dir.name), int(gen_dir.name), resolved))
     return found

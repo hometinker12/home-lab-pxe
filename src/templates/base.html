@@ -6,9 +6,9 @@
   <title>{% block title %}home-lab-pxe{% endblock %}</title>
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/favicon.png">
-  <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/app.js" defer></script>
-  <script src="/static/cloudinit-editor.js" defer></script>
+  <link rel="stylesheet" href="/static/app.css?v={{ asset_version('app.css') }}">
+  <script src="/static/app.js?v={{ asset_version('app.js') }}" defer></script>
+  <script src="/static/cloudinit-editor.js?v={{ asset_version('cloudinit-editor.js') }}" defer></script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
   <a class="skip-link" href="#main">Skip to content</a>

@@ -1483,6 +1483,104 @@ def _render(parsed: dict, header: list[str]) -> str:
     return text if text.endswith("\n") else text + "\n"
 
 
+# Installer commands that cannot run on the installed system. Matched against the command text
+# after placeholder shielding, so marker text covers both ``{{token}}`` and ``__PXE_token__``.
+_INSTALLER_ONLY_COMMANDS = (
+    "phy80211",
+    "autoinstall-confirm.py",
+    "subiquity-server-debug.log",
+    "install_log_url",
+    "sysrq-trigger",
+    "reboot -f",
+    "uefi-boot-order.py",
+)
+_CURTIN_IN_TARGET = re.compile(r"^curtin\s+in-target\s+--\s*")
+
+
+def _command_text(cmd: object) -> str:
+    if isinstance(cmd, list):
+        return " ".join(str(part) for part in cmd)
+    return str(cmd)
+
+
+def _without_curtin(cmd: object) -> object | None:
+    """``curtin in-target -- …`` runs inside the installed system; keep just that command."""
+    if isinstance(cmd, list):
+        parts = list(cmd)
+        if len(parts) >= 2 and parts[0] == "curtin" and parts[1] == "in-target":
+            parts = parts[2:]
+            if parts and parts[0] == "--":
+                parts = parts[1:]
+        return parts or None
+    if isinstance(cmd, str):
+        return _CURTIN_IN_TARGET.sub("", cmd.strip()) or None
+    return None
+
+
+def _kept_install_command(cmd: object) -> object | None:
+    if any(marker in _command_text(cmd) for marker in _INSTALLER_ONLY_COMMANDS):
+        return None
+    return _without_curtin(cmd)
+
+
+def _as_command_list(value: object) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return list(value)
+    return [value]
+
+
+def _user_data_mapping(value: object) -> dict:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            loaded = yaml.safe_load(shield_tokens(value))
+        except yaml.YAMLError as exc:
+            raise SeedError("autoinstall user-data is not valid YAML") from exc
+        if isinstance(loaded, dict):
+            return loaded
+    if value in (None, ""):
+        return {}
+    raise SeedError("autoinstall user-data must be a mapping to remove autoinstall")
+
+
+def strip_autoinstall(seed_text: str) -> str:
+    """Drop the Ubuntu installer section and keep commands that can run on first boot.
+
+    ``autoinstall.user-data`` becomes the cloud-config. Early commands, then late commands, are
+    appended to ``runcmd`` (cloud-init's once-per-instance hook). ``curtin in-target --`` is
+    removed because that wrapper only exists in the installer. Commands that talk to the live
+    installer (Wi-Fi quieting, the confirm helper, the failure-log upload, the forced reboot,
+    and the UEFI boot-order helper) are left out.
+    """
+    parsed, mode = _parse_seed(seed_text)
+    if mode != "autoinstall":
+        raise SeedError("This seed has no autoinstall section")
+    auto = parsed["autoinstall"]
+    cc = _user_data_mapping(auto.get(USER_DATA_KEY))
+    kept: list = []
+    existing = _as_command_list(cc.get("runcmd")) if "runcmd" in cc else []
+    seen = {_command_text(cmd) for cmd in existing}
+    for key in ("early-commands", "late-commands"):
+        cmds = auto.get(key)
+        if not isinstance(cmds, list):
+            continue
+        for cmd in cmds:
+            converted = _kept_install_command(cmd)
+            if converted is None:
+                continue
+            text = _command_text(converted)
+            if text in seen:
+                continue
+            seen.add(text)
+            kept.append(converted)
+    if kept:
+        cc["runcmd"] = [*existing, *kept]
+    return _render(cc, _header_lines(seed_text))
+
+
 # --------------------------------------------------------------------------- installer section
 
 

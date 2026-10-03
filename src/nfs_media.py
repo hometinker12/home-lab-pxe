@@ -1,4 +1,4 @@
-"""Linux casper media published under image_root/nfs and advertised as nfsroot=."""
+"""Linux casper and Debian live-boot media published under image_root/nfs and advertised as nfsroot=."""
 
 from __future__ import annotations
 
@@ -41,8 +41,26 @@ def advertised_nfsroot(media_relative: str, *, host: str, export: str) -> str | 
     return f"{server}:{base}/{sub}"
 
 
-def casper_has_squashfs(dest: Path) -> bool:
-    casper = dest / "casper"
-    if not casper.is_dir():
+def _dir_has_squashfs(folder: Path) -> bool:
+    if not folder.is_dir():
         return False
-    return any(child.is_file() and child.suffix.lower() == ".squashfs" for child in casper.iterdir())
+    return any(child.is_file() and child.suffix.lower() == ".squashfs" for child in folder.iterdir())
+
+
+def casper_has_squashfs(dest: Path) -> bool:
+    return _dir_has_squashfs(dest / "casper")
+
+
+def live_has_squashfs(dest: Path) -> bool:
+    """Debian live-boot media (TrueNAS SCALE, Debian live): live/*.squashfs and no casper/."""
+    return not casper_has_squashfs(dest) and _dir_has_squashfs(dest / "live")
+
+
+def nfs_tree_exportable(dest: Path) -> bool:
+    return casper_has_squashfs(dest) or live_has_squashfs(dest)
+
+
+def live_boot_generation(media_relative: str, image_root: Path) -> bool:
+    if nfs_subpath(media_relative) is None:
+        return False
+    return live_has_squashfs(image_root / (media_relative or "").replace("\\", "/").strip())

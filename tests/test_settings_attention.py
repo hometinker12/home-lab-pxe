@@ -13,6 +13,40 @@ def test_settings_section_order_and_rename(client):
     assert page.text.find('data-section="machines"') < page.text.find('data-section="pxe"')
 
 
+def _tab_markup(text: str, tab_id: str) -> str:
+    start = text.find(f'id="{tab_id}"')
+    return text[start : text.find("</a>", start)]
+
+
+def test_settings_subsections_are_tabs(client):
+    login(client)
+    page = client.get("/settings")
+    ids = ["accounts-tab", "machines-tab", "network-tab", "security-tab", "media-tab"]
+    positions = [page.text.find(f'id="{tab_id}"') for tab_id in ids]
+    assert -1 not in positions
+    assert positions == sorted(positions)
+    assert 'aria-selected="true"' in _tab_markup(page.text, "accounts-tab")
+    assert "count-attention" in _tab_markup(page.text, "accounts-tab")
+    assert "count-attention" not in _tab_markup(page.text, "media-tab")
+    for name in ("machines", "network", "security", "media"):
+        assert f'data-tab-panel="{name}" hidden' in page.text
+    assert 'data-tab-panel="accounts" hidden' not in page.text
+    assert 'class="section-label">Accounts<' not in page.text
+
+
+def test_settings_tab_follows_section_and_tab_query(client):
+    login(client)
+    for url, tab in (
+        ("/settings?section=dhcp", "network"),
+        ("/settings?section=smb", "media"),
+        ("/settings?tab=security", "security"),
+        ("/settings?tab=bogus", "accounts"),
+    ):
+        page = client.get(url)
+        assert 'aria-selected="true"' in _tab_markup(page.text, f"{tab}-tab"), url
+        assert f'data-tab-panel="{tab}" hidden' not in page.text, url
+
+
 def test_settings_nav_badge_counts_unset_accounts(client):
     login(client)
     machines = client.get("/machines")

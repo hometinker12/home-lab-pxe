@@ -128,6 +128,7 @@
       <label class="span">
         <span class="label-row"><span class="label-text">Machine user-data</span><span class="key-hint">#cloud-config</span>
           <span class="label-actions">
+            <button type="button" class="btn-ghost btn-sm" data-strip-autoinstall hidden {% if deploying %}disabled{% endif %}>Remove autoinstall</button>
             {% if cc_view %}
             <button type="button" class="btn-ghost btn-sm" data-cc-open data-cc-dialog="cc-editor-dialog" {% if deploying %}disabled{% endif %}>Editor</button>
             {% endif %}

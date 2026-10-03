@@ -113,10 +113,35 @@ class IpxeBuild(SQLModel, table=True):
     built_at: datetime | None = None
 
 
-class Image(SQLModel, table=True):
+class Iso(SQLModel, table=True):
+    """Uploaded install media, extracted once and shared by templates."""
+
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(unique=True, index=True)
     os_family: str
+    arch: str = "x86_64"
+    iso_path: str = ""
+    size_bytes: int = 0
+    cmdline: str = ""
+    kernel_path: str = ""
+    initrd_path: str = ""
+    boot_wim_path: str = ""
+    install_wim_path: str = ""
+    extract_status: str = ExtractStatus.idle.value
+    extract_error: str = ""
+    extract_revision: int = 0
+    extract_generation: str = ""
+    source_options: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class Image(SQLModel, table=True):
+    """Boot template. Linked templates mirror media columns from their Iso."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(unique=True, index=True)
+    os_family: str
+    iso_id: int | None = Field(default=None, foreign_key="iso.id", index=True)
     arch: str = "x86_64"
     kernel_path: str = ""
     initrd_path: str = ""

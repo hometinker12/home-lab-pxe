@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..models import Machine
-from ..nfs_media import CASPER_NFSOPTS, advertised_nfsroot
+from ..nfs_media import CASPER_NFSOPTS, advertised_nfsroot, live_boot_generation
 from ..settings import get_settings
 from .payload import BootPayload
 from .policy import ScriptKind
@@ -75,12 +75,33 @@ def _boot_file_url(machine: Machine, payload: BootPayload, slot: str) -> str:
     return f"{base}/boot-files/{payload.image_id}/{path_slot}"
 
 
+def _live_boot_script(kernel: str, initrd: str, nfsroot: str, extra: str) -> str:
+    """Debian live-boot over NFS. The medium is also bound at /cdrom, where the TrueNAS installer reads its image."""
+    parts = _tokens(extra)
+    defaults = [
+        ("boot=", "boot=live"),
+        ("netboot=", "netboot=nfs"),
+        ("nfsroot=", f"nfsroot={nfsroot}"),
+        ("nfsopts=", f"nfsopts={CASPER_NFSOPTS}"),
+        ("ip=", "ip=dhcp"),
+        ("systemd.mount-extra=", "systemd.mount-extra=/run/live/medium:/cdrom:none:bind"),
+    ]
+    parts += [value for prefix, value in defaults if not _has_token(extra, prefix)]
+    cmdline = " ".join(parts)
+    return (
+        _header()
+        + f"kernel --name=vmlinuz {kernel} {cmdline}\n"
+        + f"initrd {initrd}\n"
+        + f"imgargs vmlinuz {cmdline}\n"
+        + "boot\n"
+    )
+
+
 def linux_install_script(machine: Machine, payload: BootPayload) -> str:
     settings = get_settings()
     base = settings.public_url
-    kernel_ok = bool((payload.kernel_path or "").strip() and (payload.initrd_path or "").strip())
     iso_ok = bool((payload.iso_path or "").strip())
-    if not kernel_ok and iso_ok:
+    if payload.sanboots:
         iso = f"{base}/boot-files/{payload.image_id}/iso"
         return _header() + f"sanboot --no-describe {iso} || sanboot {iso}\n"
     seed = f"{base}/cloud-init/{machine.id}/{machine.instance_id}/"
@@ -88,6 +109,10 @@ def linux_install_script(machine: Machine, payload: BootPayload) -> str:
     initrd = _boot_file_url(machine, payload, "initrd")
     extra = payload.cmdline.strip()
     nfsroot = advertised_nfsroot(payload.media_relative, host=settings.nfs_host, export=settings.nfs_export)
+    if nfsroot and live_boot_generation(payload.media_relative, settings.image_root):
+        # Image-scoped URLs: the machine is marked Deployed before iPXE fetches these files.
+        files = f"{base}/boot-files/{payload.image_id}"
+        return _live_boot_script(f"{files}/kernel", f"{files}/initrd", nfsroot, extra)
     defaults: list[str] = []
     if nfsroot:
         extra = _without_prefix(extra, "cloud-config-url=")
@@ -139,9 +164,7 @@ def linux_install_script(machine: Machine, payload: BootPayload) -> str:
 def windows_install_script(machine: Machine, payload: BootPayload) -> str:
     settings = get_settings()
     base = settings.public_url
-    boot_ok = bool((payload.boot_wim_path or "").strip())
-    iso_ok = bool((payload.iso_path or "").strip())
-    if not boot_ok and iso_ok:
+    if payload.sanboots:
         iso = f"{base}/boot-files/{payload.image_id}/iso"
         return _header() + f"sanboot --no-describe {iso} || sanboot {iso}\n"
     wimboot = f"{base}/tftp/wimboot"

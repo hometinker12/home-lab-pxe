@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-10-03
+
+### Added
+
+- The Images page has two tabs, **Templates** (shown first) and **ISOs**, each with its count. `/images?tab=isos` opens the ISOs tab. An ISO is uploaded and extracted once, and several templates can share it. For example, one Ubuntu ISO can back a "server" and a "minimal" template, or one Windows Server ISO can back Standard Core and Datacenter templates.
+- An ISO owns the shared boot media: the ISO file, extra cmdline, kernel and initrd paths, and Windows `boot.wim` / `install.wim` paths. These are edited on the ISO page (`/images/isos/{id}`) and apply to every template that uses the ISO on its next PXE boot. The ISO page lists the templates using it.
+- A template owns the name, boot-menu folder, install source, and guest-init seed (cloud-init user-data or unattend.xml). **Add template** picks an existing ISO. Tool entries still pick **No ISO** and keep their own kernel/initrd, boot ISO, and cmdline.
+- `GET /api/isos` lists ISOs with extract status and template count. `GET /api/images` now includes `iso_id`, `iso_name`, and `iso_extract_status`.
+- Files has an **ISO uploads** favorite for the new `isos/` folder on the Images volume.
+
+### Changed
+
+- Uploaded ISOs now stay on disk after a successful NFS or SMB extract, so more templates can use them and **Retry extract** works without a re-upload. New uploads are stored at `isos/{id}/source.iso`.
+- On first start, each existing Linux or Windows image becomes an ISO with the same id plus a template linked to it. Existing `nfs/{id}` and `smb/{id}` extracts and in-progress installs keep working.
+- A template's name, folder, and guest-init can be saved while its ISO is still extracting. Install source becomes available once extraction finishes. ISO edits and deletes stay disabled during extraction.
+- Deleting a template removes only that template and its seed. An ISO cannot be deleted while any template uses it.
+- The Boot menu page has two tabs, **Folders** (shown first, with its folder count) and **Menu settings** (timeouts, labels, and the iPXE build). Saving menu settings or starting an iPXE rebuild returns to the Menu settings tab.
+- The Settings page has one tab per section: **Accounts**, **Machines**, **Network boot**, **Security**, and **Installation media**. A tab that needs attention shows an orange count. `/settings?section=…` links open the matching tab, and each save returns to the tab it came from.
+- Console CSS and JavaScript URLs carry a content hash, so a rebuilt image no longer serves stale styles or scripts from the browser cache.
+- Linux guest-init has **Reset to default** and **Remove autoinstall** beside the editor. Reset replaces the seed with the factory starter and saves it. Remove autoinstall keeps the cloud-config under `user-data` and moves early and late commands that can run on the installed system into `runcmd`. Installer-only commands (Wi-Fi quieting, the confirm helper, the failure-log upload, the forced reboot, and the UEFI boot-order helper) are left out. That change is not stored until Save.
+
+### Fixed
+
+- A Linux ISO that is not Ubuntu live-server media (no `casper/vmlinuz` and `casper/initrd`, such as TrueNAS) is marked ready and PXE-booted with sanboot of the ISO file. Extraction no longer fails with "Ubuntu live-server payloads not found". The ISO's old Ubuntu install-source list is cleared, and its templates show **sanboot** as the install source.
+- Debian live-boot ISOs such as TrueNAS SCALE now PXE-install. The whole ISO is extracted and published over NFS, and the machine boots its `vmlinuz`/`initrd.img` with `boot=live netboot=nfs`. The medium is bound at `/cdrom`, where the TrueNAS installer looks for `TrueNAS-SCALE.update`. Sanboot could reach the TrueNAS kernel but then failed with "Unable to find a medium containing a live file system". The template shows **live-boot** as its install source, and the machine is marked Deployed when the installer is served.
+- A Linux ISO that extracts to sanboot-only media is no longer re-queued for extraction every time the extract worker starts.
+- ISO sanboot no longer fails with "Could not open SAN device: HTTP 4xx Client Error". `/boot-files/…` and `/install-files/…` now answer the `HEAD` request iPXE sends to read the ISO size.
+- A machine installing from a sanbooted ISO (Linux or Windows) is marked Deployed when its install script is served. Sanbooted installers never phone home, so the machine used to stay in Deploying and re-run the installer on every PXE boot.
+- A live-boot or sanboot install staged before its ISO was re-extracted now boots the current extract. Previously it could pair the new kernel with the old, already-removed NFS tree.
+- Old extract revisions are removed once the install that used them is marked Deployed. Previously they stayed on disk until the next extract.
+- Deleting a tool template only removes files inside its own upload folder. A stored path containing `..` could previously point the delete at another ISO's files.
+
 ## [0.3.8] - 2026-09-24
 
 ### Added

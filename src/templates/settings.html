@@ -10,7 +10,28 @@
 {% if error %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
 {% if notice %}<p class="alert alert-ok" role="status">{{ notice }}</p>{% endif %}
 
-<h2 class="section-label">Accounts</h2>
+{% set settings_tabs = [
+  ("accounts", "Accounts", settings_attention.accounts),
+  ("machines", "Machines", false),
+  ("network", "Network boot", false),
+  ("security", "Security", false),
+  ("media", "Installation media", settings_attention.smb_password),
+] %}
+{% macro tab_panel(name) -%}
+<section class="page-tab-panel" role="tabpanel" id="{{ name }}-panel" aria-labelledby="{{ name }}-tab" data-tab-panel="{{ name }}"{% if active_tab != name %} hidden{% endif %}>
+{%- endmacro %}
+<div class="page-tabs-bar" data-page-tabs data-tab-default="accounts" data-tab-clear="section notice">
+  <div class="page-tabs" role="tablist" aria-label="Settings">
+    {% for name, label, attention in settings_tabs %}
+    <a class="page-tab" role="tab" id="{{ name }}-tab" href="/settings?tab={{ name }}" data-tab="{{ name }}" aria-controls="{{ name }}-panel"
+       aria-selected="{{ 'true' if active_tab == name else 'false' }}"{% if active_tab != name %} tabindex="-1"{% endif %}>
+      {{ label }}{% if attention %} <span class="count count-attention" title="Needs attention">1</span>{% endif %}
+    </a>
+    {% endfor %}
+  </div>
+</div>
+
+{{ tab_panel("accounts") }}
 <details class="card{% if settings_attention.accounts %} needs-attention{% endif %}" data-section="accounts" {% if open_section == "accounts" %}open{% endif %}>
   <summary><span class="summary-title">Imaging default local/root account</span>{% if settings_attention.accounts %}<span class="section-alert" aria-label="Needs attention"></span>{% endif %}</summary>
   <div class="card-body">
@@ -50,9 +71,10 @@
     </form>
   </div>
 </details>
+</section>
 
-<h2 class="section-label">Machines</h2>
-<details class="card" data-section="machines" {% if open_section == "machines" %}open{% endif %}>
+{{ tab_panel("machines") }}
+<details class="card" data-section="machines" open>
   <summary><span class="summary-title">Machines</span><span class="summary-meta">{{ selected_timezone }}</span></summary>
   <div class="card-body">
     <p class="meta">If a machine stays <strong>Imaging</strong> longer than this, it moves to <strong>Timeout Error</strong> and the wait menu. Set 0 to disable the timer. New and discovered machines inherit the default timezone until you change it on the machine.</p>
@@ -75,8 +97,9 @@
     </form>
   </div>
 </details>
+</section>
 
-<h2 class="section-label">Network boot</h2>
+{{ tab_panel("network") }}
 <details class="card" data-section="pxe" {% if open_section == "pxe" %}open{% endif %}>
   <summary><span class="summary-title">PXE</span><span class="summary-meta"><code class="chip">{{ dhcp.bind_interface }}</code></span></summary>
   <div class="card-body">
@@ -198,9 +221,10 @@
     </form>
   </div>
 </details>
+</section>
 
-<h2 class="section-label">Security</h2>
-<details class="card" data-section="ssl" {% if open_section == "ssl" %}open{% endif %}>
+{{ tab_panel("security") }}
+<details class="card" data-section="ssl" open>
   <summary><span class="summary-title">HTTPS</span>{% if tls %}<span class="summary-meta"><span class="dot dot-on"></span>{% if tls.source == "self-signed" %}self-signed{% else %}operator PEM{% endif %}</span>{% endif %}</summary>
   <div class="card-body">
     <p class="meta">The console is also served over HTTPS. iPXE, cloud-init, and Windows seeds stay on HTTP so a self-signed certificate does not break network boot. Keep <code>PXE_PUBLIC_URL</code> as <code>http://</code>.</p>
@@ -246,8 +270,9 @@
     </form>
   </div>
 </details>
+</section>
 
-<h2 class="section-label">Installation media</h2>
+{{ tab_panel("media") }}
 <details class="card{% if settings_attention.smb_password %} needs-attention{% endif %}" data-section="smb" {% if open_section == "smb" %}open{% endif %}>
   <summary><span class="summary-title">Windows installation media (SMB)</span>{% if settings_attention.smb_password %}<span class="section-alert" aria-label="Needs attention"></span>{% endif %}</summary>
   <div class="card-body">
@@ -280,4 +305,5 @@
     </dl>
   </div>
 </details>
+</section>
 {% endblock %}

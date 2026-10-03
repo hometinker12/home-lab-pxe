@@ -46,6 +46,40 @@ def test_seed_default_folders(client):
     assert b"showModalPreservingScroll" in js.content
 
 
+def _tab_markup(text: str, tab_id: str) -> str:
+    start = text.find(f'id="{tab_id}"')
+    return text[start : text.find("</a>", start)]
+
+
+def test_boot_menu_tabs_folders_first(client):
+    login(client)
+    page = client.get("/boot-menu")
+    assert 'role="tablist"' in page.text
+    assert page.text.find('id="folders-tab"') < page.text.find('id="settings-tab"')
+    folders_tab = _tab_markup(page.text, "folders-tab")
+    assert 'aria-selected="true"' in folders_tab
+    assert '<span class="count" title="3 folders">3</span>' in folders_tab
+    assert 'aria-selected="false"' in _tab_markup(page.text, "settings-tab")
+    assert 'data-tab-panel="settings" hidden' in page.text
+    assert 'data-tab-panel="folders" hidden' not in page.text
+
+
+def test_boot_menu_settings_tab_after_save_and_ipxe(client):
+    login(client)
+    saved = client.post(
+        "/boot-menu/settings",
+        data={"title": "Lab", "continue_label": "Disk", "unknown_timeout_seconds": "5", "menu_timeout_seconds": "10"},
+        follow_redirects=False,
+    )
+    assert saved.status_code == 303
+    assert saved.headers["location"] == "/boot-menu?tab=settings"
+    for url in ("/boot-menu?tab=settings", "/boot-menu?ipxe=1"):
+        page = client.get(url)
+        assert 'aria-selected="true"' in _tab_markup(page.text, "settings-tab")
+        assert 'data-tab-panel="folders" hidden' in page.text
+        assert 'data-tab-panel="settings" hidden' not in page.text
+
+
 def test_last_folder_cannot_be_deleted(client):
     login(client)
     from src.db import session_scope

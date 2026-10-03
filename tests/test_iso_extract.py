@@ -6,6 +6,7 @@ from src.iso_extract import (
     ExtractError,
     extract_linux_payloads,
     extract_windows_media,
+    live_member_pair,
     select_linux_members,
     validate_windows_media,
 )
@@ -124,16 +125,27 @@ def test_windows_extract_returns_media(tmp_path, monkeypatch):
     assert result.boot_wim_relative.endswith("boot.wim")
 
 
-def test_missing_linux_members(tmp_path, monkeypatch):
+def test_live_member_pair_finds_debian_live_layouts():
+    truenas = ["vmlinuz", "initrd.img", "live/filesystem.squashfs", "TrueNAS-SCALE.update"]
+    assert live_member_pair(truenas) == ("vmlinuz", "initrd.img")
+    debian = ["live/vmlinuz-6.1.0-18-amd64", "live/initrd.img-6.1.0-18-amd64", "live/filesystem.squashfs"]
+    assert live_member_pair(debian) == ("live/vmlinuz-6.1.0-18-amd64", "live/initrd.img-6.1.0-18-amd64")
+    assert live_member_pair(["vmlinuz", "initrd.img"]) is None
+    assert live_member_pair(["live/filesystem.squashfs", "vmlinuz"]) is None
+
+
+def test_missing_linux_members_mean_sanboot(tmp_path, monkeypatch):
     monkeypatch.setenv("PXE_IMAGE_ROOT", str(tmp_path))
     clear_settings_cache()
     iso = tmp_path / "image.iso"
     iso.write_bytes(b"iso")
     dest = tmp_path / "out"
     dest.mkdir()
-    runner = FakeRunner([("README", 1, False)])
-    with pytest.raises(ExtractError, match="Ubuntu live-server"):
-        extract_linux_payloads(iso, dest, image_root=tmp_path, runner=runner)
+    runner = FakeRunner([("boot/vmlinuz", 4, False), ("README", 1, False)])
+    result = extract_linux_payloads(iso, dest, image_root=tmp_path, runner=runner)
+    assert result.kernel_relative == ""
+    assert result.initrd_relative == ""
+    assert not (dest / "kernel").exists()
 
 
 def test_seven_z_bin_uses_env(monkeypatch):
