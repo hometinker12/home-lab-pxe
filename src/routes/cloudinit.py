@@ -1,15 +1,28 @@
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi.responses import JSONResponse, PlainTextResponse
 
+from ..auth import require_user
+from ..cloudinit.editor import strip_autoinstall
 from ..cloudinit.render import render_meta_data, render_user_data, render_vendor_data
 from ..db import session_scope
 from ..inventory.service import get_machine_for_guest_init
 from ..security import VaultError
+from ..seed_store import SeedError
 from ..settings import get_settings
 
 router = APIRouter(tags=["cloudinit"])
 
 _NO_STORE = {"Cache-Control": "no-store"}
+
+
+@router.post("/api/seeds/strip-autoinstall")
+def strip_autoinstall_seed(user_data: str = Form(""), user: str = Depends(require_user)):
+    """Rewrite a seed in the editor. Nothing is stored until the operator saves the page."""
+    try:
+        text = strip_autoinstall(user_data)
+    except SeedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"user_data": text}, headers=_NO_STORE)
 
 
 @router.get("/cloud-init/{machine_id}/{instance_id}/meta-data", include_in_schema=False)

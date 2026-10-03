@@ -38,9 +38,16 @@ FAVORITES = (
         "dir": "",
     },
     {
+        "id": "isos",
+        "label": "ISO uploads",
+        "hint": "Uploaded ISOs, their kernel/initrd or WIM files, and extracts",
+        "volume": "images",
+        "dir": "isos",
+    },
+    {
         "id": "uploads",
         "label": "Image uploads",
-        "hint": "ISO, kernel/initrd, WIM, and per-image extracts",
+        "hint": "Template seeds, tool kernel/initrd, and pre-ISO-library uploads",
         "volume": "images",
         "dir": "uploads",
     },
@@ -113,7 +120,7 @@ def volume_root(volume: str) -> Path:
 def ensure_volume_layout(volume: str) -> Path:
     root = volume_root(volume)
     if volume == "images":
-        for name in ("uploads", "nfs", "smb"):
+        for name in ("isos", "uploads", "nfs", "smb"):
             (root / name).mkdir(parents=True, exist_ok=True)
     elif volume == "data":
         (root / "seeds").mkdir(parents=True, exist_ok=True)

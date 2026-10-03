@@ -721,6 +721,7 @@ label > .label-row + textarea { margin-top: 0; }
   margin-left: auto;
   align-self: center;
 }
+.label-actions > [hidden] { display: none; }
 .field-help,
 .cc-help {
   margin: 0.3rem 0 0;
@@ -1020,6 +1021,39 @@ form.image-form:has([name="os_family"] option[value="windows"]:checked) [data-os
 form.image-form:has([name="os_family"] option[value="windows"]:checked) [data-os="linux,tool"] {
   display: none;
 }
+form.template-form:has([name="iso_id"] option[data-os="tool"]:checked) [data-template-os="linux,windows"],
+form.template-form:has([name="iso_id"] option:not([data-os="tool"]):checked) [data-template-os="tool"] {
+  display: none;
+}
+.page-tabs-bar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.25rem 0 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+.page-tabs-bar > button { margin-bottom: 0.45rem; }
+.page-tabs-bar > [hidden],
+.page-tab-panel[hidden] { display: none; }
+.page-tabs { display: flex; gap: 0.25rem; }
+.page-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: -1px;
+  padding: 0.5rem 0.85rem;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-weight: 600;
+  text-decoration: none;
+}
+.page-tab .count-attention { background: var(--attention); color: #fff; }
+.page-tab:hover { color: var(--text); }
+.page-tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.page-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-sm); }
+.page-meta a.chip { color: inherit; text-decoration: none; }
+.page-meta a.chip:hover { border-color: var(--accent); }
 form.dhcp-form:has([name="mode"] option[value="proxy"]:checked) [data-dhcp-mode="authoritative"],
 form.dhcp-form:has([name="mode"] option[value="authoritative"]:checked) [data-dhcp-mode="proxy"] {
   display: none;

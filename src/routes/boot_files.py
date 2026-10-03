@@ -68,7 +68,7 @@ def uefi_boot_order_windows():
     )
 
 
-@router.get("/boot-files/{image_id}/{slot}", include_in_schema=False)
+@router.api_route("/boot-files/{image_id}/{slot}", methods=["GET", "HEAD"], include_in_schema=False)
 def boot_file(image_id: int, slot: str):
     attr = _SLOT.get(slot)
     if attr is None:
@@ -81,7 +81,7 @@ def boot_file(image_id: int, slot: str):
     return _file_response(relative)
 
 
-@router.get("/install-files/{machine_id}/{slot}", include_in_schema=False)
+@router.api_route("/install-files/{machine_id}/{slot}", methods=["GET", "HEAD"], include_in_schema=False)
 def install_file(machine_id: int, slot: str):
     if slot not in _SLOT:
         raise HTTPException(status_code=404, detail="unknown boot file")

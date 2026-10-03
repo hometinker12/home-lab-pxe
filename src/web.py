@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+from functools import cache
 from pathlib import Path
 
 from fastapi import Request
@@ -19,8 +21,22 @@ from .settings_attention import empty_settings_attention, load_settings_attentio
 from .tftp_store import empty_files_attention, load_files_attention
 from .version import get_app_version
 
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 templates.env.globals["state_label"] = state_label
+
+
+@cache
+def static_asset_version(name: str) -> str:
+    """Content hash for cache-busting query strings; VERSION stays the same across dev builds."""
+    try:
+        return hashlib.sha256((_STATIC_DIR / name).read_bytes()).hexdigest()[:12]
+    except OSError:
+        return get_app_version()
+
+
+templates.env.globals["asset_version"] = static_asset_version
 
 
 def client_ip(request: Request) -> str:

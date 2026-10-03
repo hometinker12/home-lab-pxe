@@ -29,19 +29,47 @@
     });
   }
 
-  document.querySelectorAll("form.image-form").forEach((form) => {
-    const select = form.querySelector("[name='os_family']");
-    if (!select) {
+  function syncTemplateForm(form) {
+    const iso = form.querySelector("select[name='iso_id']");
+    if (!iso) {
       return;
     }
-    select.addEventListener("change", () => syncImageForm(form));
+    const picked = iso.options[iso.selectedIndex];
+    const family = (picked && picked.getAttribute("data-os")) || "tool";
+    form.querySelectorAll("[data-template-os]").forEach((el) => {
+      const allowed = (el.getAttribute("data-template-os") || "").split(",").map((part) => part.trim());
+      el.hidden = !allowed.includes(family);
+    });
+    const folder = form.querySelector("[name='folder_id']");
+    if (folder && !folder.dataset.userPicked) {
+      const mapped = form.getAttribute(`data-folder-${family}`);
+      if (mapped && [...folder.options].some((opt) => opt.value === mapped)) {
+        folder.value = mapped;
+      }
+    }
+  }
+
+  document.querySelectorAll("form.image-form, form.template-form").forEach((form) => {
+    const select = form.querySelector("[name='os_family']");
+    if (select) {
+      select.addEventListener("change", () => syncImageForm(form));
+    }
+    const isoPicker = form.classList.contains("template-form") ? form.querySelector("select[name='iso_id']") : null;
+    if (isoPicker) {
+      isoPicker.addEventListener("change", () => syncTemplateForm(form));
+    }
     const folder = form.querySelector("[name='folder_id']");
     if (folder) {
       folder.addEventListener("change", () => {
         folder.dataset.userPicked = "1";
       });
     }
-    syncImageForm(form);
+    if (select) {
+      syncImageForm(form);
+    }
+    if (isoPicker) {
+      syncTemplateForm(form);
+    }
     const sourceSelect = form.querySelector("select[name='source_id']");
     const wimIndex = form.querySelector("[name='wim_index']");
     if (sourceSelect && wimIndex) {
@@ -64,7 +92,7 @@
     }
     form.addEventListener("submit", (event) => {
       const iso = form.querySelector("input[name='iso_file']");
-      if (!iso || !iso.files || !iso.files.length) {
+      if (!iso || iso.closest("[hidden]") || !iso.files || !iso.files.length) {
         return;
       }
       event.preventDefault();
@@ -246,11 +274,12 @@
     }
   }
 
-  function setImageEditControl(row, imageId, busy) {
+  function setImageEditControl(row, busy) {
     const current = row.querySelector("[data-image-edit]");
     if (!current) {
       return;
     }
+    const href = current.getAttribute("data-edit-href") || "";
     if (busy) {
       if (current.tagName === "BUTTON") {
         current.disabled = true;
@@ -262,56 +291,65 @@
       btn.className = "btn-ghost btn-sm";
       btn.disabled = true;
       btn.setAttribute("data-image-edit", "");
+      btn.setAttribute("data-edit-href", href);
       btn.title = "Wait until extraction finishes";
       btn.textContent = "Edit";
       current.replaceWith(btn);
       return;
     }
-    if (current.tagName === "A") {
+    if (current.tagName === "A" || !href) {
       current.removeAttribute("title");
       return;
     }
     const link = document.createElement("a");
     link.className = "btn-ghost btn-sm";
-    link.href = `/images/${imageId}`;
+    link.href = href;
     link.setAttribute("data-image-edit", "");
+    link.setAttribute("data-edit-href", href);
     link.textContent = "Edit";
     current.replaceWith(link);
   }
 
-  const extractCells = [...document.querySelectorAll(".extract-status[data-status]")];
+  const extractTables = [
+    { api: "/api/isos", attr: "data-iso-id" },
+    { api: "/api/images", attr: "data-image-id" },
+  ];
+  const extractCells = [...document.querySelectorAll("tr .extract-status[data-status]")];
   const extractBusy = extractCells.some((el) => extractInProgress(el.getAttribute("data-status")));
-  const imageRows = document.querySelector("[data-image-id]");
-  if (extractBusy && imageRows) {
+  if (extractBusy) {
     const timer = window.setInterval(async () => {
-      try {
-        const response = await fetch("/api/images", { headers: { Accept: "application/json" } });
-        if (!response.ok) {
-          return;
+      let stillBusy = false;
+      for (const table of extractTables) {
+        if (!document.querySelector(`tr[${table.attr}]`)) {
+          continue;
         }
-        const images = await response.json();
-        let stillBusy = false;
-        images.forEach((img) => {
-          const row = document.querySelector(`[data-image-id="${img.id}"]`);
-          if (!row) {
-            return;
-          }
-          const cell = row.querySelector(".extract-status");
-          if (!cell) {
-            return;
-          }
-          const status = img.extract_status || "idle";
-          if (extractInProgress(status)) {
+        try {
+          const response = await fetch(table.api, { headers: { Accept: "application/json" } });
+          if (!response.ok) {
             stillBusy = true;
+            continue;
           }
-          renderExtractCell(cell, status, img.extract_error || "");
-          setImageEditControl(row, img.id, extractInProgress(status));
-        });
-        if (!stillBusy) {
-          window.clearInterval(timer);
+          const rows = await response.json();
+          rows.forEach((item) => {
+            const row = document.querySelector(`tr[${table.attr}="${item.id}"]`);
+            const cell = row && row.querySelector(".extract-status");
+            if (!cell) {
+              return;
+            }
+            const status = item.extract_status || "idle";
+            if (extractInProgress(status)) {
+              stillBusy = true;
+            }
+            row.setAttribute("data-extract", status);
+            renderExtractCell(cell, status, item.extract_error || "");
+            setImageEditControl(row, extractInProgress(status));
+          });
+        } catch {
+          stillBusy = true;
         }
-      } catch {
-        /* keep polling */
+      }
+      if (!stillBusy) {
+        window.clearInterval(timer);
       }
     }, 5000);
   }
@@ -319,9 +357,10 @@
   const extractBusyDetail = document.querySelector("[data-extract-busy]");
   if (extractBusyDetail) {
     const imageId = Number(extractBusyDetail.getAttribute("data-extract-busy"));
+    const api = extractBusyDetail.getAttribute("data-extract-api") || "/api/images";
     const timer = window.setInterval(async () => {
       try {
-        const response = await fetch("/api/images", { headers: { Accept: "application/json" } });
+        const response = await fetch(api, { headers: { Accept: "application/json" } });
         if (!response.ok) {
           return;
         }
@@ -526,6 +565,45 @@
     }
   }
 
+  document.querySelectorAll("[data-strip-autoinstall]").forEach((btn) => {
+    const area = btn.closest("label")?.querySelector("textarea");
+    if (!area) {
+      return;
+    }
+    const sync = () => {
+      btn.hidden = !/^autoinstall:/m.test(area.value);
+    };
+    sync();
+    area.addEventListener("input", sync);
+    btn.addEventListener("click", async () => {
+      const ok = window.confirm(
+        "Remove the Ubuntu installer section? The cloud-config under user-data stays, and early and late commands that can run on the installed system move into runcmd. Wi-Fi quieting, the confirm helper, the failure-log upload, the forced reboot, and the UEFI boot-order helper are left out. Nothing is saved until you click Save.",
+      );
+      if (!ok) {
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const body = new FormData();
+        body.set("user_data", area.value);
+        const response = await fetch("/api/seeds/strip-autoinstall", { method: "POST", body });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const detail = payload && payload.detail;
+          window.alert(typeof detail === "string" ? detail : "Could not remove autoinstall");
+          return;
+        }
+        area.value = payload.user_data || "";
+        area.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch (err) {
+        window.alert("Could not remove autoinstall");
+      } finally {
+        btn.disabled = false;
+        sync();
+      }
+    });
+  });
+
   function wireDialogs() {
     document.querySelectorAll("[data-open-dialog]").forEach((btn) => {
       btn.addEventListener("click", (event) => {
@@ -683,9 +761,54 @@
     }, 5000);
   }
 
+  document.querySelectorAll("[data-page-tabs]").forEach((tabsBar) => {
+    const defaultTab = tabsBar.getAttribute("data-tab-default") || "";
+    const clearParams = (tabsBar.getAttribute("data-tab-clear") || "").split(/\s+/).filter(Boolean);
+    const tabs = [...tabsBar.querySelectorAll("[role=tab][data-tab]")];
+    const selectTab = (name, focus) => {
+      tabs.forEach((tab) => {
+        const active = tab.getAttribute("data-tab") === name;
+        tab.setAttribute("aria-selected", active ? "true" : "false");
+        tab.tabIndex = active ? 0 : -1;
+        if (active && focus) {
+          tab.focus();
+        }
+      });
+      document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
+        panel.hidden = panel.getAttribute("data-tab-panel") !== name;
+      });
+      tabsBar.querySelectorAll("[data-tab-action]").forEach((btn) => {
+        btn.hidden = btn.getAttribute("data-tab-action") !== name;
+      });
+      const url = new URL(window.location.href);
+      if (name === defaultTab) {
+        url.searchParams.delete("tab");
+      } else {
+        url.searchParams.set("tab", name);
+      }
+      clearParams.forEach((param) => url.searchParams.delete(param));
+      window.history.replaceState(null, "", url);
+    };
+    tabs.forEach((tab, index) => {
+      tab.addEventListener("click", (event) => {
+        event.preventDefault();
+        selectTab(tab.getAttribute("data-tab"), false);
+      });
+      tab.addEventListener("keydown", (event) => {
+        const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+        if (!step) {
+          return;
+        }
+        event.preventDefault();
+        const next = tabs[(index + step + tabs.length) % tabs.length];
+        selectTab(next.getAttribute("data-tab"), true);
+      });
+    });
+  });
+
   const imageOs = document.getElementById("image-os-filter");
   const imageExtract = document.getElementById("image-extract-filter");
-  const imageFilterRows = [...document.querySelectorAll("tr[data-image-id]")];
+  const imageFilterRows = [...document.querySelectorAll("tr[data-image-id], tr[data-iso-id]")];
   function applyImageFilter() {
     const os = imageOs ? imageOs.value : "";
     const extract = imageExtract ? imageExtract.value : "";

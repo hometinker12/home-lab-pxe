@@ -13,6 +13,7 @@ from src.cloudinit.editor import (
     cloud_config_preview,
     cloud_config_view,
     shield_tokens,
+    strip_autoinstall,
 )
 from src.inventory.service import create_image, deploy_machine, register_machine
 from src.models import OsFamily
@@ -30,6 +31,59 @@ def _parsed_autoinstall(seed_text: str) -> dict:
 def _user_data(seed_text: str) -> dict:
     auto = _parsed_autoinstall(seed_text)
     return auto.get("user-data") or {}
+
+
+def test_strip_autoinstall_keeps_user_data_and_boot_commands():
+    seed = _factory_seed()
+    out = strip_autoinstall(seed)
+    assert "autoinstall:" not in out
+    parsed = yaml.safe_load(shield_tokens(out))
+    assert parsed["hostname"] == "__PXE_hostname__"
+    assert parsed["timezone"] == "__PXE_timezone__"
+    commands = "\n".join(parsed["runcmd"])
+    assert "__PXE_imaging_url__" in commands
+    assert "__PXE_phone_home_url__" in commands
+    assert commands.index("__PXE_imaging_url__") < commands.index("__PXE_phone_home_url__")
+    assert "phy80211" not in out
+    assert "sysrq-trigger" not in out
+    assert "install_log_url" not in out
+    assert "autoinstall-confirm.py" not in out
+
+
+def test_strip_autoinstall_translates_curtin_and_keeps_existing_runcmd():
+    seed = """#cloud-config
+autoinstall:
+  version: 1
+  early-commands:
+    - echo early-custom
+  late-commands:
+    - curtin in-target -- echo late-custom
+    - echo early-custom
+  user-data:
+    hostname: {{hostname}}
+    runcmd:
+      - echo already
+"""
+    parsed = yaml.safe_load(shield_tokens(strip_autoinstall(seed)))
+    assert parsed["runcmd"] == ["echo already", "echo early-custom", "echo late-custom"]
+    assert "autoinstall" not in parsed
+
+
+def test_strip_autoinstall_rejects_plain_cloud_config():
+    with pytest.raises(SeedError, match="no autoinstall"):
+        strip_autoinstall("#cloud-config\nhostname: box\n")
+
+
+def test_strip_autoinstall_api_rewrites_without_saving(client):
+    login(client)
+    response = client.post("/api/seeds/strip-autoinstall", data={"user_data": _factory_seed()})
+    assert response.status_code == 200
+    body = response.json()["user_data"]
+    assert "autoinstall:" not in body
+    assert "{{phone_home_url}}" in body
+    assert "{{hostname}}" in body
+    missing = client.post("/api/seeds/strip-autoinstall", data={"user_data": "#cloud-config\nhostname: box\n"})
+    assert missing.status_code == 400
 
 
 def test_clear_fqdn_keeps_hostname_and_autoinstall_siblings():

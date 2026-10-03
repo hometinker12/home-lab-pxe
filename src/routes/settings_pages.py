@@ -41,6 +41,20 @@ def _truthy(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "on", "yes"}
 
 
+_SECTION_TABS = {
+    "accounts": "accounts",
+    "password": "accounts",
+    "machines": "machines",
+    "pxe": "network",
+    "dhcp": "network",
+    "tftp": "network",
+    "ssl": "security",
+    "smb": "media",
+    "nfs": "media",
+}
+_SETTINGS_TABS = frozenset(_SECTION_TABS.values())
+
+
 def _settings_context(
     request: Request,
     db: Session,
@@ -55,6 +69,9 @@ def _settings_context(
     selected_timezone = (dhcp.default_timezone or "").strip() or "UTC"
     if open_section is None:
         open_section = (request.query_params.get("section") or "").strip() or None
+    tab = (request.query_params.get("tab") or "").strip()
+    if error or tab not in _SETTINGS_TABS:
+        tab = _SECTION_TABS.get(open_section or "", "accounts")
     notice_flag = (request.query_params.get("notice") or "").strip()
     if notice is None and notice_flag == "smb-rotated":
         notice = "Windows SMB password rotated. It is not displayed. New WinPE boots use the new password."
@@ -87,6 +104,7 @@ def _settings_context(
         error=error,
         notice=notice,
         open_section=open_section,
+        active_tab=tab,
     )
 
 
@@ -107,7 +125,7 @@ def settings_pxe(
         save_pxe(db, bind_interface=bind_interface, extra_options=extra_options, actor=user)
     except DhcpConfigError as exc:
         return _settings_context(request, db, error=str(exc), open_section="pxe")
-    return RedirectResponse(url="/settings", status_code=HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?section=pxe", status_code=HTTP_303_SEE_OTHER)
 
 
 @router.post("/settings/dhcp")
@@ -133,7 +151,7 @@ def settings_dhcp(
         )
     except DhcpConfigError as exc:
         return _settings_context(request, db, error=str(exc), open_section="dhcp")
-    return RedirectResponse(url="/settings", status_code=HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?section=dhcp", status_code=HTTP_303_SEE_OTHER)
 
 
 @router.post("/settings/tftp")
@@ -299,7 +317,7 @@ async def settings_ssl(
         install_pem(cert_bytes, key_bytes)
     except TlsError as exc:
         return _settings_context(request, db, error=str(exc), open_section="ssl")
-    return RedirectResponse(url="/settings", status_code=HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?section=ssl", status_code=HTTP_303_SEE_OTHER)
 
 
 @router.post("/settings/ssl/regenerate")
@@ -313,4 +331,4 @@ def settings_ssl_regenerate(
         request_https_reload()
     except TlsError as exc:
         return _settings_context(request, db, error=str(exc), open_section="ssl")
-    return RedirectResponse(url="/settings", status_code=HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?section=ssl", status_code=HTTP_303_SEE_OTHER)

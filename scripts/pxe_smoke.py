@@ -97,13 +97,49 @@ def folder_ids_from_tree(body: bytes) -> dict[str, int]:
     return found
 
 
-def seed_nfs_generation(container: str, image_id: int) -> None:
-    iid = int(image_id)
+def create_iso_media(client, name: str, os_family: str, **paths: str) -> dict:
+    """Register an ISO by path (no upload) and return its /api/isos row."""
+    form = {"name": name, "os_family": os_family, "arch": "x86_64", **paths}
+    status, _, _ = client.request("POST", "/images/isos", form=form)
+    expect(status in {200, 303, 302}, f"create iso {name} {status}")
+    status, _, body = client.request("GET", "/api/isos")
+    expect(status == 200, f"/api/isos {status}")
+    row = next((iso for iso in json.loads(body) if iso.get("name") == name), None)
+    expect(row is not None, f"iso {name} missing from /api/isos")
+    return row
+
+
+def create_template(client, name: str, iso_id, **extra: str) -> dict:
+    """Add a boot template linked to an ISO (or iso_id='tool') and return its /api/images row."""
+    status, _, _ = client.request("POST", "/images", form={"name": name, "iso_id": str(iso_id), **extra})
+    expect(status in {200, 303, 302}, f"create template {name} {status}")
+    status, _, body = client.request("GET", "/api/images")
+    expect(status == 200, f"/api/images {status}")
+    row = next((img for img in json.loads(body) if img.get("name") == name), None)
+    expect(row is not None, f"template {name} missing from /api/images")
+    return row
+
+
+def wait_iso_settled(client, iso_id: int) -> dict:
+    row: dict = {}
+    for _ in range(60):
+        status, _, body = client.request("GET", "/api/isos")
+        row = next((iso for iso in json.loads(body) if iso.get("id") == iso_id), None) or {}
+        if row.get("extract_status") in {"failed", "ready", "idle"}:
+            return row
+        time.sleep(1)
+    fail(f"iso {iso_id} extract did not settle: {row}")
+    return row
+
+
+def seed_nfs_generation(container: str, iso_id: int) -> None:
+    iid = int(iso_id)
     code = (
         "from pathlib import Path\n"
         "from src.db import session_scope\n"
-        "from src.install_sources import refresh_image_sources\n"
-        "from src.models import ExtractStatus, Image\n"
+        "from src.install_sources import refresh_iso_sources\n"
+        "from src.inventory.isos import sync_templates\n"
+        "from src.models import ExtractStatus, Iso\n"
         f"iid = {iid}\n"
         f"dest = Path('/var/lib/pxe/images/nfs/{iid}/1')\n"
         "casper = dest / 'casper'\n"
@@ -123,17 +159,15 @@ def seed_nfs_generation(container: str, image_id: int) -> None:
         "])\n"
         "(casper / 'install-sources.yaml').write_text(yaml, encoding='utf-8')\n"
         "with session_scope() as db:\n"
-        "    img = db.get(Image, iid)\n"
-        "    if img is None:\n"
-        "        raise SystemExit('missing image')\n"
-        "    img.extract_generation = f'nfs/{iid}/1'\n"
-        "    img.extract_status = ExtractStatus.ready.value\n"
-        "    db.add(img)\n"
-        "    db.commit()\n"
-        "    db.refresh(img)\n"
-        "    if not refresh_image_sources(img):\n"
-        "        raise SystemExit(f'catalog refresh failed status={img.extract_status!r} gen={img.extract_generation!r}')\n"
-        "    db.add(img)\n"
+        "    iso = db.get(Iso, iid)\n"
+        "    if iso is None:\n"
+        "        raise SystemExit('missing iso')\n"
+        "    iso.extract_generation = f'nfs/{iid}/1'\n"
+        "    iso.extract_status = ExtractStatus.ready.value\n"
+        "    if not refresh_iso_sources(iso):\n"
+        "        raise SystemExit(f'catalog refresh failed status={iso.extract_status!r} gen={iso.extract_generation!r}')\n"
+        "    db.add(iso)\n"
+        "    sync_templates(db, iso)\n"
         "    db.commit()\n"
     )
     proc = subprocess.run(
@@ -552,52 +586,73 @@ def main() -> None:
     expect(b"pxe-media" not in body, "pending startnet leaked media")
     status, _, _ = c.request("GET", f"/install-files/{pmid}/kernel")
     expect(status == 404, "pending must not receive install-files")
+    status, _, _ = c.request("HEAD", f"/install-files/{pmid}/kernel")
+    expect(status == 404, "pending must not receive install-files via HEAD")
+
+    anon = Client(args.base_url)
+    status, _, body = anon.request("GET", "/api/isos", headers={"Accept": "application/json"})
+    expect(status != 200 or not body.lstrip().startswith(b"["), "/api/isos must require login")
 
     status, _, body = c.request("GET", "/images")
     expect(status == 200 and b"Advanced Settings" in body, "images missing Advanced Settings")
     expect(b'name="kernel_path"' in body, "kernel path missing from advanced settings")
-    expect(b"data-open-dialog=\"add-image\"" in body, "images Add image control")
-    expect(b'id="add-image"' in body, "add image overlay dialog")
+    expect(b'data-open-dialog="add-template"' in body and b'id="add-template"' in body, "images Add template dialog")
+    expect(b'data-open-dialog="add-iso"' in body and b'id="add-iso"' in body, "images Add ISO dialog")
     expect(b'<section class="card">' not in body, "add image form should not be an on-page card")
-    status, _, js_body = c.request("GET", "/static/app.js")
+    asset = re.search(rb'/static/app\.js\?v=([0-9a-f]{12})"', body)
+    expect(asset is not None, "app.js URL must carry a content hash")
+    expect(re.search(rb'/static/app\.css\?v=[0-9a-f]{12}"', body) is not None, "app.css URL must carry a content hash")
+    status, _, js_body = c.request("GET", f"/static/app.js?v={asset.group(1).decode()}")
     expect(status == 200 and b'form.closest("dialog")' in js_body, "ISO upload must close the add dialog")
     expect(b"dialog.upload-overlay" in js_body, "ISO upload progress overlay")
+    status, _, body = c.request("GET", "/images?tab=isos")
+    expect(status == 200 and b'id="add-iso"' in body, "images ISOs tab")
 
     dummy_iso = f"smoke-extract-{int(time.time())}"
     status, _, _ = c.multipart(
-        "/images",
+        "/images/isos",
         {"name": dummy_iso, "os_family": "linux", "arch": "x86_64"},
         {"iso_file": ("dummy.iso", b"not-an-iso", "application/octet-stream")},
     )
     expect(status in {200, 303, 302}, f"dummy iso create {status}")
-    dummy_row = None
-    for _ in range(60):
-        status, _, body = c.request("GET", "/api/images")
-        dummy_row = next((img for img in json.loads(body) if img.get("name") == dummy_iso), None)
-        if dummy_row and dummy_row.get("extract_status") in {"failed", "ready", "idle"}:
-            break
-        time.sleep(1)
-    expect(dummy_row is not None, "dummy iso image missing")
-    expect(dummy_row.get("extract_status") == "failed", f"dummy iso extract {dummy_row}")
+    status, _, body = c.request("GET", "/api/isos")
+    dummy_iso_row = next((iso for iso in json.loads(body) if iso.get("name") == dummy_iso), None)
+    expect(dummy_iso_row is not None, "dummy iso missing from /api/isos")
+    dummy_iso_id = int(dummy_iso_row["id"])
+    dummy_iso_row = wait_iso_settled(c, dummy_iso_id)
+    expect(dummy_iso_row.get("extract_status") == "failed", f"dummy iso extract {dummy_iso_row}")
+    err = dummy_iso_row.get("extract_error") or ""
+    expect("/var/lib" not in err and "C:\\" not in err, "extract_error leaked a host path")
+    dummy_row = create_template(c, f"{dummy_iso}-tpl", dummy_iso_id)
+    expect(dummy_row.get("iso_id") == dummy_iso_id and dummy_row.get("iso_name") == dummy_iso, "template iso link")
+    expect(dummy_row.get("iso_extract_status") == "failed", f"template iso_extract_status {dummy_row}")
+    expect(dummy_row.get("os_family") == "linux", "template must take its ISO's OS")
     status, _, body = c.request("GET", "/images")
     expect(b"Delete" in body, "image delete control missing")
-    err = dummy_row.get("extract_error") or ""
-    expect("/var/lib" not in err and "C:\\" not in err, "extract_error leaked a host path")
+    status, _, body = c.request("GET", f"/images/isos/{dummy_iso_id}")
+    expect(status == 200 and f"{dummy_iso}-tpl".encode() in body, "ISO page should list its templates")
     status, _, body = c.request(
         "POST",
         f"/machines/{pmid}/deploy",
         form={"image_id": str(dummy_row["id"]), "username": "root", "password": "iso-extract-secret"},
     )
     expect(status == 200 and b"not ready" in body.lower(), "failed extract must block deploy")
-    status, _, body = c.request("POST", f"/images/{dummy_row['id']}/extract")
+    status, _, body = c.request("POST", f"/images/isos/{dummy_iso_id}/delete")
+    expect(status == 200 and b"Delete the templates" in body, "an ISO in use must not be deletable")
+    status, _, body = c.request("POST", f"/images/isos/{dummy_iso_id}/extract")
     expect(status in {200, 303, 302}, f"retry extract {status}")
+    expect(wait_iso_settled(c, dummy_iso_id).get("extract_status") == "failed", "retried dummy extract")
     status, _, body = c.request("POST", f"/images/{dummy_row['id']}/seed/reset")
     expect(status in {200, 303, 302}, f"reset seed {status}")
     dummy_id = dummy_row["id"]
     status, _, _ = c.request("POST", f"/images/{dummy_id}/delete")
-    expect(status in {200, 303, 302}, f"delete dummy iso {status}")
+    expect(status in {200, 303, 302}, f"delete dummy template {status}")
     status, _, body = c.request("GET", "/api/images")
-    expect(all(img.get("id") != dummy_id for img in json.loads(body)), "deleted dummy iso still listed")
+    expect(all(img.get("id") != dummy_id for img in json.loads(body)), "deleted dummy template still listed")
+    status, _, _ = c.request("POST", f"/images/isos/{dummy_iso_id}/delete")
+    expect(status in {200, 303, 302}, f"delete dummy iso {status}")
+    status, _, body = c.request("GET", "/api/isos")
+    expect(all(iso.get("id") != dummy_iso_id for iso in json.loads(body)), "deleted dummy iso still listed")
 
     status, _, _ = c.request(
         "POST",
@@ -631,25 +686,13 @@ def main() -> None:
     expect(status in {200, 303, 302}, f"restore default timezone {status}")
 
     ubuntu_name = f"smoke-ubuntu-{int(time.time())}"
-    status, _, body = c.request(
-        "POST",
-        "/images",
-        form={
-            "name": ubuntu_name,
-            "os_family": "linux",
-            "arch": "x86_64",
-            "kernel_path": "ubuntu/vmlinuz",
-            "initrd_path": "ubuntu/initrd",
-        },
+    ubuntu_iso = create_iso_media(
+        c, f"{ubuntu_name}-media", "linux", kernel_path="ubuntu/vmlinuz", initrd_path="ubuntu/initrd"
     )
-    expect(status in {200, 303, 302}, f"create image {status}")
-
-    status, _, body = c.request("GET", "/api/images")
-    expect(status == 200, f"/api/images after create {status}")
-    linux_image = next((img for img in json.loads(body) if img.get("name") == ubuntu_name), None)
-    expect(linux_image is not None, "linux image missing after create")
+    linux_image = create_template(c, ubuntu_name, ubuntu_iso["id"])
     linux_image_id = linux_image["id"]
     expect("extract_status" in linux_image, "extract_status missing from /api/images")
+    expect(linux_image.get("kernel_path") == "ubuntu/vmlinuz", "template must mirror its ISO kernel")
 
     pick_mac = "de-ad-be-ef-00-10"
     status, _, body = c.request("GET", f"/ipxe/{pick_mac}")
@@ -683,21 +726,10 @@ def main() -> None:
     expect("SmokeNested" in nested_menu, "nested folder title missing")
     expect(f"/menu/{linux_folder_id}" in nested_menu, "nested Back should chain to parent folder")
     tool_name = f"smoke-tool-{int(time.time())}"
-    status, _, _ = c.request(
-        "POST",
-        "/images",
-        form={
-            "name": tool_name,
-            "os_family": "tool",
-            "arch": "x86_64",
-            "kernel_path": "tools/memtest",
-            "initrd_path": "tools/initrd",
-        },
+    tool_image = create_template(
+        c, tool_name, "tool", arch="x86_64", kernel_path="tools/memtest", initrd_path="tools/initrd"
     )
-    expect(status in {200, 303, 302}, f"create tool image {status}")
-    status, _, body = c.request("GET", "/api/images")
-    tool_image = next((img for img in json.loads(body) if img.get("name") == tool_name), None)
-    expect(tool_image is not None, "tool image missing after create")
+    expect(tool_image.get("os_family") == "tool" and tool_image.get("iso_id") is None, "tool entry has no ISO")
     status, _, body = c.request("GET", f"/ipxe/{pick_mac}/boot/{tool_image['id']}")
     tool_boot = body.decode()
     expect("kernel" in tool_boot, "tool boot missing kernel")
@@ -729,27 +761,33 @@ def main() -> None:
     expect("kernel" not in body.decode(), "disabled host must not install from /boot/image")
 
     status, _, body = c.request("GET", f"/images/{linux_image_id}")
-    expect(status == 200 and b"Save image" in body, "image edit page")
-    expect(b"Choose file" in body and b"data-iso-path-display" in body, "image edit ISO path should be disabled with Choose file")
-    expect(b"Install source" in body, "image edit install source")
-    expect(b"Advanced Settings" in body, "image edit advanced settings")
-    expect(b'data-os="linux,tool" open' not in body, "image edit advanced settings should be collapsed")
+    expect(status == 200 and b"Save template" in body, "template edit page")
+    expect(f'href="/images/isos/{ubuntu_iso["id"]}"'.encode() in body, "template page should link its ISO")
+    expect(b"Install source" in body, "template edit install source")
+    status, _, body = c.request("GET", f"/images/isos/{ubuntu_iso['id']}")
+    expect(status == 200 and b"Save ISO" in body, "ISO edit page")
+    expect(b"Choose file" in body and b"data-iso-path-display" in body, "ISO edit path should be disabled with Choose file")
+    expect(b"Advanced Settings" in body, "ISO edit advanced settings")
     status, _, _ = c.request(
         "POST",
-        f"/images/{linux_image_id}",
+        f"/images/isos/{ubuntu_iso['id']}",
         form={
-            "name": ubuntu_name,
-            "os_family": "linux",
+            "name": ubuntu_iso["name"],
             "arch": "x86_64",
             "kernel_path": "ubuntu/vmlinuz",
             "initrd_path": "ubuntu/initrd",
             "cmdline": "smoke-edit",
-            "source_id": "ubuntu-server-minimal",
         },
     )
-    expect(status in {200, 303, 302}, f"edit image {status}")
+    expect(status in {200, 303, 302}, f"edit iso {status}")
+    status, _, _ = c.request(
+        "POST",
+        f"/images/{linux_image_id}",
+        form={"name": ubuntu_name, "source_id": "ubuntu-server-minimal"},
+    )
+    expect(status in {200, 303, 302}, f"edit template {status}")
     status, _, body = c.request("GET", f"/images/{linux_image_id}")
-    expect(b"smoke-edit" in body, "edited cmdline missing")
+    expect(b"smoke-edit" in body, "ISO cmdline edit should reach its template")
     token = f"pxe-smoke-token-{int(time.time())}"
     seed = (
         "#cloud-config\n"
@@ -782,42 +820,37 @@ def main() -> None:
     status, _, _ = c.request(
         "POST",
         f"/images/{linux_image_id}",
-        form={
-            "name": ubuntu_name,
-            "os_family": "linux",
-            "arch": "x86_64",
-            "kernel_path": "ubuntu/vmlinuz",
-            "initrd_path": "ubuntu/initrd",
-            "cmdline": "smoke-edit",
-            "source_id": "ubuntu-server-minimal",
-            "user_data": seed,
-        },
+        form={"name": ubuntu_name, "source_id": "ubuntu-server-minimal", "user_data": seed},
     )
     expect(status in {200, 303, 302}, f"edit image seed {status}")
     check_cloudinit_editor(c, f"/images/{linux_image_id}")
     status, _, body = c.request("GET", f"/images/{linux_image_id}")
-    expect(b'data-os="linux,tool"' in body or b'data-os="linux"' in body, "linux image fields")
-    expect(b'data-os="windows"' in body, "windows image fields")
+    expect(b"data-strip-autoinstall" in body, "linux template missing Remove autoinstall")
+    strip_json = {"Accept": "application/json"}
+    status, headers, body = c.request(
+        "POST", "/api/seeds/strip-autoinstall", form={"user_data": seed}, headers=strip_json
+    )
+    expect(status == 200, f"strip autoinstall {status}")
+    cache = {key.lower(): value for key, value in headers.items()}.get("cache-control", "")
+    expect("no-store" in cache, f"strip autoinstall Cache-Control {cache!r}")
+    stripped = json.loads(body).get("user_data") or ""
+    expect("autoinstall:" not in stripped and "manage_etc_hosts: true" in stripped, "strip autoinstall output")
+    status, _, body = c.request(
+        "POST", "/api/seeds/strip-autoinstall", form={"user_data": "#cloud-config\nhostname: smoke-plain\n"}
+    )
+    expect(status == 400 and b"smoke-plain" not in body, f"strip autoinstall without autoinstall {status}")
+    status, _, body = anon.request("POST", "/api/seeds/strip-autoinstall", form={"user_data": seed}, headers=strip_json)
+    expect(status != 200 or b"user_data" not in body, "strip autoinstall must require login")
     status, _, body = c.request("GET", "/api/images")
     saved_linux = next((img for img in json.loads(body) if img.get("id") == linux_image_id), None)
     expect(saved_linux is not None, "linux image missing after source save")
     expect(saved_linux.get("source_id") == "ubuntu-server-minimal", "linux image source_id did not persist")
 
     iso_name = f"smoke-iso-{int(time.time())}"
-    status, _, _ = c.request(
-        "POST",
-        "/images",
-        form={
-            "name": iso_name,
-            "os_family": "linux",
-            "arch": "x86_64",
-            "iso_path": "ubuntu/live.iso",
-        },
-    )
-    expect(status in {200, 303, 302}, f"create iso image {status}")
-    status, _, body = c.request("GET", "/api/images")
-    iso_images = [img for img in json.loads(body) if img["name"] == iso_name]
-    expect(iso_images and iso_images[0].get("iso_path") == "ubuntu/live.iso", "iso path missing")
+    sanboot_iso = create_iso_media(c, f"{iso_name}-media", "linux", iso_path="ubuntu/live.iso")
+    expect(sanboot_iso.get("iso_path") == "ubuntu/live.iso", "iso path missing")
+    iso_images = [create_template(c, iso_name, sanboot_iso["id"])]
+    expect(iso_images[0].get("iso_path") == "ubuntu/live.iso", "template must mirror the ISO path")
 
     iso_mac = "de-ad-be-ef-00-aa"
     status, _, body = c.request("GET", f"/ipxe/{iso_mac}")
@@ -835,28 +868,26 @@ def main() -> None:
     expect("sanboot" in iso_text and "/boot-files/" in iso_text, "expected iso sanboot iPXE")
     expect("kernel" not in iso_text, "iso-only install should not chain kernel")
     expect("iso-smoke-secret" not in iso_text, "password leaked into iso iPXE")
+    iso_record = machine_record(c, iso_machine["id"])
+    expect(iso_record.get("state") == "deployed", f"sanboot install should be Deployed once served {iso_record.get('state')}")
+    status, _, body = c.request("GET", f"/ipxe/{iso_mac}")
+    after_text = body.decode()
+    expect("/boot-files/" not in after_text and "choose" in after_text, "a Deployed sanboot machine must get the menu")
+    iso_file = f"/boot-files/{iso_images[0]['id']}/iso"
+    get_status, _, _ = c.request("GET", iso_file)
+    head_status, _, head_body = c.request("HEAD", iso_file)
+    expect(head_status == get_status and head_body == b"", f"HEAD {iso_file} {head_status} vs GET {get_status}")
 
     if os.environ.get("CI") == "true" and not args.container.strip():
         fail("NFS iPXE smoke requires --container in CI")
     if args.container.strip():
         nfs_name = f"smoke-nfs-{int(time.time())}"
-        status, _, _ = c.request(
-            "POST",
-            "/images",
-            form={
-                "name": nfs_name,
-                "os_family": "linux",
-                "arch": "x86_64",
-                "kernel_path": "ubuntu/vmlinuz",
-                "initrd_path": "ubuntu/initrd",
-            },
+        nfs_iso = create_iso_media(
+            c, f"{nfs_name}-media", "linux", kernel_path="ubuntu/vmlinuz", initrd_path="ubuntu/initrd"
         )
-        expect(status in {200, 303, 302}, f"create nfs image {status}")
-        status, _, body = c.request("GET", "/api/images")
-        nfs_image = next((img for img in json.loads(body) if img.get("name") == nfs_name), None)
-        expect(nfs_image is not None, "nfs linux image missing after create")
-        nfs_image_id = int(nfs_image["id"])
-        seed_nfs_generation(args.container.strip(), nfs_image_id)
+        nfs_iso_id = int(nfs_iso["id"])
+        nfs_image_id = int(create_template(c, nfs_name, nfs_iso_id)["id"])
+        seed_nfs_generation(args.container.strip(), nfs_iso_id)
         status, _, body = c.request("GET", "/api/images")
         nfs_image = next((img for img in json.loads(body) if img.get("id") == nfs_image_id), None)
         expect(nfs_image is not None, "nfs linux image missing after catalog seed")
@@ -870,14 +901,7 @@ def main() -> None:
         status, _, _ = c.request(
             "POST",
             f"/images/{nfs_image_id}",
-            form={
-                "name": nfs_name,
-                "os_family": "linux",
-                "arch": "x86_64",
-                "kernel_path": "ubuntu/vmlinuz",
-                "initrd_path": "ubuntu/initrd",
-                "source_id": "ubuntu-server-minimal",
-            },
+            form={"name": nfs_name, "source_id": "ubuntu-server-minimal"},
         )
         expect(status in {200, 303, 302}, f"nfs source save {status}")
         status, _, body = c.request("GET", "/api/images")
@@ -902,7 +926,7 @@ def main() -> None:
         expect("netboot=nfs" in nfs_text and "boot=casper" in nfs_text, "expected nfs casper iPXE")
         expect("noprompt" in nfs_text and "quickreboot" in nfs_text, "casper must skip media-eject wait")
         expect("reboot=force" in nfs_text, "installer kernel must force reboot")
-        expect(f"nfsroot=" in nfs_text and f"/var/lib/pxe/images/nfs/{nfs_image_id}/1" in nfs_text, "expected generation nfsroot")
+        expect("nfsroot=" in nfs_text and f"/var/lib/pxe/images/nfs/{nfs_iso_id}/1" in nfs_text, "expected generation nfsroot")
         expect("live-media-path=" not in nfs_text, "generation nfsroot should use default casper/")
         expect("NFSOPTS=vers=3,tcp,port=2049" in nfs_text, "expected casper NFSOPTS")
         expect("cloud-config-url=${seed-url}user-data" in nfs_text, "NFS casper must fetch HTTP user-data")
@@ -917,9 +941,9 @@ def main() -> None:
             text=True,
         )
         expect(conf_proc.returncode == 0, "ganesha generations conf missing")
-        expect(f'Path = "/var/lib/pxe/images/nfs/{nfs_image_id}/1"' in (conf_proc.stdout or ""), "generation export Path missing")
+        expect(f'Path = "/var/lib/pxe/images/nfs/{nfs_iso_id}/1"' in (conf_proc.stdout or ""), "generation export Path missing")
         expect("Squash = All" in (conf_proc.stdout or "") and "Anonymous_Uid = 65534" in (conf_proc.stdout or ""), "generation export must squash to nobody")
-        expect_nfs_fhandle(args.container.strip(), f"/var/lib/pxe/images/nfs/{nfs_image_id}/1")
+        expect_nfs_fhandle(args.container.strip(), f"/var/lib/pxe/images/nfs/{nfs_iso_id}/1")
         expect(",vers=" not in nfs_text and "mountport=" not in nfs_text, "nfsroot must not swallow mount options")
         expect("iso-url=" not in nfs_text and "ramdisk_size" not in nfs_text, "nfs install should not wget ISO")
         expect("nfs-smoke-secret" not in nfs_text, "password leaked into nfs iPXE")
@@ -1100,30 +1124,21 @@ def main() -> None:
     status, _, body = c.request("GET", f"/ipxe/{win_mac}")
     expect("Continuing to next boot device" in body.decode(), "windows MAC should continue to disk first")
 
-    status, _, _ = c.request(
-        "POST",
-        "/images",
-        form={
-            "name": f"smoke-windows-{int(time.time())}",
-            "os_family": "windows",
-            "arch": "x86_64",
-            "boot_wim_path": "windows/boot.wim",
-            "install_wim_path": "windows/install.wim",
-        },
+    win_name = f"smoke-windows-{int(time.time())}"
+    win_iso = create_iso_media(
+        c,
+        f"{win_name}-media",
+        "windows",
+        boot_wim_path="windows/boot.wim",
+        install_wim_path="windows/install.wim",
     )
-    expect(status in {200, 303, 302}, f"create windows image {status}")
-    status, _, body = c.request("GET", "/api/images")
-    win_created = next((img for img in json.loads(body) if img.get("os_family") == "windows"), None)
-    expect(win_created is not None, "windows image missing after create")
+    win_created = create_template(c, win_name, win_iso["id"])
+    expect(win_created.get("os_family") == "windows", "windows template must take its ISO's OS")
     status, _, _ = c.request(
         "POST",
         f"/images/{win_created['id']}",
         form={
             "name": win_created["name"],
-            "os_family": "windows",
-            "arch": "x86_64",
-            "boot_wim_path": "windows/boot.wim",
-            "install_wim_path": "windows/install.wim",
             "source_id": "Windows Server 2022 SERVERSTANDARD",
             "wim_index": "2",
         },

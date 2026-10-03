@@ -1,17 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Images — home-lab-pxe{% endblock %}
+{% macro extract_badge(status, error) -%}
+  {% if status == 'queued' %}<span class="badge badge-pending">queued</span>
+  {% elif status == 'extracting' %}<span class="badge badge-deploying">extracting</span>
+  {% elif status == 'ready' %}<span class="badge badge-deployed">ready</span>
+  {% elif status == 'failed' %}<span class="badge badge-disabled" title="{{ error }}">failed</span>
+  {% else %}—{% endif %}
+  {% if status == 'failed' and error %}<div class="meta">{{ error }}</div>{% endif %}
+{%- endmacro %}
 {% block body %}
 <header class="page-header">
   <div class="page-header-row">
     <div class="page-title">
       <h1>Images</h1>
-      <span class="count" title="{{ images|length }} images">{{ images|length }}</span>
-    </div>
-    <div class="page-actions">
-      <button type="button" data-open-dialog="add-image">Add image</button>
     </div>
   </div>
-  <p class="description">Boot payloads served over PXE. Uploading an Ubuntu live-server or Windows Server ISO returns immediately; a background worker extracts netboot files and then deletes the uploaded ISO when NFS or SMB media is ready. Linux kernel/initrd pairs and custom Windows boot.wim uploads still work.</p>
+  <p class="description">Upload install media once under ISOs; a background worker extracts it for NFS (Ubuntu) or SMB (Windows) and keeps the ISO on disk. Templates point at an ISO and pick the boot-menu folder, install source, and guest-init, so one ISO can back several templates.</p>
 </header>
 <div class="toolbar">
   <label class="toolbar-field">OS
@@ -34,111 +38,195 @@
   </label>
 </div>
 {% if error and not add_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
-<div class="table-wrap">
-  <table>
-    <thead><tr><th>Name</th><th>OS</th><th>Folder</th><th>Arch</th><th>Extract</th><th>Paths</th><th class="col-actions"><span class="sr-only">Actions</span></th></tr></thead>
-    <tbody>
-      {% for img in images %}
-      {% set extract_busy = (img.extract_status or 'idle') in ('queued', 'extracting') %}
-      <tr data-image-id="{{ img.id }}" data-os="{{ img.os_family }}" data-extract="{{ img.extract_status or 'idle' }}">
-        <td><a class="row-link" href="/images/{{ img.id }}">{{ img.name }}</a></td>
-        <td><span class="chip">{{ img.os_family }}</span></td>
-        <td>{{ folder_paths.get(img.id, "—") }}</td>
-        <td>{{ img.arch }}</td>
-        <td class="extract-status" data-status="{{ img.extract_status or 'idle' }}">
-          {% if img.extract_status == 'queued' %}<span class="badge badge-pending">queued</span>
-          {% elif img.extract_status == 'extracting' %}<span class="badge badge-deploying">extracting</span>
-          {% elif img.extract_status == 'ready' %}<span class="badge badge-deployed">ready</span>
-          {% elif img.extract_status == 'failed' %}<span class="badge badge-disabled" title="{{ img.extract_error }}">failed</span>
-          {% else %}—{% endif %}
-          {% if img.extract_status == 'failed' and img.extract_error %}<div class="meta">{{ img.extract_error }}</div>{% endif %}
-        </td>
-        <td><code>{{ img.kernel_path or img.boot_wim_path or img.iso_path or "—" }}</code></td>
-        <td class="col-actions">
-          <span class="row-actions">
-          {% if extract_busy %}
-          <button type="button" class="btn-ghost btn-sm" data-image-edit disabled title="Wait until extraction finishes">Edit</button>
-          {% else %}
-          <a class="btn-ghost btn-sm" data-image-edit href="/images/{{ img.id }}">Edit</a>
-          {% endif %}
-          <form method="post" action="/images/{{ img.id }}/delete" class="inline-form" onsubmit="return confirm('Delete this image and its extracted files?');">
-            <button type="submit" class="icon-btn is-danger" aria-label="Delete {{ img.name }}" title="Delete">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zm3-9h2v8H9v-8zm4 0h2v8h-2v-8zM15.5 4l-1-1h-5l-1 1H5v2h14V4h-3.5z"/></svg>
-            </button>
-          </form>
-          </span>
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="7" class="empty">No images yet. Add an Ubuntu live-server ISO or a Windows Server ISO to start deploying.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+
+<div class="page-tabs-bar" data-page-tabs data-tab-default="templates">
+  <div class="page-tabs" role="tablist" aria-label="Images">
+    <a class="page-tab" role="tab" id="templates-tab" href="/images" data-tab="templates" aria-controls="templates-panel"
+       aria-selected="{{ 'true' if active_tab == 'templates' else 'false' }}"{% if active_tab != 'templates' %} tabindex="-1"{% endif %}>
+      Templates <span class="count" title="{{ images|length }} templates">{{ images|length }}</span>
+    </a>
+    <a class="page-tab" role="tab" id="isos-tab" href="/images?tab=isos" data-tab="isos" aria-controls="isos-panel"
+       aria-selected="{{ 'true' if active_tab == 'isos' else 'false' }}"{% if active_tab != 'isos' %} tabindex="-1"{% endif %}>
+      ISOs <span class="count" title="{{ isos|length }} ISOs">{{ isos|length }}</span>
+    </a>
+  </div>
+  <button type="button" data-open-dialog="add-template" data-tab-action="templates"{% if active_tab != 'templates' %} hidden{% endif %}>Add template</button>
+  <button type="button" data-open-dialog="add-iso" data-tab-action="isos"{% if active_tab != 'isos' %} hidden{% endif %}>Add ISO</button>
 </div>
-<dialog class="modal modal-wide" aria-labelledby="add-image-title" id="add-image"{% if add_open %} open{% endif %}>
-  <form method="post" action="/images" enctype="multipart/form-data" class="image-form"
-        data-folder-linux="{{ folder_defaults.get('linux', '') }}"
-        data-folder-windows="{{ folder_defaults.get('windows', '') }}"
-        data-folder-tool="{{ folder_defaults.get('tool', '') }}">
+
+<section class="page-tab-panel" role="tabpanel" id="templates-panel" aria-labelledby="templates-tab" data-tab-panel="templates"{% if active_tab != 'templates' %} hidden{% endif %}>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>OS</th><th>Folder</th><th>ISO</th><th>Extract</th><th class="col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for img in images %}
+        <tr data-image-id="{{ img.id }}" data-os="{{ img.os_family }}" data-extract="{{ img.extract_status or 'idle' }}">
+          <td><a class="row-link" href="/images/{{ img.id }}">{{ img.name }}</a></td>
+          <td><span class="chip">{{ img.os_family }}</span></td>
+          <td>{{ folder_paths.get(img.id, "—") }}</td>
+          <td>{% if img.iso_id %}<a href="/images/isos/{{ img.iso_id }}">{{ iso_names.get(img.iso_id, "—") }}</a>{% else %}—{% endif %}</td>
+          <td class="extract-status" data-status="{{ img.extract_status or 'idle' }}">{{ extract_badge(img.extract_status, img.extract_error) }}</td>
+          <td class="col-actions">
+            <span class="row-actions">
+            <a class="btn-ghost btn-sm" href="/images/{{ img.id }}">Edit</a>
+            <form method="post" action="/images/{{ img.id }}/delete" class="inline-form" onsubmit="return confirm('Delete this template and its guest-init seed? The ISO stays.');">
+              <button type="submit" class="icon-btn is-danger" aria-label="Delete {{ img.name }}" title="Delete">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zm3-9h2v8H9v-8zm4 0h2v8h-2v-8zM15.5 4l-1-1h-5l-1 1H5v2h14V4h-3.5z"/></svg>
+              </button>
+            </form>
+            </span>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty">No templates yet. Add one that points at an ISO to start deploying.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="page-tab-panel" role="tabpanel" id="isos-panel" aria-labelledby="isos-tab" data-tab-panel="isos"{% if active_tab != 'isos' %} hidden{% endif %}>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>OS</th><th>Arch</th><th>Size</th><th>Extract</th><th>Templates</th><th class="col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        {% for iso in isos %}
+        {% set iso_busy = (iso.extract_status or 'idle') in ('queued', 'extracting') %}
+        {% set used_by = template_counts.get(iso.id, 0) %}
+        <tr data-iso-id="{{ iso.id }}" data-os="{{ iso.os_family }}" data-extract="{{ iso.extract_status or 'idle' }}">
+          <td><a class="row-link" href="/images/isos/{{ iso.id }}">{{ iso.name }}</a></td>
+          <td><span class="chip">{{ iso.os_family }}</span></td>
+          <td>{{ iso.arch }}</td>
+          <td>{% if iso.size_bytes %}{{ iso.size_bytes|filesizeformat(true) }}{% elif iso.iso_path %}—{% else %}<span class="meta">no ISO file</span>{% endif %}</td>
+          <td class="extract-status" data-status="{{ iso.extract_status or 'idle' }}">{{ extract_badge(iso.extract_status, iso.extract_error) }}</td>
+          <td>{{ used_by }}</td>
+          <td class="col-actions">
+            <span class="row-actions">
+            {% if iso_busy %}
+            <button type="button" class="btn-ghost btn-sm" data-image-edit data-edit-href="/images/isos/{{ iso.id }}" disabled title="Wait until extraction finishes">Edit</button>
+            {% else %}
+            <a class="btn-ghost btn-sm" data-image-edit data-edit-href="/images/isos/{{ iso.id }}" href="/images/isos/{{ iso.id }}">Edit</a>
+            {% endif %}
+            <form method="post" action="/images/isos/{{ iso.id }}/delete" class="inline-form" onsubmit="return confirm('Delete this ISO and its extracted media?');">
+              <button type="submit" class="icon-btn is-danger" aria-label="Delete {{ iso.name }}"
+                {% if used_by %}disabled title="Used by {{ used_by }} template{{ '' if used_by == 1 else 's' }}"{% else %}title="Delete"{% endif %}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zm3-9h2v8H9v-8zm4 0h2v8h-2v-8zM15.5 4l-1-1h-5l-1 1H5v2h14V4h-3.5z"/></svg>
+              </button>
+            </form>
+            </span>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="empty">No ISOs yet. Upload an Ubuntu live-server or Windows Server ISO to start.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<dialog class="modal modal-wide" aria-labelledby="add-iso-title" id="add-iso"{% if add_open == 'iso' %} open{% endif %}>
+  <form method="post" action="/images/isos" enctype="multipart/form-data" class="image-form">
     <header class="modal-head">
-      <h2 id="add-image-title">Add image</h2>
+      <h2 id="add-iso-title">Add ISO</h2>
       {% include "_close_button.html" %}
     </header>
     <div class="modal-body">
-      {% if error and add_open %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+      {% if error and add_open == 'iso' %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
       <h3 class="section-label">General</h3>
       <div class="form-grid">
-        <label><span class="label-row"><span class="label-text">Name</span></span><input name="name" required value="{{ add.name }}" autocomplete="off" autofocus></label>
+        <label><span class="label-row"><span class="label-text">Name</span></span><input name="name" required value="{{ iso_add.name }}" autocomplete="off" autofocus></label>
         <label><span class="label-row"><span class="label-text">OS</span><span class="key-hint">os_family</span></span>
           <select name="os_family">
-            <option value="linux" {% if add.os_family == "linux" %}selected{% endif %}>linux</option>
-            <option value="windows" {% if add.os_family == "windows" %}selected{% endif %}>windows</option>
-            <option value="tool" {% if add.os_family == "tool" %}selected{% endif %}>tool</option>
+            <option value="linux" {% if iso_add.os_family == "linux" %}selected{% endif %}>linux</option>
+            <option value="windows" {% if iso_add.os_family == "windows" %}selected{% endif %}>windows</option>
           </select>
         </label>
-        <div data-os="linux,windows">
-          <label><span class="label-row"><span class="label-text">Install source</span></span>
-            <select disabled aria-label="Install source">
-              <option>Pick after extract</option>
-            </select>
-            <span class="field-help">The catalog appears on the image page after extraction finishes.</span>
-          </label>
-        </div>
-        <label><span class="label-row"><span class="label-text">Folder</span></span>
-          <select name="folder_id" required{% if add.folder_id %} data-user-picked="1"{% endif %}>
-            {% for fid, path in folder_options %}
-            <option value="{{ fid }}" {% if add.folder_id and add.folder_id|string == fid|string %}selected{% endif %}>{{ path }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <label><span class="label-row"><span class="label-text">Arch</span></span><input name="arch" value="{{ add.arch or 'x86_64' }}"></label>
+        <label><span class="label-row"><span class="label-text">Arch</span></span><input name="arch" value="{{ iso_add.arch or 'x86_64' }}"></label>
       </div>
       <h3 class="section-label">Boot media</h3>
       <div class="form-grid">
-        <div data-os="windows">
-          <label><span class="label-row"><span class="label-text">boot.wim path</span></span><input name="boot_wim_path" value="{{ add.boot_wim_path }}"></label>
-          <label><span class="label-row"><span class="label-text">boot.wim file</span></span><input type="file" name="boot_wim_file"></label>
-          <label><span class="label-row"><span class="label-text">install.wim path</span></span><input name="install_wim_path" value="{{ add.install_wim_path }}"></label>
-          <label><span class="label-row"><span class="label-text">install.wim file</span></span><input type="file" name="install_wim_file"></label>
-          <label><span class="label-row"><span class="label-text">WIM index</span></span><input name="wim_index" type="number" min="1" value="{{ add.wim_index or 1 }}"></label>
-        </div>
-        <label><span class="label-row"><span class="label-text">ISO path</span></span><input name="iso_path" placeholder="ubuntu/ubuntu-24.04.iso" value="{{ add.iso_path }}"></label>
         <label><span class="label-row"><span class="label-text">ISO file</span><span class="key-hint">.iso, .img</span></span><input type="file" name="iso_file" accept=".iso,.img"></label>
-        <label class="span"><span class="label-row"><span class="label-text">Extra cmdline</span></span><input name="cmdline" value="{{ add.cmdline }}"></label>
+        <label><span class="label-row"><span class="label-text">ISO path</span></span><input name="iso_path" placeholder="ubuntu/ubuntu-24.04.iso" value="{{ iso_add.iso_path }}"></label>
+        <div data-os="windows">
+          <label><span class="label-row"><span class="label-text">boot.wim path</span></span><input name="boot_wim_path" value="{{ iso_add.boot_wim_path }}"></label>
+          <label><span class="label-row"><span class="label-text">boot.wim file</span></span><input type="file" name="boot_wim_file"></label>
+          <label><span class="label-row"><span class="label-text">install.wim path</span></span><input name="install_wim_path" value="{{ iso_add.install_wim_path }}"></label>
+          <label><span class="label-row"><span class="label-text">install.wim file</span></span><input type="file" name="install_wim_file"></label>
+        </div>
+        <label class="span"><span class="label-row"><span class="label-text">Extra cmdline</span></span><input name="cmdline" value="{{ iso_add.cmdline }}"></label>
       </div>
-      <details class="advanced-settings disclosure" data-os="linux,tool">
+      <details class="advanced-settings disclosure" data-os="linux">
         <summary>Advanced Settings</summary>
         <div class="advanced-settings-body form-grid">
-          <label><span class="label-row"><span class="label-text">Kernel path</span></span><input name="kernel_path" placeholder="ubuntu/vmlinuz" value="{{ add.kernel_path }}"></label>
+          <label><span class="label-row"><span class="label-text">Kernel path</span></span><input name="kernel_path" placeholder="ubuntu/vmlinuz" value="{{ iso_add.kernel_path }}"></label>
           <label><span class="label-row"><span class="label-text">Kernel file</span></span><input type="file" name="kernel_file"></label>
-          <label><span class="label-row"><span class="label-text">Initrd path</span></span><input name="initrd_path" placeholder="ubuntu/initrd" value="{{ add.initrd_path }}"></label>
+          <label><span class="label-row"><span class="label-text">Initrd path</span></span><input name="initrd_path" placeholder="ubuntu/initrd" value="{{ iso_add.initrd_path }}"></label>
           <label><span class="label-row"><span class="label-text">Initrd file</span></span><input type="file" name="initrd_file"></label>
         </div>
       </details>
     </div>
     <footer class="modal-actions">
       <button type="button" class="btn-secondary" data-close-dialog>Cancel</button>
-      <button type="submit">Add image</button>
+      <button type="submit">Add ISO</button>
+    </footer>
+  </form>
+</dialog>
+
+<dialog class="modal modal-wide" aria-labelledby="add-template-title" id="add-template"{% if add_open == 'template' %} open{% endif %}>
+  <form method="post" action="/images" enctype="multipart/form-data" class="template-form"
+        data-folder-linux="{{ folder_defaults.get('linux', '') }}"
+        data-folder-windows="{{ folder_defaults.get('windows', '') }}"
+        data-folder-tool="{{ folder_defaults.get('tool', '') }}">
+    <header class="modal-head">
+      <h2 id="add-template-title">Add template</h2>
+      {% include "_close_button.html" %}
+    </header>
+    <div class="modal-body">
+      {% if error and add_open == 'template' %}<p class="alert alert-error" role="alert">{{ error }}</p>{% endif %}
+      <div class="form-grid">
+        <label><span class="label-row"><span class="label-text">Name</span></span><input name="name" required value="{{ template_add.name }}" autocomplete="off" autofocus></label>
+        <label><span class="label-row"><span class="label-text">ISO</span><span class="key-hint">shared install media</span></span>
+          <select name="iso_id">
+            {% for iso in isos %}
+            <option value="{{ iso.id }}" data-os="{{ iso.os_family }}" {% if template_add.iso_id and template_add.iso_id|string == iso.id|string %}selected{% endif %}>{{ iso.name }} ({{ iso.os_family }})</option>
+            {% endfor %}
+            <option value="tool" data-os="tool" {% if template_add.iso_id == 'tool' or not isos %}selected{% endif %}>No ISO (tool: kernel/initrd)</option>
+          </select>
+          {% if not isos %}<span class="field-help">Add an ISO first to create a Linux or Windows template.</span>{% endif %}
+        </label>
+        <label><span class="label-row"><span class="label-text">Folder</span></span>
+          <select name="folder_id" required{% if template_add.folder_id %} data-user-picked="1"{% endif %}>
+            {% for fid, path in folder_options %}
+            <option value="{{ fid }}" {% if template_add.folder_id and template_add.folder_id|string == fid|string %}selected{% endif %}>{{ path }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div data-template-os="linux,windows">
+          <label><span class="label-row"><span class="label-text">Install source</span></span>
+            <select disabled aria-label="Install source">
+              <option>Pick on the template page</option>
+            </select>
+            <span class="field-help">Install source and guest-init are set on the template page after it is created.</span>
+          </label>
+        </div>
+      </div>
+      <div data-template-os="tool">
+        <h3 class="section-label">Tool boot media</h3>
+        <div class="form-grid">
+          <label><span class="label-row"><span class="label-text">Arch</span></span><input name="arch" value="{{ template_add.arch or 'x86_64' }}"></label>
+          <label><span class="label-row"><span class="label-text">Kernel path</span></span><input name="kernel_path" value="{{ template_add.kernel_path }}"></label>
+          <label><span class="label-row"><span class="label-text">Kernel file</span></span><input type="file" name="kernel_file"></label>
+          <label><span class="label-row"><span class="label-text">Initrd path</span></span><input name="initrd_path" value="{{ template_add.initrd_path }}"></label>
+          <label><span class="label-row"><span class="label-text">Initrd file</span></span><input type="file" name="initrd_file"></label>
+          <label><span class="label-row"><span class="label-text">Boot ISO path</span><span class="key-hint">sanboot</span></span><input name="iso_path" value="{{ template_add.iso_path }}"></label>
+          <label><span class="label-row"><span class="label-text">Boot ISO file</span><span class="key-hint">.iso, .img</span></span><input type="file" name="iso_file" accept=".iso,.img"></label>
+          <label class="span"><span class="label-row"><span class="label-text">Extra cmdline</span></span><input name="cmdline" value="{{ template_add.cmdline }}"></label>
+        </div>
+      </div>
+    </div>
+    <footer class="modal-actions">
+      <button type="button" class="btn-secondary" data-close-dialog>Cancel</button>
+      <button type="submit">Add template</button>
     </footer>
   </form>
 </dialog>

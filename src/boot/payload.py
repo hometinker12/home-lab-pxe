@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from ..models import Image, InstallAttempt, OsFamily
+from ..nfs_media import live_boot_generation
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,19 @@ class BootPayload:
     media_relative: str = ""
     extract_revision: int = 0
     extract_status: str = "idle"
+
+    @property
+    def sanboots(self) -> bool:
+        """True when the install script sanboots the ISO instead of loading extracted media."""
+        if not (self.iso_path or "").strip():
+            return False
+        if self.os_family == OsFamily.windows.value:
+            return not (self.boot_wim_path or "").strip()
+        return not ((self.kernel_path or "").strip() and (self.initrd_path or "").strip())
+
+    def skips_guest_init(self, image_root: Path) -> bool:
+        """Sanbooted ISOs and live-boot media run their own installer: no seed, no phone-home."""
+        return self.sanboots or live_boot_generation(self.media_relative, image_root)
 
     @classmethod
     def from_image(cls, image: Image) -> BootPayload:

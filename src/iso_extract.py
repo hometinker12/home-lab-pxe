@@ -8,11 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from .nfs_media import casper_has_squashfs
+from .nfs_media import casper_has_squashfs, live_has_squashfs
 from .settings import get_settings
 
 LINUX_KERNELS = ("casper/vmlinuz", "casper/vmlinuz.efi")
 LINUX_INITRDS = ("casper/initrd", "casper/initrd.lz", "casper/initrd.gz")
+LIVE_KERNELS = ("live/vmlinuz", "vmlinuz")
+LIVE_INITRDS = ("live/initrd.img", "initrd.img")
 
 
 class ExtractError(ValueError):
@@ -68,13 +70,41 @@ def _lookup(members: list[str], wanted: str) -> str | None:
     return None
 
 
-def select_linux_members(members: list[str]) -> tuple[str, str]:
+def linux_member_pair(members: list[str]) -> tuple[str, str] | None:
+    """Return casper kernel and initrd names, or None when this ISO is not Ubuntu live-server."""
     normalized = [normalize_member(m) for m in members]
     kernel = next((m for name in LINUX_KERNELS if (m := _lookup(normalized, name))), None)
     initrd = next((m for name in LINUX_INITRDS if (m := _lookup(normalized, name))), None)
     if kernel is None or initrd is None:
-        raise ExtractError("Ubuntu live-server payloads not found (casper/vmlinuz + casper/initrd)")
+        return None
     return kernel, initrd
+
+
+def live_member_pair(members: list[str]) -> tuple[str, str] | None:
+    """Return Debian live-boot kernel and initrd names when live/*.squashfs is present."""
+    normalized = [normalize_member(m) for m in members]
+    lower = [m.lower() for m in normalized]
+    if not any(m.startswith("live/") and m.endswith(".squashfs") for m in lower):
+        return None
+
+    def pick(exact: tuple[str, ...], versioned: str) -> str | None:
+        found = next((m for name in exact if (m := _lookup(normalized, name))), None)
+        if found is not None:
+            return found
+        return next((m for m in sorted(normalized) if m.lower().startswith(versioned)), None)
+
+    kernel = pick(LIVE_KERNELS, "live/vmlinuz-")
+    initrd = pick(LIVE_INITRDS, "live/initrd.img-")
+    if kernel is None or initrd is None:
+        return None
+    return kernel, initrd
+
+
+def select_linux_members(members: list[str]) -> tuple[str, str]:
+    found = linux_member_pair(members)
+    if found is None:
+        raise ExtractError("Ubuntu live-server payloads not found (casper/vmlinuz + casper/initrd)")
+    return found
 
 
 def _is_linux_media_member(member: str) -> bool:
@@ -204,6 +234,28 @@ def _copy_extracted_slot(dest: Path, member: str, slot: str) -> None:
     raise ExtractError("Ubuntu live-server payloads not found (casper/vmlinuz + casper/initrd)")
 
 
+def _extract_live_tree(
+    iso: Path, dest: Path, root: Path, members: tuple[str, str], total: int, runner: ArchiveRunner
+) -> ExtractResult:
+    """The whole ISO is published: installers such as TrueNAS read extra files from the live medium."""
+    kernel_member, initrd_member = members
+    if total > get_settings().max_extract_bytes:
+        raise ExtractError("ISO contents exceed PXE_MAX_EXTRACT_BYTES")
+    dest.mkdir(parents=True, exist_ok=True)
+    usage = shutil.disk_usage(dest.parent if dest.parent.exists() else root)
+    if total and usage.free < total:
+        raise ExtractError("Not enough free space to extract live-boot media")
+    runner.extract_tree(iso, dest)
+    if not live_has_squashfs(dest):
+        raise ExtractError("Live-boot payloads not found (live/filesystem.squashfs)")
+    for member, slot in ((kernel_member, "kernel"), (initrd_member, "initrd")):
+        source = dest.joinpath(*member.split("/"))
+        if not source.is_file() or source.stat().st_size == 0:
+            raise ExtractError("Live-boot payloads not found (vmlinuz + initrd.img)")
+        shutil.copyfile(source, dest / slot)
+    return ExtractResult(kernel_relative="kernel", initrd_relative="initrd", media_relative="live")
+
+
 def extract_linux_payloads(
     iso: Path,
     dest_dir: Path,
@@ -229,7 +281,13 @@ def extract_linux_payloads(
         member = normalize_member(name)
         members.append(member)
         sizes[member] = int(size)
-    kernel_member, initrd_member = select_linux_members(members)
+    found = linux_member_pair(members)
+    if found is None:
+        live = live_member_pair(members)
+        if live is None:
+            return ExtractResult()
+        return _extract_live_tree(iso, dest, root, live, sum(sizes.values()), runner)
+    kernel_member, initrd_member = found
     dest.mkdir(parents=True, exist_ok=True)
     squashfs = [name for name in members if name.lower().startswith("casper/") and name.lower().endswith(".squashfs")]
     if squashfs:
