@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-10-03
+
 ### Added
 
 - The Images page has two tabs, **Templates** (shown first) and **ISOs**, each with its count. `/images?tab=isos` opens the ISOs tab. An ISO is uploaded and extracted once, and several templates can share it. For example, one Ubuntu ISO can back a "server" and a "minimal" template, or one Windows Server ISO can back Standard Core and Datacenter templates.
@@ -28,6 +30,8 @@
 - A Linux ISO that extracts to sanboot-only media is no longer re-queued for extraction every time the extract worker starts.
 - ISO sanboot no longer fails with "Could not open SAN device: HTTP 4xx Client Error". `/boot-files/…` and `/install-files/…` now answer the `HEAD` request iPXE sends to read the ISO size.
 - A machine installing from a sanbooted ISO (Linux or Windows) is marked Deployed when its install script is served. Sanbooted installers never phone home, so the machine used to stay in Deploying and re-run the installer on every PXE boot.
+- A live-boot or sanboot install staged before its ISO was re-extracted now boots the current extract. Previously it could pair the new kernel with the old, already-removed NFS tree.
+- Old extract revisions are removed once the install that used them is marked Deployed. Previously they stayed on disk until the next extract.
 
 ## [0.3.8] - 2026-09-24
 

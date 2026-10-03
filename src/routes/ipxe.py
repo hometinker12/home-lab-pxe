@@ -72,6 +72,15 @@ def _render_policy_script(db: Session, machine: Machine, mac_n: str) -> tuple[st
         return folder_menu_script(db, hyphen, None), kind.value
     settings = get_or_create_settings(db)
     payload = _payload_for(db, machine)
+    install = kind in {ScriptKind.install_linux, ScriptKind.install_windows}
+    image_root = get_settings().image_root
+    if install and payload is not None and payload.skips_guest_init(image_root):
+        # Sanboot and live-boot fetch image-scoped /boot-files URLs, and mark_deployed keeps only the
+        # current extract revision, so serve the current media rather than the attempt's pinned copy.
+        image = get_image(db, machine.assigned_image_id)
+        current = BootPayload.from_image(image) if image is not None else None
+        if current is not None and current.skips_guest_init(image_root):
+            payload = current
     script = render_script(
         kind,
         mac_hyphen=hyphen,
@@ -79,8 +88,7 @@ def _render_policy_script(db: Session, machine: Machine, mac_n: str) -> tuple[st
         payload=payload,
         unknown_timeout_seconds=settings.unknown_timeout_seconds,
     )
-    install = kind in {ScriptKind.install_linux, ScriptKind.install_windows}
-    if install and payload is not None and payload.skips_guest_init(get_settings().image_root):
+    if install and payload is not None and payload.skips_guest_init(image_root):
         # These installers never phone home, so Deployed is recorded when the script is handed out.
         mark_deployed(db, machine, actor="sanboot" if payload.sanboots else "live-boot")
     return script, kind.value

@@ -623,6 +623,8 @@ def mark_deployed(db: Session, machine: Machine, *, actor: str = "installer") ->
     record_activity(db, actor=actor, action="machine.deployed", detail=machine.mac)
     from ..extract_worker import gc_extract_generations
 
+    # Sessions do not autoflush; GC must see these attempts as completed to release their revisions.
+    db.flush()
     for image_id in image_ids:
         image = get_image(db, image_id)
         if image is not None:

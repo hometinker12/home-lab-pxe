@@ -757,6 +757,34 @@ def test_live_boot_iso_netboots_over_nfs(client, tmp_path):
     assert _kernel_bytes(client, script) == b"tn-kern"
 
 
+def test_live_boot_serves_current_revision_after_reextract(client, tmp_path):
+    login(client)
+    iso = _upload_iso(client, name="truenas-reextract")
+    from src.db import session_scope
+    from src.extract_worker import schedule_extract
+    from src.inventory.service import deploy_machine, get_image, register_machine
+    from src.models import Iso
+
+    run_one_job(iso["id"], 1, runner=_TrueNasRunner())
+    template = _add_template(client, "truenas-reextract-tpl", iso["id"])
+    with session_scope() as db:
+        machine = register_machine(db, mac="02:00:00:00:00:75", actor="admin")
+        deploy_machine(db, machine, image=get_image(db, template["id"]), actor="admin")
+        db.commit()
+    with session_scope() as db:
+        assert schedule_extract(db, db.get(Iso, iso["id"]))
+        db.commit()
+    run_one_job(iso["id"], 2, runner=_TrueNasRunner())
+    nfs = tmp_path / "images" / "nfs" / str(iso["id"])
+    assert (nfs / "1").is_dir()
+
+    script = client.get("/ipxe/02-00-00-00-00-75").text
+    kernel_line = next(line for line in script.splitlines() if line.startswith("kernel "))
+    assert f"nfsroot=pxe.test:/var/lib/pxe/images/nfs/{iso['id']}/2" in kernel_line
+    assert (nfs / "2" / "live" / "filesystem.squashfs").is_file()
+    assert not (nfs / "1").exists()
+
+
 def test_sanboot_iso_is_not_requeued_on_worker_start(client):
     login(client)
     iso = _upload_iso(client, name="sanboot-restart")
